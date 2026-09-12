@@ -46,6 +46,8 @@ RSpec.describe RuboCop::Cop::Style::MissingElse, :config do
             if cond; foo end
             ^^^^^^^^^^^^^^^^ `if` condition requires an `else`-clause.
           RUBY
+
+          expect_no_corrections
         end
       end
     end
@@ -101,11 +103,13 @@ RSpec.describe RuboCop::Cop::Style::MissingElse, :config do
             case v; when a; foo; when b; bar; end
             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `case` condition requires an `else`-clause.
           RUBY
+
+          expect_no_corrections
         end
       end
     end
 
-    include_examples 'pattern matching'
+    it_behaves_like 'pattern matching'
   end
 
   context 'UnlessElse disabled' do
@@ -143,6 +147,8 @@ RSpec.describe RuboCop::Cop::Style::MissingElse, :config do
             if cond; foo end
             ^^^^^^^^^^^^^^^^ `if` condition requires an `else`-clause.
           RUBY
+
+          expect_no_corrections
         end
       end
     end
@@ -172,6 +178,8 @@ RSpec.describe RuboCop::Cop::Style::MissingElse, :config do
             unless cond; foo end
             ^^^^^^^^^^^^^^^^^^^^ `if` condition requires an `else`-clause.
           RUBY
+
+          expect_no_corrections
         end
       end
     end
@@ -201,11 +209,13 @@ RSpec.describe RuboCop::Cop::Style::MissingElse, :config do
             case v; when a; foo; when b; bar; end
             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `case` condition requires an `else`-clause.
           RUBY
+
+          expect_no_corrections
         end
       end
     end
 
-    include_examples 'pattern matching'
+    it_behaves_like 'pattern matching'
   end
 
   context 'EmptyElse enabled and set to warn on empty' do
@@ -249,6 +259,32 @@ RSpec.describe RuboCop::Cop::Style::MissingElse, :config do
             if cond; foo end
             ^^^^^^^^^^^^^^^^ `if` condition requires an `else`-clause with `nil` in it.
           RUBY
+
+          expect_correction(<<~RUBY)
+            if cond; foo else; nil; end
+          RUBY
+        end
+
+        it 'registers an offense with `elsif` clause' do
+          expect_offense(<<~RUBY)
+            if cond_1; 1; elsif cond_2; 3; end
+                          ^^^^^^^^^^^^^^^ `if` condition requires an `else`-clause with `nil` in it.
+          RUBY
+
+          expect_correction(<<~RUBY)
+            if cond_1; 1; elsif cond_2; 3; else; nil; end
+          RUBY
+        end
+
+        it 'registers an offense with multiple `elsif` clauses' do
+          expect_offense(<<~RUBY)
+            if cond_1; 1; elsif cond_2; 2; elsif cond_3; 3; end
+                                           ^^^^^^^^^^^^^^^ `if` condition requires an `else`-clause with `nil` in it.
+          RUBY
+
+          expect_correction(<<~RUBY)
+            if cond_1; 1; elsif cond_2; 2; elsif cond_3; 3; else; nil; end
+          RUBY
         end
       end
     end
@@ -277,6 +313,10 @@ RSpec.describe RuboCop::Cop::Style::MissingElse, :config do
           expect_offense(<<~RUBY)
             unless cond; foo end
             ^^^^^^^^^^^^^^^^^^^^ `if` condition requires an `else`-clause with `nil` in it.
+          RUBY
+
+          expect_correction(<<~RUBY)
+            unless cond; foo else; nil; end
           RUBY
         end
       end
@@ -307,11 +347,15 @@ RSpec.describe RuboCop::Cop::Style::MissingElse, :config do
             case v; when a; foo; when b; bar; end
             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `case` condition requires an `else`-clause with `nil` in it.
           RUBY
+
+          expect_correction(<<~RUBY)
+            case v; when a; foo; when b; bar; else; nil; end
+          RUBY
         end
       end
     end
 
-    include_examples 'pattern matching'
+    it_behaves_like 'pattern matching'
   end
 
   context 'EmptyElse enabled and set to warn on nil' do
@@ -355,6 +399,32 @@ RSpec.describe RuboCop::Cop::Style::MissingElse, :config do
             if cond; foo end
             ^^^^^^^^^^^^^^^^ `if` condition requires an empty `else`-clause.
           RUBY
+
+          expect_correction(<<~RUBY)
+            if cond; foo else; end
+          RUBY
+        end
+
+        it 'registers an offense with `elsif` clause' do
+          expect_offense(<<~RUBY)
+            if cond_1; 1; elsif cond_2; 3; end
+                          ^^^^^^^^^^^^^^^ `if` condition requires an empty `else`-clause.
+          RUBY
+
+          expect_correction(<<~RUBY)
+            if cond_1; 1; elsif cond_2; 3; else; end
+          RUBY
+        end
+
+        it 'registers an offense with multiple `elsif` clauses' do
+          expect_offense(<<~RUBY)
+            if cond_1; 1; elsif cond_2; 2; elsif cond_3; 3; end
+                                           ^^^^^^^^^^^^^^^ `if` condition requires an empty `else`-clause.
+          RUBY
+
+          expect_correction(<<~RUBY)
+            if cond_1; 1; elsif cond_2; 2; elsif cond_3; 3; else; end
+          RUBY
         end
       end
     end
@@ -383,6 +453,10 @@ RSpec.describe RuboCop::Cop::Style::MissingElse, :config do
           expect_offense(<<~RUBY)
             unless cond; foo end
             ^^^^^^^^^^^^^^^^^^^^ `if` condition requires an empty `else`-clause.
+          RUBY
+
+          expect_correction(<<~RUBY)
+            unless cond; foo else; end
           RUBY
         end
       end
@@ -413,11 +487,15 @@ RSpec.describe RuboCop::Cop::Style::MissingElse, :config do
             case v; when a; foo; when b; bar; end
             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `case` condition requires an empty `else`-clause.
           RUBY
+
+          expect_correction(<<~RUBY)
+            case v; when a; foo; when b; bar; else; end
+          RUBY
         end
       end
     end
 
-    include_examples 'pattern matching'
+    it_behaves_like 'pattern matching'
   end
 
   context 'configured to warn only on empty if' do
@@ -461,6 +539,32 @@ RSpec.describe RuboCop::Cop::Style::MissingElse, :config do
             if cond; foo end
             ^^^^^^^^^^^^^^^^ `if` condition requires an empty `else`-clause.
           RUBY
+
+          expect_correction(<<~RUBY)
+            if cond; foo else; end
+          RUBY
+        end
+
+        it 'registers an offense with `elsif` clause' do
+          expect_offense(<<~RUBY)
+            if cond_1; 1; elsif cond_2; 3; end
+                          ^^^^^^^^^^^^^^^ `if` condition requires an empty `else`-clause.
+          RUBY
+
+          expect_correction(<<~RUBY)
+            if cond_1; 1; elsif cond_2; 3; else; end
+          RUBY
+        end
+
+        it 'registers an offense with multiple `elsif` clauses' do
+          expect_offense(<<~RUBY)
+            if cond_1; 1; elsif cond_2; 2; elsif cond_3; 3; end
+                                           ^^^^^^^^^^^^^^^ `if` condition requires an empty `else`-clause.
+          RUBY
+
+          expect_correction(<<~RUBY)
+            if cond_1; 1; elsif cond_2; 2; elsif cond_3; 3; else; end
+          RUBY
         end
       end
     end
@@ -489,6 +593,10 @@ RSpec.describe RuboCop::Cop::Style::MissingElse, :config do
           expect_offense(<<~RUBY)
             unless cond; foo end
             ^^^^^^^^^^^^^^^^^^^^ `if` condition requires an empty `else`-clause.
+          RUBY
+
+          expect_correction(<<~RUBY)
+            unless cond; foo else; end
           RUBY
         end
       end
@@ -520,7 +628,7 @@ RSpec.describe RuboCop::Cop::Style::MissingElse, :config do
       end
     end
 
-    include_examples 'pattern matching'
+    it_behaves_like 'pattern matching'
   end
 
   context 'configured to warn only on empty case' do
@@ -616,10 +724,14 @@ RSpec.describe RuboCop::Cop::Style::MissingElse, :config do
             case v; when a; foo; when b; bar; end
             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `case` condition requires an empty `else`-clause.
           RUBY
+
+          expect_correction(<<~RUBY)
+            case v; when a; foo; when b; bar; else; end
+          RUBY
         end
       end
     end
 
-    include_examples 'pattern matching'
+    it_behaves_like 'pattern matching'
   end
 end

@@ -29,14 +29,25 @@ module RuboCop
         end
 
         def assign(node)
-          @assignments << Assignment.new(node, self)
+          assignment = Assignment.new(node, self)
+
+          mark_last_as_reassigned!(assignment)
+
+          @assignments << assignment
+        end
+
+        def mark_last_as_reassigned!(assignment)
+          return if captured_by_block?
+          return unless assignment.branch == @assignments.last&.branch
+
+          @assignments.last&.reassigned!
         end
 
         def referenced?
           !@references.empty?
         end
 
-        # rubocop:disable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
+        # rubocop:disable-next Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
         def reference!(node)
           reference = Reference.new(node, @scope)
           @references << reference
@@ -52,7 +63,7 @@ module RuboCop
             # if/unless keyword. A preceding assignment is needed to put the
             # variable in scope. For this reason we skip to the next assignment
             # here.
-            next if in_modifier_if?(assignment)
+            next if in_modifier_conditional?(assignment, node)
 
             break if !assignment.branch || assignment.branch == reference.branch
 
@@ -61,12 +72,25 @@ module RuboCop
             end
           end
         end
-        # rubocop:enable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
 
-        def in_modifier_if?(assignment)
-          parent = assignment.node.parent
-          parent = parent.parent if parent&.begin_type?
-          parent&.if_type? && parent&.modifier_form?
+        def in_modifier_conditional?(assignment, reference_node)
+          conditional = modifier_conditional_of(assignment.node)
+          return false unless conditional
+
+          # The out-of-scope problem only affects a reference in the modifier body (to the
+          # left of the keyword); a reference after the modifier is put in scope by the
+          # condition's assignment, so an earlier assignment there is genuinely useless.
+          covers?(conditional, reference_node) && !covers?(conditional.condition, reference_node)
+        end
+
+        def modifier_conditional_of(node)
+          node.each_ancestor(:if, :while, :until).find do |conditional|
+            conditional.modifier_form? && covers?(conditional.condition, node)
+          end
+        end
+
+        def covers?(container, node)
+          container.equal?(node) || container.source_range.contains?(node.source_range)
         end
 
         def capture_with_block!
@@ -94,7 +118,7 @@ module RuboCop
         end
 
         def method_argument?
-          argument? && %i[def defs].include?(@scope.node.type)
+          argument? && @scope.node.any_def_type?
         end
 
         def block_argument?

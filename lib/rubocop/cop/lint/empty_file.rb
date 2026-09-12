@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Lint
-      # This cop enforces that Ruby source files are not empty.
+      # Enforces that Ruby source files are not empty.
       #
       # @example
       #   # bad
@@ -21,8 +21,6 @@ module RuboCop
       #   # File consisting only of comments
       #
       class EmptyFile < Base
-        include RangeHelp
-
         MSG = 'Empty file detected.'
 
         def on_new_investigation

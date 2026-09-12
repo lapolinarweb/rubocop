@@ -252,10 +252,94 @@ RSpec.describe RuboCop::Cop::Layout::ExtraSpacing, :config do
       RUBY
   }.freeze
 
+  corrections = {
+    'lining up assignments' =>
+      <<~RUBY,
+        website = "example.org"
+        name = "Jill"
+      RUBY
+
+    'lining up assignments with empty lines and comments in between' =>
+      <<~RUBY,
+        a += 1
+
+        # Comment
+        aa = 2
+        bb = 3
+
+        a ||= 1
+      RUBY
+
+    'aligning with the same character' =>
+      <<~RUBY,
+        y, m = (year * 12 + (mon - 1) + n).divmod(12)
+        m, = (m + 1) .divmod(1)
+      RUBY
+
+    'lining up different kinds of assignments' =>
+      <<~RUBY,
+        type_name ||= value.class.name if value
+        type_name = type_name.to_s if type_name
+
+        type_name = value.class.name if value
+        type_name += type_name.to_s unless type_name
+        a += 1
+        aa -= 2
+      RUBY
+
+    'aligning comments on non-adjacent lines' =>
+      <<~RUBY,
+        include_examples 'aligned', 'var = until', 'test'
+
+        include_examples 'unaligned', "var = if", 'test'
+      RUBY
+
+    'aligning tokens with empty line between' =>
+      <<~RUBY,
+        unless nochdir
+          Dir.chdir "/" # Release old working directory.
+        end
+
+        File.umask 0000 # Ensure sensible umask.
+      RUBY
+
+    'aligning long assignment expressions that include line breaks' =>
+      <<~RUBY,
+        size_attribute_name = FactoryGirl.create(:attribute,
+                                                    name: 'Size',
+                                                    values: %w{small large})
+        carrier_attribute_name = FactoryGirl.create(:attribute,
+                                                    name: 'Carrier',
+                                                    values: %w{verizon})
+      RUBY
+
+    'aligning = on lines where there are trailing comments' =>
+      <<~RUBY,
+        a_long_var_name = 100 # this is 100
+        short_name1 = 2
+
+        clear
+
+        short_name2 = 2
+        a_long_var_name = 100 # this is 100
+
+        clear
+
+        short_name3 = 2 # this is 2
+        a_long_var_name = 100 # this is 100
+      RUBY
+
+    'aligning trailing comments' =>
+      <<~RUBY
+        a_long_var_name = 2 # this is 2
+        a_long_var_name = 100 # this is 100
+      RUBY
+  }.freeze
+
   context 'when AllowForAlignment is true' do
     let(:cop_config) { { 'AllowForAlignment' => true, 'ForceEqualSignAlignment' => false } }
 
-    include_examples 'common behavior'
+    it_behaves_like 'common behavior'
 
     context 'with extra spacing for alignment purposes' do
       sources.each do |reason, src|
@@ -267,18 +351,193 @@ RSpec.describe RuboCop::Cop::Layout::ExtraSpacing, :config do
         end
       end
     end
+
+    it 'registers an offense and corrects when a character is vertically aligned' do
+      expect_offense(<<~RUBY)
+        d_is_vertically_aligned  do
+                               ^ Unnecessary spacing detected.
+          _______________________d
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        d_is_vertically_aligned do
+          _______________________d
+        end
+      RUBY
+    end
+
+    it 'registers offenses and corrects repeated extra spacing' do
+      expect_offense(<<~RUBY)
+        RSpec.describe 'Test' do
+          let(:low_group)   { create(:low_group) }
+                         ^^ Unnecessary spacing detected.
+          let(:medium_group)   { create(:medium_group) }
+                            ^^ Unnecessary spacing detected.
+          let(:normal_group)   { create(:normal_group) }
+                            ^^ Unnecessary spacing detected.
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        RSpec.describe 'Test' do
+          let(:low_group) { create(:low_group) }
+          let(:medium_group) { create(:medium_group) }
+          let(:normal_group) { create(:normal_group) }
+        end
+      RUBY
+    end
+
+    it 'accepts extra spacing that aligns repeated tokens' do
+      expect_no_offenses(<<~RUBY)
+        RSpec.describe 'Test' do
+          let(:low_group)      { create(:low_group) }
+          let(:medium_group)   { create(:medium_group) }
+          let(:normal_group)   { create(:normal_group) }
+        end
+      RUBY
+    end
+
+    it 'registers offenses when a differently spaced token is beyond a blank line' do
+      expect_offense(<<~RUBY)
+        foo(:a)   { bar }
+               ^^ Unnecessary spacing detected.
+        foo(:b)   { bar }
+               ^^ Unnecessary spacing detected.
+
+        foo(:abc) { bar }
+      RUBY
+
+      expect_correction(<<~RUBY)
+        foo(:a) { bar }
+        foo(:b) { bar }
+
+        foo(:abc) { bar }
+      RUBY
+    end
+
+    it 'registers offenses when a differently spaced token is beyond a method definition' do
+      expect_offense(<<~RUBY)
+        foo(:a)   { bar }
+               ^^ Unnecessary spacing detected.
+        foo(:b)   { bar }
+               ^^ Unnecessary spacing detected.
+        def unrelated
+          bar
+        end
+        foo(:abc) { bar }
+      RUBY
+
+      expect_correction(<<~RUBY)
+        foo(:a) { bar }
+        foo(:b) { bar }
+        def unrelated
+          bar
+        end
+        foo(:abc) { bar }
+      RUBY
+    end
+
+    it 'registers offenses when unrelated aligned code follows repeated extra spacing' do
+      expect_offense(<<~RUBY)
+        foo(:a)   { bar }
+               ^^ Unnecessary spacing detected.
+        foo(:b)   { bar }
+               ^^ Unnecessary spacing detected.
+        xy    = 1
+        abcde = 2
+      RUBY
+
+      expect_correction(<<~RUBY)
+        foo(:a) { bar }
+        foo(:b) { bar }
+        xy    = 1
+        abcde = 2
+      RUBY
+    end
+
+    it 'accepts uniformly padded tokens when another column on the same lines varies' do
+      expect_no_offenses(<<~RUBY)
+        it_behaves_like 'foo', 'var = if',     'test',  'end'
+        it_behaves_like 'foo', 'var = unless', 'test',  'end'
+      RUBY
+    end
+
+    it 'accepts extra spacing that aligns tokens of different kinds' do
+      expect_no_offenses(<<~RUBY)
+        register(:a,    1)
+        register(:bb,   :s)
+        register(:ccc,  2)
+      RUBY
+    end
+
+    it 'registers an offense and corrects when the only vertically aligned line is in a preceding sibling block' do
+      expect_offense(<<~RUBY)
+        foo do
+          bar(:abcd) { it.qux }
+        end
+
+        foo do
+          bar(:b) {  it }
+                   ^ Unnecessary spacing detected.
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        foo do
+          bar(:abcd) { it.qux }
+        end
+
+        foo do
+          bar(:b) { it }
+        end
+      RUBY
+    end
+
+    it 'registers an offense and corrects when an assignment is aligned only with one in a preceding sibling block' do
+      expect_offense(<<~RUBY)
+        if foo
+          aaa  = 1
+             ^ Unnecessary spacing detected.
+        end
+        if bar
+          bbb  = 1
+             ^ Unnecessary spacing detected.
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        if foo
+          aaa = 1
+        end
+        if bar
+          bbb = 1
+        end
+      RUBY
+    end
+
+    it 'allows extra spacing when aligned with an assignment beyond a nested multiline entry' do
+      expect_no_offenses(<<~RUBY)
+        foo  = {
+                 a: 1
+               }
+        bar  = 2
+      RUBY
+    end
   end
 
   context 'when AllowForAlignment is false' do
     let(:cop_config) { { 'AllowForAlignment' => false, 'ForceEqualSignAlignment' => false } }
 
-    include_examples 'common behavior'
+    it_behaves_like 'common behavior'
 
     context 'with extra spacing for alignment purposes' do
       sources.each do |reason, src|
         context "such as #{reason}" do
           it 'registers offense(s)' do
             expect_offense(src)
+
+            expect_correction(corrections[reason])
           end
         end
       end
@@ -290,10 +549,6 @@ RSpec.describe RuboCop::Cop::Layout::ExtraSpacing, :config do
     let(:cop_config) do
       { 'AllowForAlignment' => allow_alignment,
         'AllowBeforeTrailingComments' => allow_comments }
-    end
-    let(:src_with_extra) do
-      ['  object.method(argument)  # this is a comment',
-       '                         ^ Unnecessary spacing detected.']
     end
 
     context 'true' do
@@ -335,6 +590,8 @@ RSpec.describe RuboCop::Cop::Layout::ExtraSpacing, :config do
               else
                 it 'registers offense(s)' do
                   expect_offense(src)
+
+                  expect_correction(corrections[reason])
                 end
               end
             end
@@ -346,10 +603,14 @@ RSpec.describe RuboCop::Cop::Layout::ExtraSpacing, :config do
     context 'false' do
       let(:allow_comments) { false }
 
-      it 'regsiters offense' do
+      it 'registers an offense' do
         expect_offense(<<~RUBY)
           object.method(argument)  # this is a comment
                                  ^ Unnecessary spacing detected.
+        RUBY
+
+        expect_correction(<<~RUBY)
+          object.method(argument) # this is a comment
         RUBY
       end
 
@@ -424,6 +685,23 @@ RSpec.describe RuboCop::Cop::Layout::ExtraSpacing, :config do
       RUBY
     end
 
+    it 'does not register an offense when assignments are separated by a line ' \
+       'with another alignable operator' do
+      expect_no_offenses(<<~RUBY)
+        aaaa = b
+        e << f
+        g += h
+      RUBY
+    end
+
+    it 'does not register an offense when assignments are separated by a comparison' do
+      expect_no_offenses(<<~RUBY)
+        aaaa = b
+        raise if e == f
+        g += h
+      RUBY
+    end
+
     it 'registers an offense and corrects consecutive assignments that are not aligned' do
       expect_offense(<<~RUBY)
         a = 1
@@ -450,7 +728,7 @@ RSpec.describe RuboCop::Cop::Layout::ExtraSpacing, :config do
       RUBY
     end
 
-    it 'register offenses and correct consecutive operator assignments which are not aligned' do
+    it 'registers offenses and correct consecutive operator assignments which are not aligned' do
       expect_offense(<<~RUBY)
         a += 1
         bb = 2
@@ -501,7 +779,7 @@ RSpec.describe RuboCop::Cop::Layout::ExtraSpacing, :config do
       RUBY
     end
 
-    it 'register offenses and correct consecutive attribute assignments which are not aligned' do
+    it 'registers offenses and correct consecutive attribute assignments which are not aligned' do
       expect_offense(<<~RUBY)
         a.attr = 1
         bb &&= 2
@@ -527,7 +805,7 @@ RSpec.describe RuboCop::Cop::Layout::ExtraSpacing, :config do
       RUBY
     end
 
-    it 'register offenses and correct complex nested assignments' do
+    it 'registers offenses and correct complex nested assignments' do
       expect_offense(<<~RUBY)
         def batch
           @areas = params[:param].map {
@@ -588,6 +866,117 @@ RSpec.describe RuboCop::Cop::Layout::ExtraSpacing, :config do
       expect_no_offenses(<<~RUBY)
         def method(arg = 1)
           var = arg
+        end
+      RUBY
+    end
+
+    it 'registers an offense and corrects when there is = in a string after assignment' do
+      expect_offense(<<~RUBY)
+        e, f = val.split('=')
+        opt.ssh_config[e] = f
+                          ^ `=` is not aligned with the preceding assignment.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        e, f              = val.split('=')
+        opt.ssh_config[e] = f
+      RUBY
+    end
+
+    it 'registers an offense and corrects with op-asgn when there is = in a string after assignment' do
+      expect_offense(<<~RUBY)
+        xy &&= val.split('=')
+        opt.ssh_config[e] = f
+                          ^ `=` is not aligned with the preceding assignment.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        xy              &&= val.split('=')
+        opt.ssh_config[e] = f
+      RUBY
+    end
+
+    context 'endless methods', :ruby30 do
+      it 'does not register an offense when not aligned' do
+        expect_no_offenses(<<~RUBY)
+          def deleted = do_something
+          def updated = do_something
+          def added = do_something
+        RUBY
+      end
+
+      it 'does not register an offense with optional values' do
+        expect_no_offenses(<<~RUBY)
+          def deleted(x = true) = do_something(x)
+          def updated(x = true) = do_something(x)
+          def added(x = true) = do_something(x)
+        RUBY
+      end
+    end
+  end
+
+  context 'when exactly two comments have extra spaces' do
+    context 'and they are aligned' do
+      it 'does not register an offense' do
+        expect_no_offenses(<<~RUBY)
+          one  # comment one
+          two  # comment two
+        RUBY
+      end
+    end
+
+    context 'and they are not aligned' do
+      it 'registers an offense' do
+        expect_offense(<<~RUBY)
+          one  # comment one
+             ^ Unnecessary spacing detected.
+          two   # comment two
+             ^^ Unnecessary spacing detected.
+        RUBY
+
+        expect_correction(<<~RUBY)
+          one # comment one
+          two # comment two
+        RUBY
+      end
+    end
+  end
+
+  context 'when multiple comments have extra spaces' do
+    it 'registers offenses for all comments' do
+      expect_offense(<<~RUBY)
+        class Foo
+          def require(p)  # rubocop:disable Naming/MethodParameterName
+                        ^ Unnecessary spacing detected.
+          end
+
+          def load(p)  # rubocop:disable Naming/MethodParameterName
+                     ^ Unnecessary spacing detected.
+          end
+
+          def join(*ps)  # rubocop:disable Naming/MethodParameterName
+                       ^ Unnecessary spacing detected.
+          end
+
+          def exist?(*ps)  # rubocop:disable Naming/MethodParameterName
+                         ^ Unnecessary spacing detected.
+          end
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        class Foo
+          def require(p) # rubocop:disable Naming/MethodParameterName
+          end
+
+          def load(p) # rubocop:disable Naming/MethodParameterName
+          end
+
+          def join(*ps) # rubocop:disable Naming/MethodParameterName
+          end
+
+          def exist?(*ps) # rubocop:disable Naming/MethodParameterName
+          end
         end
       RUBY
     end

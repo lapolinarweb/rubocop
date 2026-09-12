@@ -6,6 +6,8 @@ RSpec.describe RuboCop::Formatter::DisabledConfigFormatter, :isolated_environmen
 
   subject(:formatter) { described_class.new(output) }
 
+  include_context 'mock console output'
+
   let(:output) do
     io = StringIO.new
 
@@ -21,7 +23,7 @@ RSpec.describe RuboCop::Formatter::DisabledConfigFormatter, :isolated_environmen
      RuboCop::Cop::Offense.new(:convention, location, 'message', 'Test/Cop2')]
   end
 
-  let(:location) { OpenStruct.new(line: 1, column: 5) }
+  let(:location) { FakeLocation.new(line: 1, column: 5) }
 
   let(:heading) do
     format(
@@ -34,19 +36,9 @@ RSpec.describe RuboCop::Formatter::DisabledConfigFormatter, :isolated_environmen
   let(:expected_heading_command) { 'rubocop --auto-gen-config' }
 
   let(:expected_heading_timestamp) { "on #{Time.now} " }
-
-  around do |example|
-    original_stdout = $stdout
-    original_stderr = $stderr
-
-    $stdout = StringIO.new
-    $stderr = StringIO.new
-
-    example.run
-
-    $stdout = original_stdout
-    $stderr = original_stderr
-  end
+  let(:config_store) { instance_double(RuboCop::ConfigStore) }
+  let(:pwd_config) { instance_double(RuboCop::Config) }
+  let(:options) { { config_store: config_store } }
 
   before do
     stub_cop_class('Test::Cop1')
@@ -55,14 +47,16 @@ RSpec.describe RuboCop::Formatter::DisabledConfigFormatter, :isolated_environmen
     RuboCop::ConfigLoader.clear_options
 
     allow(Time).to receive(:now).and_return(Time.now)
+    allow(config_store).to receive(:for_pwd).and_return(pwd_config)
+    allow(pwd_config).to receive(:[]).and_return(nil)
   end
 
   context 'when any offenses are detected' do
     before do
       formatter.started(['test_a.rb', 'test_b.rb'])
-      formatter.file_started('test_a.rb', {})
+      formatter.file_started('test_a.rb', options)
       formatter.file_finished('test_a.rb', offenses)
-      formatter.file_started('test_b.rb', {})
+      formatter.file_started('test_b.rb', options)
       formatter.file_finished('test_b.rb', [offenses.first])
       formatter.finished(['test_a.rb', 'test_b.rb'])
     end
@@ -90,7 +84,7 @@ RSpec.describe RuboCop::Formatter::DisabledConfigFormatter, :isolated_environmen
 
   context "when there's .rubocop.yml" do
     before do
-      create_file('.rubocop.yml', <<~YAML)
+      create_file('.rubocop.yml', <<~'YAML')
         Test/Cop1:
           Exclude:
             - Gemfile
@@ -101,9 +95,9 @@ RSpec.describe RuboCop::Formatter::DisabledConfigFormatter, :isolated_environmen
       YAML
 
       formatter.started(['test_a.rb', 'test_b.rb'])
-      formatter.file_started('test_a.rb', {})
+      formatter.file_started('test_a.rb', options)
       formatter.file_finished('test_a.rb', offenses)
-      formatter.file_started('test_b.rb', {})
+      formatter.file_started('test_b.rb', options)
       formatter.file_finished('test_b.rb', [offenses.first])
 
       allow(RuboCop::ConfigLoader.default_configuration).to receive(:[]).and_return({})
@@ -123,7 +117,7 @@ RSpec.describe RuboCop::Formatter::DisabledConfigFormatter, :isolated_environmen
        'Test/Cop2:',
        '  Exclude:',
        "    - '**/*.blah'",
-       "    - !ruby/regexp /.*/bar/*/foo\.rb$/",
+       '    - !ruby/regexp /.*/bar/*/foo\.rb$/',
        "    - 'test_a.rb'",
        ''].join("\n")
     end
@@ -138,7 +132,7 @@ RSpec.describe RuboCop::Formatter::DisabledConfigFormatter, :isolated_environmen
       formatter.started(filenames)
 
       filenames.each do |filename|
-        formatter.file_started(filename, {})
+        formatter.file_started(filename, options)
 
         if filename == filenames.last
           formatter.file_finished(filename, [offenses.first])
@@ -189,7 +183,7 @@ RSpec.describe RuboCop::Formatter::DisabledConfigFormatter, :isolated_environmen
       formatter.started(filenames)
 
       filenames.each do |filename|
-        formatter.file_started(filename, {})
+        formatter.file_started(filename, options)
 
         if filename == filenames.last
           formatter.file_finished(filename, [offenses.first])
@@ -229,6 +223,36 @@ RSpec.describe RuboCop::Formatter::DisabledConfigFormatter, :isolated_environmen
     end
   end
 
+  context 'when disable_pending_cops option is passed' do
+    before do
+      formatter.started([])
+      formatter.finished([])
+    end
+
+    let(:formatter) { described_class.new(output, disable_pending_cops: true) }
+
+    let(:expected_heading_command) { 'rubocop --auto-gen-config --disable-pending-cops' }
+
+    it 'includes the option in the generation command' do
+      expect(output.string).to eq(heading)
+    end
+  end
+
+  context 'when enable_pending_cops option is passed' do
+    before do
+      formatter.started([])
+      formatter.finished([])
+    end
+
+    let(:formatter) { described_class.new(output, enable_pending_cops: true) }
+
+    let(:expected_heading_command) { 'rubocop --auto-gen-config --enable-pending-cops' }
+
+    it 'includes the option in the generation command' do
+      expect(output.string).to eq(heading)
+    end
+  end
+
   context 'when no files are inspected' do
     before do
       formatter.started([])
@@ -240,23 +264,45 @@ RSpec.describe RuboCop::Formatter::DisabledConfigFormatter, :isolated_environmen
     end
   end
 
-  context 'with auto-correct supported cop', :restore_registry do
+  context 'when a cop has a frozen array config parameter' do
+    before do
+      default_config = RuboCop::ConfigLoader.default_configuration
+      allow(default_config).to receive(:[]).with('Test/Cop1').and_return(
+        {
+          'Enabled' => true,
+          'AllowedOperators' => %w[* + & | ^].freeze
+        }
+      )
+      allow(default_config).to receive(:[]).with('Test/Cop2').and_return({})
+
+      formatter.started(['test_a.rb'])
+      formatter.file_started('test_a.rb', options)
+      formatter.file_finished('test_a.rb', offenses)
+      formatter.finished(['test_a.rb'])
+    end
+
+    it 'does not raise a `FrozenError`' do
+      expect(output.string).to include('# AllowedOperators: *, +, &, |, ^')
+    end
+  end
+
+  context 'with autocorrect supported cop', :restore_registry do
     before do
       stub_cop_class('Test::Cop3') { extend RuboCop::Cop::AutoCorrector }
 
-      formatter.started(['test_auto_correct.rb'])
-      formatter.file_started('test_auto_correct.rb', {})
-      formatter.file_finished('test_auto_correct.rb', offenses)
-      formatter.finished(['test_auto_correct.rb'])
+      formatter.started(['test_autocorrect.rb'])
+      formatter.file_started('test_autocorrect.rb', options)
+      formatter.file_finished('test_autocorrect.rb', offenses)
+      formatter.finished(['test_autocorrect.rb'])
     end
 
     let(:expected_rubocop_todo) do
       [heading,
        '# Offense count: 1',
-       '# Cop supports --auto-correct.',
+       '# This cop supports safe autocorrection (--autocorrect).',
        'Test/Cop3:',
        '  Exclude:',
-       "    - 'test_auto_correct.rb'",
+       "    - 'test_autocorrect.rb'",
        ''].join("\n")
     end
 
@@ -266,7 +312,42 @@ RSpec.describe RuboCop::Formatter::DisabledConfigFormatter, :isolated_environmen
       ]
     end
 
-    it 'adds a comment about --auto-correct option' do
+    it 'adds a comment about --autocorrect option' do
+      expect(output.string).to eq(expected_rubocop_todo)
+    end
+  end
+
+  context 'with local custom cop autocorrect settings', :restore_registry do
+    let(:cop_name) { 'Custom/TestCop' }
+    let(:offenses) do
+      [RuboCop::Cop::Offense.new(:convention, location, 'message', cop_name)]
+    end
+    let(:expected_rubocop_todo) do
+      [heading,
+       '# Offense count: 1',
+       '# This cop supports unsafe autocorrection (--autocorrect-all).',
+       "#{cop_name}:",
+       '  Exclude:',
+       "    - 'test_autocorrect.rb'",
+       ''].join("\n")
+    end
+
+    before do
+      stub_cop_class('Custom::TestCop') { extend RuboCop::Cop::AutoCorrector }
+
+      allow(pwd_config).to receive(:[]).with(cop_name).and_return({ 'SafeAutoCorrect' => false })
+      allow(RuboCop::ConfigLoader.default_configuration)
+        .to receive(:[])
+        .with(cop_name)
+        .and_return(nil)
+
+      formatter.started(['test_autocorrect.rb'])
+      formatter.file_started('test_autocorrect.rb', options)
+      formatter.file_finished('test_autocorrect.rb', offenses)
+      formatter.finished(['test_autocorrect.rb'])
+    end
+
+    it 'uses project config when default config is unavailable' do
       expect(output.string).to eq(expected_rubocop_todo)
     end
   end

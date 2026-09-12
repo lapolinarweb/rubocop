@@ -3,18 +3,21 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks the args passed to `fail` and `raise`. For exploded
-      # style (default), it recommends passing the exception class and message
-      # to `raise`, rather than construct an instance of the error. It will
-      # still allow passing just a message, or the construction of an error
-      # with more than one argument.
+      # Checks the args passed to `fail` and `raise`.
       #
-      # The exploded style works identically, but with the addition that it
-      # will also suggest constructing error objects when the exception is
-      # passed multiple arguments.
+      # Exploded style (default) enforces passing the exception class and message
+      # arguments separately, rather than constructing an instance of the error.
+      #
+      # Compact style enforces constructing an error instance.
+      #
+      # Both styles allow passing just a message, or an error instance when there is more
+      # than one argument.
       #
       # The exploded style has an `AllowedCompactTypes` configuration
-      # option that takes an Array of exception name Strings.
+      # option that takes an `Array` of exception name Strings.
+      #
+      # @safety
+      #   This cop is unsafe because `raise Foo` calls `Foo.exception`, not `Foo.new`.
       #
       # @example EnforcedStyle: exploded (default)
       #   # bad
@@ -47,6 +50,9 @@ module RuboCop
 
         EXPLODED_MSG = 'Provide an exception class and message as arguments to `%<method>s`.'
         COMPACT_MSG = 'Provide an exception object as an argument to `%<method>s`.'
+        ACCEPTABLE_ARG_TYPES = %i[
+          hash forwarded_restarg splat forwarded_kwrestarg forwarded_args
+        ].freeze
 
         RESTRICT_ON_SEND = %i[raise fail].freeze
 
@@ -77,10 +83,10 @@ module RuboCop
 
         def correction_exploded_to_compact(node)
           exception_node, *message_nodes = *node.arguments
-          return node.source if message_nodes.size > 1
+          return if message_nodes.size > 1
 
           argument = message_nodes.first.source
-          exception_class = exception_node.const_name || exception_node.receiver.source
+          exception_class = exception_node.receiver&.source || exception_node.source
 
           if node.parent && requires_parens?(node.parent)
             "#{node.method_name}(#{exception_class}.new(#{argument}))"
@@ -91,6 +97,9 @@ module RuboCop
 
         def check_compact(node)
           if node.arguments.size > 1
+            exception = node.first_argument
+            return if exception.send_type? && exception.first_argument&.hash_type?
+
             add_offense(node, message: format(COMPACT_MSG, method: node.method_name)) do |corrector|
               replacement = correction_exploded_to_compact(node)
 
@@ -107,8 +116,7 @@ module RuboCop
 
           first_arg = node.first_argument
 
-          return unless first_arg.send_type? && first_arg.method?(:new)
-          return if acceptable_exploded_args?(first_arg.arguments)
+          return if !use_new_method?(first_arg) || acceptable_exploded_args?(first_arg.arguments)
 
           return if allowed_non_exploded_type?(first_arg)
 
@@ -120,6 +128,10 @@ module RuboCop
           end
         end
 
+        def use_new_method?(first_arg)
+          first_arg.send_type? && first_arg.receiver && first_arg.method?(:new)
+        end
+
         def acceptable_exploded_args?(args)
           # Allow code like `raise Ex.new(arg1, arg2)`.
           return true if args.size > 1
@@ -129,9 +141,8 @@ module RuboCop
 
           arg = args.first
 
-          # Allow code like `raise Ex.new(kw: arg)`.
-          # Allow code like `raise Ex.new(*args)`.
-          arg.hash_type? || arg.splat_type?
+          # Allow nodes that may forward more than one argument
+          ACCEPTABLE_ARG_TYPES.include?(arg.type)
         end
 
         def allowed_non_exploded_type?(arg)
@@ -141,7 +152,7 @@ module RuboCop
         end
 
         def requires_parens?(parent)
-          parent.and_type? || parent.or_type? || (parent.if_type? && parent.ternary?)
+          parent.operator_keyword? || (parent.if_type? && parent.ternary?)
         end
       end
     end

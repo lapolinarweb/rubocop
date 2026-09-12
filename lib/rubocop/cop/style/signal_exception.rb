@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for uses of `fail` and `raise`.
+      # Checks for uses of `fail` and `raise`.
       #
       # @example EnforcedStyle: only_raise (default)
       #   # The `only_raise` style enforces the sole use of `raise`.
@@ -119,18 +119,12 @@ module RuboCop
         # @!method custom_fail_methods(node)
         def_node_search :custom_fail_methods, '{(def :fail ...) (defs _ :fail ...)}'
 
-        def on_new_investigation
-          ast = processed_source.ast
-          @custom_fail_defined = ast && custom_fail_methods(ast).any?
-        end
-
         def on_rescue(node)
           return unless style == :semantic
 
-          begin_node, *rescue_nodes, _else_node = *node
-          check_scope(:raise, begin_node)
+          check_scope(:raise, node.body)
 
-          rescue_nodes.each do |rescue_node|
+          node.resbody_branches.each do |rescue_node|
             check_scope(:fail, rescue_node)
             allow(:raise, rescue_node)
           end
@@ -141,7 +135,7 @@ module RuboCop
           when :semantic
             check_send(:raise, node) unless ignored_node?(node)
           when :only_raise
-            return if @custom_fail_defined
+            return if custom_fail_defined?
 
             check_send(:fail, node)
           when :only_fail
@@ -150,6 +144,13 @@ module RuboCop
         end
 
         private
+
+        def custom_fail_defined?
+          return @custom_fail_defined if defined?(@custom_fail_defined)
+
+          ast = processed_source.ast
+          @custom_fail_defined = ast && custom_fail_methods(ast).any?
+        end
 
         def message(method_name)
           case style
@@ -196,7 +197,7 @@ module RuboCop
         end
 
         def command_or_kernel_call?(name, node)
-          return unless node.method?(name)
+          return false unless node.method?(name)
 
           node.command?(name) || kernel_call?(node, name)
         end

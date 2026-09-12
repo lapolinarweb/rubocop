@@ -10,19 +10,21 @@ RSpec.describe RuboCop::ConfigStore do
       # dir/.rubocop.yml
       # dir/file2
       # dir/subdir/file3
-      "#{/dir/.match?(arg) ? 'dir' : '.'}/.rubocop.yml"
+      "#{arg.include?('dir') ? 'dir' : '.'}/.rubocop.yml"
     end
     allow(RuboCop::ConfigLoader).to receive(:configuration_from_file) { |arg| arg }
     allow(RuboCop::ConfigLoader).to receive(:load_file) { |arg| RuboCop::Config.new(arg) }
     allow(RuboCop::ConfigLoader)
       .to receive(:merge_with_default) { |config| "merged #{config.to_h}" }
     allow(RuboCop::ConfigLoader).to receive(:default_configuration).and_return('default config')
+    allow(RuboCop::ConfigLoader).to receive(:apply_default_overrides) { |arg| arg }
   end
 
   describe '.for' do
     it 'always uses config specified in command line' do
-      config_store.options_config = { options_config: true }
-      expect(config_store.for('file1')).to eq('merged {:options_config=>true}')
+      config = { options_config: true }
+      config_store.options_config = config
+      expect(config_store.for('file1')).to eq("merged #{config}")
     end
 
     context 'when no config specified in command line' do

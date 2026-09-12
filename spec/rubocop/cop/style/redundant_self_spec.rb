@@ -16,7 +16,15 @@ RSpec.describe RuboCop::Cop::Style::RedundantSelf, :config do
     expect_no_offenses('a = self.a')
   end
 
-  it 'accepts when nested receiver and lvalue have the name name' do
+  it 'does not report an offense when receiver and lvalue have the same name in or-assignment' do
+    expect_no_offenses('foo ||= self.foo')
+  end
+
+  it 'does not report an offense when receiver and lvalue have the same name in and-assignment' do
+    expect_no_offenses('foo &&= self.foo')
+  end
+
+  it 'accepts when nested receiver and lvalue have the same name' do
     expect_no_offenses('a = self.a || b || c')
   end
 
@@ -30,6 +38,22 @@ RSpec.describe RuboCop::Cop::Style::RedundantSelf, :config do
 
   it 'does not report an offense when masgn name is used in `if`' do
     expect_no_offenses('a, b = self.a if self.a')
+  end
+
+  it 'does not report an offense when lvasgn name is used in nested `if`' do
+    expect_no_offenses(<<~RUBY)
+      if self.a
+        a = self.a
+      end if self.a
+    RUBY
+  end
+
+  it 'does not report an offense when masgn name is used in nested `if`' do
+    expect_no_offenses(<<~RUBY)
+      if self.a
+        a, b = self.a
+      end if self.a
+    RUBY
   end
 
   it 'does not report an offense when lvasgn name is used in `unless`' do
@@ -65,12 +89,20 @@ RSpec.describe RuboCop::Cop::Style::RedundantSelf, :config do
       a = x if self.b
                ^^^^ Redundant `self` detected.
     RUBY
+
+    expect_correction(<<~RUBY)
+      a = x if b
+    RUBY
   end
 
   it 'reports an offense when a different masgn name is used in `if`' do
     expect_offense(<<~RUBY)
       a, b, c = x if self.d
                      ^^^^ Redundant `self` detected.
+    RUBY
+
+    expect_correction(<<~RUBY)
+      a, b, c = x if d
     RUBY
   end
 
@@ -94,6 +126,19 @@ RSpec.describe RuboCop::Cop::Style::RedundantSelf, :config do
 
   it 'accepts a self receiver on an lvalue of an or-assignment' do
     expect_no_offenses('self.logger ||= Rails.logger')
+  end
+
+  it 'registers an offense when a self receiver follows an or-assignment with the same left-hand side' do
+    expect_offense(<<~RUBY)
+      self.x ||= 42
+      self.x
+      ^^^^ Redundant `self` detected.
+    RUBY
+
+    expect_correction(<<~RUBY)
+      self.x ||= 42
+      x
+    RUBY
   end
 
   it 'accepts a self receiver on an lvalue of an and-assignment' do
@@ -167,6 +212,40 @@ RSpec.describe RuboCop::Cop::Style::RedundantSelf, :config do
     RUBY
   end
 
+  context 'Ruby 2.7', :ruby27 do
+    it 'registers an offense for self usage in numblocks' do
+      expect_offense(<<~RUBY)
+        %w[x y z].select do
+          self.axis == _1
+          ^^^^ Redundant `self` detected.
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        %w[x y z].select do
+          axis == _1
+        end
+      RUBY
+    end
+  end
+
+  context 'Ruby 3.4', :ruby34 do
+    it 'registers an offense for self usage in itblocks' do
+      expect_offense(<<~RUBY)
+        %w[x y z].select do
+          self.axis == it
+          ^^^^ Redundant `self` detected.
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        %w[x y z].select do
+          axis == it
+        end
+      RUBY
+    end
+  end
+
   describe 'instance methods' do
     it 'accepts a self receiver used to distinguish from blockarg' do
       expect_no_offenses(<<~RUBY)
@@ -204,6 +283,26 @@ RSpec.describe RuboCop::Cop::Style::RedundantSelf, :config do
       RUBY
     end
 
+    it 'accepts a self receiver used to distinguish from a rescue exception variable' do
+      expect_no_offenses(<<~RUBY)
+        def foo
+          do_something
+        rescue => e
+          self.e
+        end
+      RUBY
+    end
+
+    it 'accepts a self receiver used to distinguish from a rescue exception variable at the top level' do
+      expect_no_offenses(<<~RUBY)
+        begin
+          do_something
+        rescue => e
+          self.e
+        end
+      RUBY
+    end
+
     it 'accepts a self receiver used to distinguish from an argument' do
       expect_no_offenses(<<~RUBY)
         def foo(bar)
@@ -212,12 +311,20 @@ RSpec.describe RuboCop::Cop::Style::RedundantSelf, :config do
       RUBY
     end
 
-    it 'accepts a self receiver used to distinguish from an argument' \
-       ' when an inner method is defined' do
+    it 'accepts a self receiver used to distinguish from an argument ' \
+       'when an inner method is defined' do
       expect_no_offenses(<<~RUBY)
         def foo(bar)
           def inner_method(); end
           puts bar, self.bar
+        end
+      RUBY
+    end
+
+    it 'accepts `kwnilarg` argument node type' do
+      expect_no_offenses(<<~RUBY)
+        def requested_specs(groups, **nil)
+          some_method(self.groups)
         end
       RUBY
     end
@@ -293,6 +400,69 @@ RSpec.describe RuboCop::Cop::Style::RedundantSelf, :config do
     RUBY
   end
 
+  it 'does not register an offense when using `self.it` in the single line block' do
+    # `Lint/ItWithoutArgumentsInBlock` respects for this syntax.
+    expect_no_offenses(<<~RUBY)
+      0.times { self.it }
+    RUBY
+  end
+
+  it 'does not register an offense when using `self.it` in the multiline block' do
+    # `Lint/ItWithoutArgumentsInBlock` respects for this syntax.
+    expect_no_offenses(<<~RUBY)
+      0.times do
+        self.it
+        it = 1
+        it
+      end
+    RUBY
+  end
+
+  it 'registers an offense when using `it` without arguments in `def` body' do
+    expect_offense(<<~RUBY)
+      def foo
+        self.it
+        ^^^^ Redundant `self` detected.
+      end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      def foo
+        it
+      end
+    RUBY
+  end
+
+  it 'registers an offense when using `it` without arguments in the block with empty block parameter' do
+    expect_offense(<<~RUBY)
+      0.times { ||
+        self.it
+        ^^^^ Redundant `self` detected.
+      }
+    RUBY
+
+    expect_correction(<<~RUBY)
+      0.times { ||
+        it
+      }
+    RUBY
+  end
+
+  it 'registers an offense when using `it` without arguments in the block with useless block parameter' do
+    expect_offense(<<~RUBY)
+      0.times { |_n|
+        self.it
+        ^^^^ Redundant `self` detected.
+      }
+    RUBY
+
+    expect_correction(<<~RUBY)
+      0.times { |_n|
+        it
+      }
+    RUBY
+  end
+
   context 'with ruby >= 2.7', :ruby27 do
     context 'with pattern matching' do
       it 'accepts a self receiver on an `match-var`' do
@@ -325,8 +495,8 @@ RSpec.describe RuboCop::Cop::Style::RedundantSelf, :config do
       it 'accepts a self receiver with a `match-alt`' do
         expect_no_offenses(<<~RUBY)
           case pattern
-            in [foo] | { x: bar }
-              self.foo + self.bar + foo + bar
+            in _foo | _bar
+              self._foo + self._bar + _foo + _bar
           end
         RUBY
       end
@@ -365,6 +535,14 @@ RSpec.describe RuboCop::Cop::Style::RedundantSelf, :config do
             in ^foo, *bar
               self.foo + self.bar + foo + bar
               ^^^^ Redundant `self` detected.
+          end
+        RUBY
+
+        expect_correction(<<~RUBY)
+          foo = 17
+          case pattern
+            in ^foo, *bar
+              foo + self.bar + foo + bar
           end
         RUBY
       end

@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks expressions wrapping styles for multiline memoization.
+      # Checks expressions wrapping styles for multiline memoization.
       #
       # @example EnforcedStyle: keyword (default)
       #   # bad
@@ -31,6 +31,7 @@ module RuboCop
       #     baz
       #   )
       class MultilineMemoization < Base
+        include Alignment
         include ConfigurableEnforcedStyle
         extend AutoCorrector
 
@@ -38,11 +39,11 @@ module RuboCop
         BRACES_MSG = 'Wrap multiline memoization blocks in `(` and `)`.'
 
         def on_or_asgn(node)
-          _lhs, rhs = *node
+          rhs = node.expression
 
           return unless bad_rhs?(rhs)
 
-          add_offense(node.source_range) do |corrector|
+          add_offense(node) do |corrector|
             if style == :keyword
               keyword_autocorrect(rhs, corrector)
             else
@@ -64,8 +65,14 @@ module RuboCop
           if style == :keyword
             rhs.begin_type?
           else
-            rhs.kwbegin_type?
+            # A `begin` block with `rescue`/`ensure` cannot be expressed with
+            # parentheses, so wrapping it in `(` and `)` is not possible.
+            rhs.kwbegin_type? && !contains_rescue_or_ensure?(rhs)
           end
+        end
+
+        def contains_rescue_or_ensure?(node)
+          node.each_child_node(:rescue, :ensure).any?
         end
 
         def keyword_autocorrect(node, corrector)
@@ -75,11 +82,10 @@ module RuboCop
         end
 
         def keyword_begin_str(node, node_buf)
-          indent = config.for_cop('Layout/IndentationWidth')['Width'] || 2
           if node_buf.source[node.loc.begin.end_pos] == "\n"
             'begin'
           else
-            "begin\n#{' ' * (node.loc.column + indent)}"
+            "begin\n#{' ' * (node.loc.column + configured_indentation_width)}"
           end
         end
 

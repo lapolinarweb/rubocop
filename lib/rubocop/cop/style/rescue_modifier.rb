@@ -3,19 +3,17 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for uses of rescue in its modifier form.
-      #
-      # The cop to check `rescue` in its modifier form is added for following
+      # Checks for uses of `rescue` in its modifier form. It is added for the following
       # reasons:
       #
       # * The syntax of modifier form `rescue` can be misleading because it
-      #   might led us to believe that `rescue` handles the given exception
-      #   but it actually rescue all exceptions to return the given rescue
+      #   might lead us to believe that `rescue` handles the given exception
+      #   but it actually rescues all exceptions to return the given rescue
       #   block. In this case, value returned by handle_error or
       #   SomeException.
       #
       # * Modifier form `rescue` would rescue all the exceptions. It would
-      #   silently skip all exception or errors and handle the error.
+      #   silently skip all exceptions or errors and handle the error.
       #   Example: If `NoMethodError` is raised, modifier form rescue would
       #   handle the exception.
       #
@@ -69,18 +67,19 @@ module RuboCop
           node.parent && parentheses?(node.parent)
         end
 
+        # rubocop:disable-next Metrics/AbcSize
         def correct_rescue_block(corrector, node, parenthesized)
-          operation, rescue_modifier, = *node
-          *_, rescue_args = *rescue_modifier
+          operation = node.body
 
           node_indentation, node_offset = indentation_and_offset(node, parenthesized)
 
+          corrector.wrap(operation, '[', ']') if operation.array_type? && !operation.bracketed?
           corrector.remove(range_between(operation.source_range.end_pos, node.source_range.end_pos))
           corrector.insert_before(operation, "begin\n#{node_indentation}")
-          corrector.insert_after(operation, <<~RESCUE_CLAUSE.chop)
+          corrector.insert_after(heredoc_end(operation) || operation, <<~RESCUE_CLAUSE.chop)
 
             #{node_offset}rescue
-            #{node_indentation}#{rescue_args.source}
+            #{node_indentation}#{node.resbody_branches.first.body.source}
             #{node_offset}end
           RESCUE_CLAUSE
         end
@@ -93,6 +92,18 @@ module RuboCop
             node_offset = node_offset[0...-1]
           end
           [node_indentation, node_offset]
+        end
+
+        def heredoc_end(node)
+          return unless node.call_type?
+
+          heredoc = node.arguments.reverse.find do |argument|
+            argument.respond_to?(:heredoc?) && argument.heredoc?
+          end
+
+          return unless heredoc
+
+          heredoc.loc.heredoc_end
         end
       end
     end

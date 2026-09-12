@@ -35,7 +35,7 @@ module RuboCop
         def move_comment(eol_comment:, node:, corrector:)
           return unless eol_comment
 
-          text = eol_comment.loc.expression.source
+          text = eol_comment.source
           corrector.insert_before(node, "#{text}\n#{' ' * node.loc.keyword.column}")
           corrector.remove(eol_comment)
         end
@@ -50,7 +50,15 @@ module RuboCop
 
         def semicolon(node)
           @semicolon ||= {}.compare_by_identity
-          @semicolon[node] ||= processed_source.tokens_within(node).find(&:semicolon?)
+          @semicolon[node] ||= processed_source.sorted_tokens.select(&:semicolon?).find do |token|
+            next if token.pos.end_pos <= node.source_range.begin_pos
+
+            same_line?(token, node.body) && trailing_class_definition?(token, node.body)
+          end
+        end
+
+        def trailing_class_definition?(token, body)
+          token.column < body.loc.column
         end
       end
     end

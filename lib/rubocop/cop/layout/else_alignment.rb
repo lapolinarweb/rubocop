@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Layout
-      # This cop checks the alignment of else keywords. Normally they should
+      # Checks the alignment of else keywords. Normally they should
       # be aligned with an if/unless/while/until/begin/def/rescue keyword, but there
       # are special cases when they should follow the same rules as the
       # alignment of end.
@@ -49,7 +49,7 @@ module RuboCop
         end
 
         def on_rescue(node)
-          return unless node.loc.respond_to?(:else) && node.loc.else
+          return unless node.loc?(:else)
 
           check_alignment(base_range_of_rescue(node), node.loc.else)
         end
@@ -92,13 +92,8 @@ module RuboCop
           case parent.type
           when :def, :defs then base_for_method_definition(parent)
           when :kwbegin then parent.loc.begin
-          when :block
-            assignment_node = assignment_node(parent)
-            if same_line?(parent, assignment_node)
-              assignment_node.source_range
-            else
-              parent.send_node.source_range
-            end
+          when :block, :numblock, :itblock then start_line_range(parent)
+          when :class, :module, :sclass then parent.loc.keyword
           else node.loc.keyword
           end
         end
@@ -142,13 +137,6 @@ module RuboCop
           add_offense(else_range, message: message) do |corrector|
             autocorrect(corrector, else_range)
           end
-        end
-
-        def assignment_node(node)
-          assignment_node = node.ancestors.first
-          return unless assignment_node&.assignment?
-
-          assignment_node
         end
       end
     end

@@ -3,7 +3,10 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for trailing inline comments.
+      # Checks for trailing inline comments. Inline comments can
+      # make lines harder to read, especially when they are long.
+      # Placing comments on their own line above the code they
+      # describe is often clearer.
       #
       # @example
       #
@@ -23,7 +26,7 @@ module RuboCop
         def on_new_investigation
           processed_source.comments.each do |comment|
             next if comment_line?(processed_source[comment.loc.line - 1]) ||
-                    comment.text.match?(/\A# rubocop:(enable|disable)/)
+                    comment.text.match?(/\A# rubocop:(enable|disable|todo)/)
 
             add_offense(comment)
           end

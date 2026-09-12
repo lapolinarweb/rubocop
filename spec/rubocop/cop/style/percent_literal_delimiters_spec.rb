@@ -151,11 +151,11 @@ RSpec.describe RuboCop::Cop::Style::PercentLiteralDelimiters, :config do
     end
 
     it 'does not register an offense for preferred delimiters with only a closing delimiter' do
-      expect_no_offenses('%w(only closing delimiter charapter\))')
+      expect_no_offenses('%w(only closing delimiter character\))')
     end
 
     it 'does not register an offense for preferred delimiters with not a pairing delimiter' do
-      expect_no_offenses('%w|\|not pairirng delimiter|')
+      expect_no_offenses('%w|\|not pairing delimiter|')
     end
 
     it 'registers an offense for other delimiters' do
@@ -319,6 +319,10 @@ RSpec.describe RuboCop::Cop::Style::PercentLiteralDelimiters, :config do
         %s[symbol]
       RUBY
     end
+
+    it 'does not register an offense when the symbol contains the preferred delimiter' do
+      expect_no_offenses('%s([)')
+    end
   end
 
   context '`%x` interpolated system call' do
@@ -355,7 +359,7 @@ RSpec.describe RuboCop::Cop::Style::PercentLiteralDelimiters, :config do
     end
   end
 
-  context 'auto-correct' do
+  context 'autocorrect' do
     it 'fixes a string array in a scope' do
       expect_offense(<<~RUBY)
         module Foo

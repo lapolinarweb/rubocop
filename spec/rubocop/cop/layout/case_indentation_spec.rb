@@ -133,12 +133,12 @@ RSpec.describe RuboCop::Cop::Layout::CaseIndentation, :config do
         it "accepts a `when` clause that's equally indented with `case`" do
           expect_no_offenses(<<~RUBY)
             y = case a
-                when 0 then break
+                when 0 then raise
                 when 0 then return
                 else
                   z = case b
                       when 1 then return
-                      when 1 then break
+                      when 1 then raise
                       end
                 end
             case c
@@ -313,12 +313,12 @@ RSpec.describe RuboCop::Cop::Layout::CaseIndentation, :config do
         it "accepts an `in` clause that's equally indented with `case`" do
           expect_no_offenses(<<~RUBY)
             y = case a
-                in 0 then break
+                in 0 then raise
                 in 0 then return
                 else
                   z = case b
                       in 1 then return
-                      in 1 then break
+                      in 1 then raise
                       end
                 end
             case c
@@ -431,14 +431,14 @@ RSpec.describe RuboCop::Cop::Layout::CaseIndentation, :config do
         it 'registers an offense and corrects a `when` clause that is equally indented with `case`' do
           expect_offense(<<~RUBY)
             y = case a
-                when 0 then break
+                when 0 then raise
                 ^^^^ Indent `when` one step more than `case`.
                 when 0 then return
                 ^^^^ Indent `when` one step more than `case`.
                   z = case b
                       when 1 then return
                       ^^^^ Indent `when` one step more than `case`.
-                      when 1 then break
+                      when 1 then raise
                       ^^^^ Indent `when` one step more than `case`.
                       end
                 end
@@ -450,11 +450,11 @@ RSpec.describe RuboCop::Cop::Layout::CaseIndentation, :config do
 
           expect_correction(<<~RUBY)
             y = case a
-                  when 0 then break
+                  when 0 then raise
                   when 0 then return
                   z = case b
                         when 1 then return
-                        when 1 then break
+                        when 1 then raise
                       end
                 end
             case c
@@ -541,14 +541,14 @@ RSpec.describe RuboCop::Cop::Layout::CaseIndentation, :config do
         it 'registers an offense and corrects an `in` clause that is equally indented with `case`' do
           expect_offense(<<~RUBY)
             y = case a
-                in 0 then break
+                in 0 then raise
                 ^^ Indent `in` one step more than `case`.
                 in 0 then return
                 ^^ Indent `in` one step more than `case`.
                   z = case b
                       in 1 then return
                       ^^ Indent `in` one step more than `case`.
-                      in 1 then break
+                      in 1 then raise
                       ^^ Indent `in` one step more than `case`.
                       end
                 end
@@ -560,11 +560,11 @@ RSpec.describe RuboCop::Cop::Layout::CaseIndentation, :config do
 
           expect_correction(<<~RUBY)
             y = case a
-                  in 0 then break
+                  in 0 then raise
                   in 0 then return
                   z = case b
                         in 1 then return
-                        in 1 then break
+                        in 1 then raise
                       end
                 end
             case c
@@ -608,6 +608,27 @@ RSpec.describe RuboCop::Cop::Layout::CaseIndentation, :config do
           end
         end
 
+        context '`else` and `end` same line' do
+          it 'does not register an offense' do
+            expect_no_offenses(<<~RUBY)
+              case variable
+              when 'value1'
+              when 'value2'
+              else 'value3' end
+            RUBY
+          end
+        end
+
+        context '`when` and `end` same line' do
+          it 'does not register an offense' do
+            expect_no_offenses(<<~RUBY)
+              case variable
+              when 'value1' then 'then1'
+              when 'value2' then 'then2' end
+            RUBY
+          end
+        end
+
         context 'regarding assignment where the right hand side is a `case`' do
           it 'accepts a correctly indented assignment' do
             expect_no_offenses(<<~RUBY)
@@ -647,6 +668,16 @@ RSpec.describe RuboCop::Cop::Layout::CaseIndentation, :config do
         context 'with everything on a single line' do
           it 'does not register an offense' do
             expect_no_offenses('case foo; in pattern then 1; else 0; end')
+          end
+        end
+
+        context '`in` and `end` same line' do
+          it 'does not register an offense' do
+            expect_no_offenses(<<~RUBY)
+              case variable
+              in pattern then 'output1'
+              in pattern then 'output2' end
+            RUBY
           end
         end
 
@@ -820,7 +851,7 @@ RSpec.describe RuboCop::Cop::Layout::CaseIndentation, :config do
   context 'when `when` is on the same line as `case`' do
     let(:cop_config) { {} }
 
-    it 'registers an offense but does not auto-correct' do
+    it 'registers an offense but does not autocorrect' do
       expect_offense(<<~RUBY)
         case test when something
                   ^^^^ Indent `when` as deep as `case`.

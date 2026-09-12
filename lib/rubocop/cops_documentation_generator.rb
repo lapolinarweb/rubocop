@@ -1,19 +1,62 @@
 # frozen_string_literal: true
 
+require 'fileutils'
+require 'yard'
+
 # Class for generating documentation of all cops departments
 # @api private
 class CopsDocumentationGenerator # rubocop:disable Metrics/ClassLength
-  include ::RuboCop::Cop::Documentation
+  include RuboCop::Cop::Documentation
+
+  CopData = Struct.new(
+    :cop, :description, :example_objects, :safety_objects, :see_objects, :config, keyword_init: true
+  )
+
+  STRUCTURE = {
+    name:                  ->(data) { cop_header(data.cop) },
+    required_ruby_version: ->(data) { required_ruby_version(data.cop) },
+    properties:            ->(data) { properties(data.cop) },
+    description:           ->(data) { "#{data.description}\n" },
+    safety:                ->(data) { safety_object(data.safety_objects, data.cop) },
+    examples:              ->(data) { examples(data.example_objects, data.cop) },
+    configuration:         ->(data) { configurations(data.cop.department, data.cop, data.config) },
+    preview:               ->(data) { preview_defaults(data.cop) },
+    references:            ->(data) { references(data.cop, data.see_objects) }
+  }.freeze
+
   # This class will only generate documentation for cops that belong to one of
   # the departments given in the `departments` array. E.g. if we only wanted
   # documentation for Lint cops:
   #
   #   CopsDocumentationGenerator.new(departments: ['Lint']).call
   #
-  def initialize(departments: [])
+  # For plugin extensions, specify `:plugin_name` keyword as follows:
+  #
+  #   CopsDocumentationGenerator.new(
+  #     departments: ['Performance'], plugin_name: 'rubocop-performance'
+  #   ).call
+  #
+  # You can append additional information:
+  #
+  #   callback = ->(data) { required_rails_version(data.cop) }
+  #   CopsDocumentationGenerator.new(extra_info: { ruby_version: callback }).call
+  #
+  # This will insert the string returned from the lambda _after_ the section from RuboCop itself.
+  # See `CopsDocumentationGenerator::STRUCTURE` for available sections.
+  #
+  def initialize(departments: [], extra_info: {}, base_dir: Dir.pwd, plugin_name: nil)
     @departments = departments.map(&:to_sym).sort!
+    @extra_info = extra_info
     @cops = RuboCop::Cop::Registry.global
     @config = RuboCop::ConfigLoader.default_configuration
+    # NOTE: For example, this prevents excessive plugin loading before another task executes,
+    # in cases where plugins are already loaded by `internal_investigation`.
+    if plugin_name && @config.loaded_plugins.none? { |plugin| plugin.about.name == plugin_name }
+      RuboCop::Plugin.integrate_plugins(RuboCop::Config.new, [plugin_name])
+    end
+    @base_dir = base_dir
+    @docs_path = "#{base_dir}/docs/modules/ROOT"
+    FileUtils.mkdir_p("#{@docs_path}/pages")
   end
 
   def call
@@ -27,34 +70,52 @@ class CopsDocumentationGenerator # rubocop:disable Metrics/ClassLength
 
   private
 
-  attr_reader :departments, :cops, :config
+  attr_reader :departments, :cops, :config, :docs_path
 
   def cops_of_department(department)
     cops.with_department(department).sort!
   end
 
-  def cops_body(cop, description, examples_objects, safety_objects, pars) # rubocop:disable Metrics/AbcSize
-    content = h2(cop.cop_name)
-    content << required_ruby_version(cop)
-    content << properties(cop)
-    content << "#{description}\n"
-    content << safety_object(safety_objects) if safety_objects.any? { |s| !s.text.blank? }
-    content << examples(examples_objects) if examples_objects.count.positive?
-    content << configurations(pars)
-    content << references(cop)
+  def cops_body(data)
+    check_examples_to_have_the_default_enforced_style!(data.example_objects, data.cop)
+
+    content = +''
+    STRUCTURE.each do |section, block|
+      content << instance_exec(data, &block)
+      content << @extra_info[section].call(data) if @extra_info[section]
+    end
     content
   end
 
-  def examples(examples_object)
-    examples_object.each_with_object(h3('Examples').dup) do |example, content|
+  def check_examples_to_have_the_default_enforced_style!(example_objects, cop)
+    return if example_objects.none?
+
+    examples_describing_enforced_style = example_objects.map(&:name).grep(/EnforcedStyle:/)
+    return if examples_describing_enforced_style.none?
+
+    if examples_describing_enforced_style.index { |name| name.match?('default') }.nonzero?
+      raise "Put the example with the default EnforcedStyle on top for #{cop.cop_name}"
+    end
+
+    return if examples_describing_enforced_style.any? { |name| name.match?('default') }
+
+    raise "Specify the default EnforcedStyle for #{cop.cop_name}"
+  end
+
+  def examples(example_objects, cop)
+    return '' if example_objects.none?
+
+    example_objects.each_with_object(cop_subsection('Examples', cop).dup) do |example, content|
       content << "\n" unless content.end_with?("\n\n")
-      content << h4(example.name) unless example.name == ''
+      content << example_header(example.name, cop) unless example.name == ''
       content << code_example(example)
     end
   end
 
-  def safety_object(safety_object_objects)
-    safety_object_objects.each_with_object(h3('Safety').dup) do |safety_object, content|
+  def safety_object(safety_objects, cop)
+    return '' if safety_objects.all? { |s| s.text.blank? }
+
+    safety_objects.each_with_object(cop_subsection('Safety', cop).dup) do |safety_object, content|
       next if safety_object.text.blank?
 
       content << "\n" unless content.end_with?("\n\n")
@@ -66,17 +127,27 @@ class CopsDocumentationGenerator # rubocop:disable Metrics/ClassLength
   def required_ruby_version(cop)
     return '' unless cop.respond_to?(:required_minimum_ruby_version)
 
-    "NOTE: Required Ruby version: #{cop.required_minimum_ruby_version}\n\n"
+    if cop.required_minimum_ruby_version
+      requirement = cop.required_minimum_ruby_version
+    elsif cop.required_maximum_ruby_version
+      requirement = "<= #{cop.required_maximum_ruby_version}"
+    else
+      return ''
+    end
+
+    "NOTE: Requires Ruby version #{requirement}\n\n"
   end
 
-  # rubocop:disable Metrics/MethodLength
+  # rubocop:disable-next Metrics/MethodLength
   def properties(cop)
     header = [
       'Enabled by default', 'Safe', 'Supports autocorrection', 'Version Added',
       'Version Changed'
     ]
     autocorrect = if cop.support_autocorrect?
-                    "Yes#{' (Unsafe)' unless cop.new(config).safe_autocorrect?}"
+                    context = cop.new.always_autocorrect? ? 'Always' : 'Command-line only'
+
+                    "#{context}#{' (Unsafe)' unless cop.new(config).safe_autocorrect?}"
                   else
                     'No'
                   end
@@ -90,24 +161,26 @@ class CopsDocumentationGenerator # rubocop:disable Metrics/ClassLength
     ]]
     "#{to_table(header, content)}\n"
   end
-  # rubocop:enable Metrics/MethodLength
 
-  def h2(title)
+  def cop_header(cop)
     content = +"\n"
-    content << "== #{title}\n"
+    content << "[##{to_anchor(cop.cop_name)}]\n"
+    content << "== #{cop.cop_name}\n"
     content << "\n"
     content
   end
 
-  def h3(title)
+  def cop_subsection(title, cop)
     content = +"\n"
+    content << "[##{to_anchor(title)}-#{to_anchor(cop.cop_name)}]\n"
     content << "=== #{title}\n"
     content << "\n"
     content
   end
 
-  def h4(title)
-    content = +"==== #{title}\n"
+  def example_header(title, cop)
+    content = +"[##{to_anchor(title)}-#{to_anchor(cop.cop_name)}]\n"
+    content << "==== #{title}\n"
     content << "\n"
     content
   end
@@ -119,35 +192,59 @@ class CopsDocumentationGenerator # rubocop:disable Metrics/ClassLength
     content
   end
 
-  def configurations(pars)
-    return '' if pars.empty?
-
+  def configurations(department, cop, cop_config)
     header = ['Name', 'Default value', 'Configurable values']
-    configs = pars
-              .each_key
-              .reject { |key| key.start_with?('Supported') }
-              .reject { |key| key.start_with?('AllowMultipleStyles') }
+    configs = cop_config.each_key.reject do |key|
+      key == 'AllowMultipleStyles' || key == 'Preview' ||
+        (key != 'SupportedTypes' && key.start_with?('Supported'))
+    end
+    return '' if configs.empty?
+
     content = configs.map do |name|
-      configurable = configurable_values(pars, name)
-      default = format_table_value(pars[name])
-      [name, default, configurable]
+      configurable = configurable_values(cop_config, name)
+      default = format_table_value(cop_config[name])
+
+      [configuration_name(department, name), default, configurable]
     end
 
-    h3('Configurable attributes') + to_table(header, content)
+    cop_subsection('Configurable attributes', cop) + to_table(header, content)
   end
 
-  # rubocop:disable Metrics/CyclomaticComplexity,Metrics/MethodLength
-  def configurable_values(pars, name)
+  def preview_defaults(cop)
+    cop_config = config.for_cop(cop)
+    preview = cop_config['Preview']
+    return '' unless preview.is_a?(Hash)
+
+    header = ['Name', 'Current default', 'Preview default']
+    content = preview.map do |name, value|
+      [name, format_table_value(cop_config[name]), format_table_value(value)]
+    end
+
+    cop_subsection('Preview defaults', cop) +
+      'These defaults apply under xref:versioning.adoc#preview[Preview] and are ' \
+      "expected to become the regular defaults in the next major release.\n\n" +
+      to_table(header, content)
+  end
+
+  def configuration_name(department, name)
+    return name unless name == 'AllowMultilineFinalElement'
+
+    filename = "#{department_to_basename(department)}.adoc"
+    "xref:#{filename}#allowmultilinefinalelement[AllowMultilineFinalElement]"
+  end
+
+  # rubocop:disable-next Metrics/CyclomaticComplexity,Metrics/MethodLength
+  def configurable_values(cop_config, name)
     case name
     when /^Enforced/
       supported_style_name = RuboCop::Cop::Util.to_supported_styles(name)
-      format_table_value(pars[supported_style_name])
+      format_table_value(cop_config[supported_style_name])
     when 'IndentationWidth'
       'Integer'
     when 'Database'
-      format_table_value(pars['SupportedDatabases'])
+      format_table_value(cop_config['SupportedDatabases'])
     else
-      case pars[name]
+      case cop_config[name]
       when String
         'String'
       when Integer
@@ -163,12 +260,12 @@ class CopsDocumentationGenerator # rubocop:disable Metrics/ClassLength
       end
     end
   end
-  # rubocop:enable Metrics/CyclomaticComplexity,Metrics/MethodLength
 
   def to_table(header, content)
     table = ['|===', "| #{header.join(' | ')}\n\n"].join("\n")
     marked_contents = content.map do |plain_content|
-      plain_content.map { |c| "| #{c}" }.join("\n")
+      # Escape `|` with backslash to prevent the regexp `|` is not used as a table separator.
+      plain_content.map { |c| "| #{c.gsub('|', '\|')}" }.join("\n")
     end
     table << marked_contents.join("\n\n")
     table << "\n|===\n"
@@ -186,55 +283,84 @@ class CopsDocumentationGenerator # rubocop:disable Metrics/ClassLength
       else
         wrap_backtick(val.nil? ? '<none>' : val)
       end
-    value.gsub("#{Dir.pwd}/", '').rstrip
+    value.gsub("#{@base_dir}/", '').rstrip
   end
 
   def wrap_backtick(value)
     if value.is_a?(String)
-      # Use `+` to prevent text like `**/*.gemspec` from being bold.
-      value.start_with?('*') ? "`+#{value}+`" : "`#{value}`"
+      # Use `+` to prevent text like `**/*.gemspec`, `spec/**/*` from being bold.
+      value.include?('*') ? "`+#{value}+`" : "`#{value}`"
     else
       "`#{value}`"
     end
   end
 
-  def references(cop)
+  def references(cop, see_objects) # rubocop:disable Metrics/AbcSize
     cop_config = config.for_cop(cop)
     urls = RuboCop::Cop::MessageAnnotator.new(config, cop.name, cop_config, {}).urls
-    return '' if urls.empty?
+    return '' if urls.empty? && see_objects.empty?
 
-    content = h3('References')
+    content = cop_subsection('References', cop)
     content << urls.map { |url| "* #{url}" }.join("\n")
-    content << "\n"
+    content << "\n" unless urls.empty?
+    content << see_objects.map { |see| "* #{see.name}" }.join("\n")
+    content << "\n" unless see_objects.empty?
     content
   end
 
+  def footer_for_department(department)
+    return '' unless department == :Layout
+
+    filename = "#{department_to_basename(department)}_footer.adoc"
+    file = "#{docs_path}/partials/#{filename}"
+    return '' unless File.exist?(file)
+
+    "\ninclude::../partials/#{filename}[]\n"
+  end
+
+  # rubocop:disable-next Metrics/MethodLength
   def print_cops_of_department(department)
     selected_cops = cops_of_department(department)
-    content = +"= #{department}\n"
+    content = +<<~HEADER
+      ////
+        Do NOT edit this file by hand directly, as it is automatically generated.
+
+        Please make any necessary changes to the cop documentation within the source files themselves.
+      ////
+
+      = #{department}
+    HEADER
     selected_cops.each { |cop| content << print_cop_with_doc(cop) }
-    file_name = "#{Dir.pwd}/docs/modules/ROOT/pages/#{department_to_basename(department)}.adoc"
+    content << footer_for_department(department)
+    file_name = "#{docs_path}/pages/#{department_to_basename(department)}.adoc"
     File.open(file_name, 'w') do |file|
       puts "* generated #{file_name}"
       file.write("#{content.strip}\n")
     end
   end
 
-  def print_cop_with_doc(cop)
+  def print_cop_with_doc(cop) # rubocop:todo Metrics/AbcSize, Metrics/MethodLength
     cop_config = config.for_cop(cop)
     non_display_keys = %w[
-      Description Enabled StyleGuide Reference Safe SafeAutoCorrect VersionAdded
-      VersionChanged
+      Enabled
+      Description
+      StyleGuide
+      Reference References
+      Safe SafeAutoCorrect AutoCorrect
+      VersionAdded VersionChanged
     ]
-    pars = cop_config.reject { |k| non_display_keys.include? k }
+    parameters = cop_config.reject { |k| non_display_keys.include? k }
     description = 'No documentation'
-    examples_object = safety_object = []
+    example_objects = safety_objects = see_objects = []
     cop_code(cop) do |code_object|
       description = code_object.docstring unless code_object.docstring.blank?
-      examples_object = code_object.tags('example')
-      safety_object = code_object.tags('safety')
+      example_objects = code_object.tags('example')
+      safety_objects = code_object.tags('safety')
+      see_objects = code_object.tags('see')
     end
-    cops_body(cop, description, examples_object, safety_object, pars)
+    data = CopData.new(cop: cop, description: description, example_objects: example_objects,
+                       safety_objects: safety_objects, see_objects: see_objects, config: parameters)
+    cops_body(data)
   end
 
   def cop_code(cop)
@@ -246,11 +372,11 @@ class CopsDocumentationGenerator # rubocop:disable Metrics/ClassLength
   end
 
   def table_of_content_for_department(department)
-    type_title = department[0].upcase + department[1..-1]
+    type_title = department[0].upcase + department[1..]
     filename = "#{department_to_basename(department)}.adoc"
     content = +"=== Department xref:#{filename}[#{type_title}]\n\n"
     cops_of_department(department).each do |cop|
-      anchor = cop.cop_name.sub('/', '').downcase
+      anchor = to_anchor(cop.cop_name)
       content << "* xref:#{filename}##{anchor}[#{cop.cop_name}]\n"
     end
 
@@ -258,7 +384,10 @@ class CopsDocumentationGenerator # rubocop:disable Metrics/ClassLength
   end
 
   def print_table_of_contents
-    path = "#{Dir.pwd}/docs/modules/ROOT/pages/cops.adoc"
+    path = "#{docs_path}/pages/cops.adoc"
+
+    File.write(path, table_contents) and return unless File.exist?(path)
+
     original = File.read(path)
     content = +"// START_COP_LIST\n\n"
 
@@ -277,6 +406,19 @@ class CopsDocumentationGenerator # rubocop:disable Metrics/ClassLength
   def cop_status(status)
     return 'Disabled' unless status
 
-    status == 'pending' ? 'Pending' : 'Enabled'
+    case status
+    when 'pending' then 'Pending'
+    when 'preview' then 'Preview'
+    else 'Enabled'
+    end
+  end
+
+  # HTML anchor are somewhat limited in what characters they can contain, just
+  # accept a known-good subset. As long as it's consistent it doesn't matter.
+  #
+  # Style/AccessModifierDeclarations => styleaccessmodifierdeclarations
+  # OnlyFor: [] (default) => onlyfor_-__-_default_
+  def to_anchor(title)
+    title.delete('/').tr(' ', '-').gsub(/[^a-zA-Z0-9-]/, '_').downcase
   end
 end

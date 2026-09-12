@@ -97,7 +97,7 @@ RSpec.describe RuboCop::Cop::Style::RedundantBegin, :config do
     RUBY
   end
 
-  it "doesn't modify spacing when auto-correcting" do
+  it "doesn't modify spacing when autocorrecting" do
     expect_offense(<<~RUBY)
       def method
         begin
@@ -134,7 +134,7 @@ RSpec.describe RuboCop::Cop::Style::RedundantBegin, :config do
     RUBY
   end
 
-  it 'auto-corrects when there are trailing comments' do
+  it 'autocorrects when there are trailing comments' do
     expect_offense(<<~RUBY)
       def method
         begin # comment 1
@@ -164,6 +164,18 @@ RSpec.describe RuboCop::Cop::Style::RedundantBegin, :config do
     RUBY
 
     expect_correction("\n  do_something\n\n")
+  end
+
+  it 'registers an offense and corrects when using `begin` with multiple statements without `rescue` or `ensure`' do
+    expect_offense(<<~RUBY)
+      begin
+      ^^^^^ Redundant `begin` block detected.
+        foo
+        bar
+      end
+    RUBY
+
+    expect_correction("\n  foo\n  bar\n\n")
   end
 
   it 'does not register an offense when using `begin` with `rescue`' do
@@ -265,6 +277,346 @@ RSpec.describe RuboCop::Cop::Style::RedundantBegin, :config do
     RUBY
   end
 
+  it 'registers and corrects an offense when a multiline `begin` block is inside `if`' do
+    expect_offense(<<~RUBY)
+      if condition
+        begin
+        ^^^^^ Redundant `begin` block detected.
+          foo
+          bar
+        end
+      end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      if condition
+       #{trailing_whitespace}
+          foo
+          bar
+       #{trailing_whitespace}
+      end
+    RUBY
+  end
+
+  it 'registers and corrects an offense when a multiline `begin` block is inside `unless`' do
+    expect_offense(<<~RUBY)
+      unless condition
+        begin
+        ^^^^^ Redundant `begin` block detected.
+          foo
+          bar
+        end
+      end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      unless condition
+       #{trailing_whitespace}
+          foo
+          bar
+       #{trailing_whitespace}
+      end
+    RUBY
+  end
+
+  it 'registers and corrects an offense when a multiline `begin` block is inside `elsif`' do
+    expect_offense(<<~RUBY)
+      if condition
+        foo
+      elsif condition2
+        begin
+        ^^^^^ Redundant `begin` block detected.
+          bar
+          baz
+        end
+      end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      if condition
+        foo
+      elsif condition2
+       #{trailing_whitespace}
+          bar
+          baz
+       #{trailing_whitespace}
+      end
+    RUBY
+  end
+
+  it 'registers and corrects an offense when a multiline `begin` block is inside `else`' do
+    expect_offense(<<~RUBY)
+      if condition
+        foo
+      else
+        begin
+        ^^^^^ Redundant `begin` block detected.
+          bar
+          baz
+        end
+      end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      if condition
+        foo
+      else
+       #{trailing_whitespace}
+          bar
+          baz
+       #{trailing_whitespace}
+      end
+    RUBY
+  end
+
+  it 'registers and corrects an offense when a multiline `begin` block is inside `case`/`when`' do
+    expect_offense(<<~RUBY)
+      case condition
+        when foo
+          begin
+          ^^^^^ Redundant `begin` block detected.
+            bar
+            baz
+          end
+      end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      case condition
+        when foo
+         #{trailing_whitespace}
+            bar
+            baz
+         #{trailing_whitespace}
+      end
+    RUBY
+  end
+
+  it 'registers and corrects an offense when a multiline `begin` block is inside `case`/`when`/`else`' do
+    expect_offense(<<~RUBY)
+      case condition
+        when foo
+          bar
+        else
+          begin
+          ^^^^^ Redundant `begin` block detected.
+            baz
+            quux
+          end
+      end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      case condition
+        when foo
+          bar
+        else
+         #{trailing_whitespace}
+            baz
+            quux
+         #{trailing_whitespace}
+      end
+    RUBY
+  end
+
+  it 'registers and corrects an offense when a multiline `begin` block is inside `case`/`in`' do
+    expect_offense(<<~RUBY)
+      case condition
+        in foo
+          begin
+          ^^^^^ Redundant `begin` block detected.
+            bar
+            baz
+          end
+      end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      case condition
+        in foo
+         #{trailing_whitespace}
+            bar
+            baz
+         #{trailing_whitespace}
+      end
+    RUBY
+  end
+
+  it 'registers and corrects an offense when a multiline `begin` block is inside `case`/`in`/`else`' do
+    expect_offense(<<~RUBY)
+      case condition
+        in foo
+          bar
+        else
+          begin
+          ^^^^^ Redundant `begin` block detected.
+            baz
+            quux
+          end
+      end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      case condition
+        in foo
+          bar
+        else
+         #{trailing_whitespace}
+            baz
+            quux
+         #{trailing_whitespace}
+      end
+    RUBY
+  end
+
+  it 'registers and corrects an offense when a multiline `begin` block is inside `while`' do
+    expect_offense(<<~RUBY)
+      while condition
+        begin
+        ^^^^^ Redundant `begin` block detected.
+          foo
+          bar
+        end
+      end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      while condition
+       #{trailing_whitespace}
+          foo
+          bar
+       #{trailing_whitespace}
+      end
+    RUBY
+  end
+
+  it 'registers and corrects an offense when a multiline `begin` block is inside `until`' do
+    expect_offense(<<~RUBY)
+      until condition
+        begin
+        ^^^^^ Redundant `begin` block detected.
+          foo
+          bar
+        end
+      end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      until condition
+       #{trailing_whitespace}
+          foo
+          bar
+       #{trailing_whitespace}
+      end
+    RUBY
+  end
+
+  it 'does not register an offense when using `begin` with `rescue` inside an `if` statement' do
+    expect_no_offenses(<<~RUBY)
+      if condition
+        begin
+          foo
+          bar
+        rescue StandardError
+          baz
+        end
+      end
+    RUBY
+  end
+
+  it 'does not register an offense when using `begin` with `ensure` inside an `if` statement' do
+    expect_no_offenses(<<~RUBY)
+      if condition
+        begin
+          foo
+          bar
+        ensure
+          baz
+        end
+      end
+    RUBY
+  end
+
+  it 'does not register an offense when using `begin` with `rescue` inside an `case` statement' do
+    expect_no_offenses(<<~RUBY)
+      case condition
+        when foo
+          begin
+            bar
+            baz
+          rescue StandardError
+            quux
+          end
+      end
+    RUBY
+  end
+
+  it 'does not register an offense when using `begin` with `ensure` inside an `case` statement' do
+    expect_no_offenses(<<~RUBY)
+      case condition
+        when foo
+          begin
+            bar
+            baz
+          ensure
+            quux
+          end
+      end
+    RUBY
+  end
+
+  it 'does not register an offense when using `begin` with `rescue` inside an `while` statement' do
+    expect_no_offenses(<<~RUBY)
+      while condition
+        begin
+          foo
+          bar
+        rescue StandardError
+          baz
+        end
+      end
+    RUBY
+  end
+
+  it 'does not register an offense when using `begin` with `ensure` inside an `while` statement' do
+    expect_no_offenses(<<~RUBY)
+      while condition
+        begin
+          foo
+          bar
+        ensure
+          baz
+        end
+      end
+    RUBY
+  end
+
+  it 'does not register an offense when using `begin` with `rescue` inside an `until` statement' do
+    expect_no_offenses(<<~RUBY)
+      until condition
+        begin
+          foo
+          bar
+        rescue StandardError
+          baz
+        end
+      end
+    RUBY
+  end
+
+  it 'does not register an offense when using `begin` with `ensure` inside an `until` statement' do
+    expect_no_offenses(<<~RUBY)
+      until condition
+        begin
+          foo
+          bar
+        ensure
+          baz
+        end
+      end
+    RUBY
+  end
+
   it 'does not register an offense when using `begin` with multiple statement for or assignment' do
     expect_no_offenses(<<~RUBY)
       var ||= begin
@@ -344,76 +696,92 @@ RSpec.describe RuboCop::Cop::Style::RedundantBegin, :config do
     RUBY
   end
 
-  it 'registers an offense for a do-end block with redundant begin-end' do
-    expect_offense(<<~RUBY)
-      do_something do
-        begin
-        ^^^^^ Redundant `begin` block detected.
-          foo
-        rescue => e
-          bar
+  context '< Ruby 2.5', :ruby24, unsupported_on: :prism do
+    it 'accepts a do-end block with a begin-end' do
+      expect_no_offenses(<<~RUBY)
+        do_something do
+          begin
+            foo
+          rescue => e
+            bar
+          end
         end
-      end
-    RUBY
-
-    expect_correction(<<~RUBY)
-      do_something do
-       #{trailing_whitespace}
-          foo
-        rescue => e
-          bar
-       #{trailing_whitespace}
-      end
-    RUBY
+      RUBY
+    end
   end
 
-  it 'accepts a {} block with a begin-end' do
-    expect_no_offenses(<<~RUBY)
-      do_something {
-        begin
-          foo
-        rescue => e
-          bar
+  context '>= ruby 2.5', :ruby25 do
+    it 'registers an offense for a do-end block with redundant begin-end' do
+      expect_offense(<<~RUBY)
+        do_something do
+          begin
+          ^^^^^ Redundant `begin` block detected.
+            foo
+          rescue => e
+            bar
+          end
         end
-      }
-    RUBY
-  end
+      RUBY
 
-  it 'accepts a block with a begin block after a statement' do
-    expect_no_offenses(<<~RUBY)
-      do_something do
-        something
-        begin
-          ala
-        rescue => e
-          bala
+      expect_correction(<<~RUBY)
+        do_something do
+         #{trailing_whitespace}
+            foo
+          rescue => e
+            bar
+         #{trailing_whitespace}
         end
-      end
-    RUBY
-  end
+      RUBY
+    end
 
-  it 'accepts a stabby lambda with a begin-end' do
-    expect_no_offenses(<<~RUBY)
-      -> do
-        begin
-          foo
-        rescue => e
-          bar
-        end
-      end
-    RUBY
-  end
+    it 'accepts a {} block with a begin-end' do
+      expect_no_offenses(<<~RUBY)
+        do_something {
+          begin
+            foo
+          rescue => e
+            bar
+          end
+        }
+      RUBY
+    end
 
-  it 'accepts super with block' do
-    expect_no_offenses(<<~RUBY)
-      def a_method
-        super do |arg|
-          foo
-        rescue => e
-          bar
+    it 'accepts a block with a begin block after a statement' do
+      expect_no_offenses(<<~RUBY)
+        do_something do
+          something
+          begin
+            ala
+          rescue => e
+            bala
+          end
         end
-      end
-    RUBY
+      RUBY
+    end
+
+    it 'accepts a stabby lambda with a begin-end' do
+      expect_no_offenses(<<~RUBY)
+        -> do
+          begin
+            foo
+          rescue => e
+            bar
+          end
+        end
+      RUBY
+    end
+
+    it 'accepts super with block' do
+      expect_no_offenses(<<~RUBY)
+        def a_method
+          super do |arg|
+            foo
+          rescue => e
+            bar
+          end
+        end
+      RUBY
+    end
   end
 
   it 'accepts when one-liner `begin` block has multiple statements with modifier condition' do
@@ -461,5 +829,173 @@ RSpec.describe RuboCop::Cop::Style::RedundantBegin, :config do
     RUBY
 
     expect_correction("unless condition\n  \n    foo\n  \nend\n")
+  end
+
+  it 'reports an offense when assigning nested `begin` blocks' do
+    expect_offense(<<~RUBY)
+      @foo ||= begin
+        @bar ||= begin
+                 ^^^^^ Redundant `begin` block detected.
+          baz
+        end
+      end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      @foo ||= @bar ||= baz
+      #{trailing_whitespace * 2}
+
+    RUBY
+  end
+
+  it 'reports an offense when assigning nested blocks which contain `begin` blocks' do
+    expect_offense(<<~RUBY)
+      var = do_something do
+        begin
+        ^^^^^ Redundant `begin` block detected.
+          do_something do
+            begin
+            ^^^^^ Redundant `begin` block detected.
+              foo
+            ensure
+              bar
+            end
+          end
+        ensure
+          baz
+        end
+      end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      var = do_something do
+       #{trailing_whitespace}
+          do_something do
+           #{trailing_whitespace}
+              foo
+            ensure
+              bar
+           #{trailing_whitespace}
+          end
+        ensure
+          baz
+       #{trailing_whitespace}
+      end
+    RUBY
+  end
+
+  context 'Ruby 2.7', :ruby27 do
+    it 'reports an offense when assigning nested blocks which contain `begin` blocks' do
+      expect_offense(<<~RUBY)
+        var = do_something do
+          begin
+          ^^^^^ Redundant `begin` block detected.
+            do_something do
+              begin
+              ^^^^^ Redundant `begin` block detected.
+                _1
+              ensure
+                bar
+              end
+            end
+          ensure
+            baz
+          end
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        var = do_something do
+         #{trailing_whitespace}
+            do_something do
+             #{trailing_whitespace}
+                _1
+              ensure
+                bar
+             #{trailing_whitespace}
+            end
+          ensure
+            baz
+         #{trailing_whitespace}
+        end
+      RUBY
+    end
+  end
+
+  context 'Ruby 3.4', :ruby34 do
+    it 'reports an offense when assigning nested blocks which contain `begin` blocks' do
+      expect_offense(<<~RUBY)
+        var = do_something do
+          begin
+          ^^^^^ Redundant `begin` block detected.
+            do_something do
+              begin
+              ^^^^^ Redundant `begin` block detected.
+                it
+              ensure
+                bar
+              end
+            end
+          ensure
+            baz
+          end
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        var = do_something do
+         #{trailing_whitespace}
+            do_something do
+             #{trailing_whitespace}
+                it
+              ensure
+                bar
+             #{trailing_whitespace}
+            end
+          ensure
+            baz
+         #{trailing_whitespace}
+        end
+      RUBY
+    end
+  end
+
+  context 'when using endless method definition', :ruby30 do
+    it 'registers when `begin` block has a single statement' do
+      expect_offense(<<~RUBY)
+        def foo = begin
+                  ^^^^^ Redundant `begin` block detected.
+          bar
+        end
+      RUBY
+
+      expect_correction("def foo =  bar\n\n")
+    end
+
+    it 'accepts when `begin` block has multiple statements' do
+      expect_no_offenses(<<~RUBY)
+        def foo = begin
+          bar
+          baz
+        end
+      RUBY
+    end
+
+    it 'accepts when `begin` block has no statements' do
+      expect_no_offenses(<<~RUBY)
+        def foo = begin
+        end
+      RUBY
+    end
+
+    it 'accepts when `begin` block includes `rescue` clause' do
+      expect_no_offenses(<<~RUBY)
+        def func = begin
+          foo
+        rescue
+          bar
+        end
+      RUBY
+    end
   end
 end

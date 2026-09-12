@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Layout
-      # Checks for semicolon (;) not followed by some kind of space.
+      # Checks for semicolon (`;`) not followed by some kind of space.
       #
       # @example
       #   # bad
@@ -20,8 +20,18 @@ module RuboCop
           cfg['EnforcedStyle'] || 'space'
         end
 
-        def kind(token)
+        def kind(token, _next_token)
           'semicolon' if token.semicolon?
+        end
+
+        def space_missing?(token1, token2)
+          super && !semicolon_sequence?(token1, token2)
+        end
+
+        private
+
+        def semicolon_sequence?(token, next_token)
+          token.semicolon? && next_token.semicolon?
         end
       end
     end

@@ -36,6 +36,39 @@ RSpec.describe RuboCop::Cop::Style::NilComparison, :config do
         bar if x.nil?
       RUBY
     end
+
+    it 'registers and corrects an offense when using `x.==(nil)` syntax' do
+      expect_offense(<<~RUBY)
+        x.==(nil)
+          ^^ Prefer the use of the `nil?` predicate.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        x.nil?
+      RUBY
+    end
+
+    it 'registers and corrects an offense when using `x.===(nil)` syntax' do
+      expect_offense(<<~RUBY)
+        x.===(nil)
+          ^^^ Prefer the use of the `nil?` predicate.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        x.nil?
+      RUBY
+    end
+
+    it 'parenthesizes an operator-expression receiver' do
+      expect_offense(<<~RUBY)
+        !x == nil
+           ^^ Prefer the use of the `nil?` predicate.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        (!x).nil?
+      RUBY
+    end
   end
 
   context 'configured with comparison preferred' do
@@ -61,6 +94,21 @@ RSpec.describe RuboCop::Cop::Style::NilComparison, :config do
       expect_correction(<<~RUBY)
         !(x == nil)
       RUBY
+    end
+
+    it 'wraps the comparison when it is an operand of a tighter operator' do
+      expect_offense(<<~RUBY)
+        ary << x.nil?
+                 ^^^^ Prefer the use of the `==` comparison.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        ary << (x == nil)
+      RUBY
+    end
+
+    it 'registers no offense when there is no receiver' do
+      expect_no_offenses('nil?')
     end
   end
 end

@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for variable interpolation (like "#@ivar").
+      # Checks for variable interpolation (like "#@ivar").
       #
       # @example
       #   # bad
@@ -19,8 +19,7 @@ module RuboCop
         include Interpolation
         extend AutoCorrector
 
-        MSG = 'Replace interpolated variable `%<variable>s` ' \
-              'with expression `#{%<variable>s}`.' # rubocop:disable Lint/InterpolationCheck
+        MSG = 'Replace interpolated variable `%<variable>s` with expression `#{%<variable>s}`.'
 
         def on_node_with_interpolations(node)
           var_nodes(node.children).each do |var_node|

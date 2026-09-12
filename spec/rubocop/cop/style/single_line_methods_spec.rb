@@ -89,14 +89,14 @@ RSpec.describe RuboCop::Cop::Style::SingleLineMethods, :config do
     RUBY
   end
 
-  it 'does not crash on an method with a capitalized name' do
+  it 'does not crash on a method with a capitalized name' do
     expect_no_offenses(<<~RUBY)
       def NoSnakeCase
       end
     RUBY
   end
 
-  it 'auto-corrects def with semicolon after method name' do
+  it 'autocorrects def with semicolon after method name' do
     expect_offense(<<-RUBY.strip_margin('|'))
       |  def some_method; body end # Cmnt
       |  ^^^^^^^^^^^^^^^^^^^^^^^^^ Avoid single-line method definitions.
@@ -110,7 +110,7 @@ RSpec.describe RuboCop::Cop::Style::SingleLineMethods, :config do
     RUBY
   end
 
-  it 'auto-corrects defs with parentheses after method name' do
+  it 'autocorrects defs with parentheses after method name' do
     expect_offense(<<-RUBY.strip_margin('|'))
       |  def self.some_method() body end
       |  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Avoid single-line method definitions.
@@ -123,7 +123,7 @@ RSpec.describe RuboCop::Cop::Style::SingleLineMethods, :config do
     RUBY
   end
 
-  it 'auto-corrects def with argument in parentheses' do
+  it 'autocorrects def with argument in parentheses' do
     expect_offense(<<-RUBY.strip_margin('|'))
       |  def some_method(arg) body end
       |  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Avoid single-line method definitions.
@@ -136,7 +136,7 @@ RSpec.describe RuboCop::Cop::Style::SingleLineMethods, :config do
     RUBY
   end
 
-  it 'auto-corrects def with argument and no parentheses' do
+  it 'autocorrects def with argument and no parentheses' do
     expect_offense(<<-RUBY.strip_margin('|'))
       |  def some_method arg; body end
       |  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Avoid single-line method definitions.
@@ -149,7 +149,7 @@ RSpec.describe RuboCop::Cop::Style::SingleLineMethods, :config do
     RUBY
   end
 
-  it 'auto-corrects def with semicolon before end' do
+  it 'autocorrects def with semicolon before end' do
     expect_offense(<<-RUBY.strip_margin('|'))
       |  def some_method; b1; b2; end
       |  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Avoid single-line method definitions.
@@ -184,6 +184,12 @@ RSpec.describe RuboCop::Cop::Style::SingleLineMethods, :config do
       it 'corrects to an endless class method definition' do
         expect_correction(<<~RUBY.strip, source: 'def self.some_method; body end')
           def self.some_method() = body
+        RUBY
+      end
+
+      it 'corrects to an endless singleton method definition' do
+        expect_correction(<<~RUBY.strip, source: 'def foo.some_method; body end')
+          def foo.some_method() = body
         RUBY
       end
 
@@ -232,6 +238,46 @@ RSpec.describe RuboCop::Cop::Style::SingleLineMethods, :config do
         end
       end
 
+      RuboCop::AST::MethodDispatchNode.const_get(:ARITHMETIC_OPERATORS).each do |op|
+        it "corrects to an endless class method definition when using #{op}" do
+          expect_correction(<<~RUBY.strip, source: "def foo() bar #{op} baz end")
+            def foo() = bar #{op} baz
+          RUBY
+        end
+      end
+
+      it 'registers an offense when a single-line method definition contains `if` modifier' do
+        expect_correction(<<~RUBY.strip, source: 'def foo() bar if baz end')
+          def foo()#{trailing_whitespace}
+            bar if baz#{trailing_whitespace}
+          end
+        RUBY
+      end
+
+      it 'registers an offense when a single-line method definition contains `unless` modifier' do
+        expect_correction(<<~RUBY.strip, source: 'def foo() bar unless baz end')
+          def foo()#{trailing_whitespace}
+            bar unless baz#{trailing_whitespace}
+          end
+        RUBY
+      end
+
+      it 'registers an offense when a single-line method definition contains `while` modifier' do
+        expect_correction(<<~RUBY.strip, source: 'def foo() bar while baz end')
+          def foo()#{trailing_whitespace}
+            bar while baz#{trailing_whitespace}
+          end
+        RUBY
+      end
+
+      it 'registers an offense when a single-line method definition contains `until` modifier' do
+        expect_correction(<<~RUBY.strip, source: 'def foo() bar until baz end')
+          def foo()#{trailing_whitespace}
+            bar until baz#{trailing_whitespace}
+          end
+        RUBY
+      end
+
       it 'does not to an endless class method definition when using `return`' do
         expect_correction(<<~RUBY.strip, source: 'def foo(argument) return bar(argument); end')
           def foo(argument)#{trailing_whitespace}
@@ -240,7 +286,7 @@ RSpec.describe RuboCop::Cop::Style::SingleLineMethods, :config do
         RUBY
       end
 
-      it 'does not to an endless class method definition when using `break`' do
+      it 'does not to an endless class method definition when using `break`', :ruby32, unsupported_on: :prism do
         expect_correction(<<~RUBY.strip, source: 'def foo(argument) break bar(argument); end')
           def foo(argument)#{trailing_whitespace}
             break bar(argument);#{trailing_whitespace}
@@ -248,7 +294,7 @@ RSpec.describe RuboCop::Cop::Style::SingleLineMethods, :config do
         RUBY
       end
 
-      it 'does not to an endless class method definition when using `next`' do
+      it 'does not to an endless class method definition when using `next`', :ruby32, unsupported_on: :prism do
         expect_correction(<<~RUBY.strip, source: 'def foo(argument) next bar(argument); end')
           def foo(argument)#{trailing_whitespace}
             next bar(argument);#{trailing_whitespace}
@@ -297,7 +343,7 @@ RSpec.describe RuboCop::Cop::Style::SingleLineMethods, :config do
     context 'with `disallow` style' do
       let(:endless_method_config) { { 'EnforcedStyle' => 'disallow' } }
 
-      it 'corrects to an normal method' do
+      it 'corrects to a normal method' do
         expect_correction(<<~RUBY.strip, source: 'def some_method; body end')
           def some_method;#{trailing_whitespace}
             body#{trailing_whitespace}
@@ -318,7 +364,19 @@ RSpec.describe RuboCop::Cop::Style::SingleLineMethods, :config do
       it_behaves_like 'convert to endless method'
     end
 
-    context 'prior to ruby 3.0', :ruby27 do
+    context 'with `require_single_line` style' do
+      let(:endless_method_config) { { 'EnforcedStyle' => 'require_single_line' } }
+
+      it_behaves_like 'convert to endless method'
+    end
+
+    context 'with `require_always` style' do
+      let(:endless_method_config) { { 'EnforcedStyle' => 'require_always' } }
+
+      it_behaves_like 'convert to endless method'
+    end
+
+    context 'prior to ruby 3.0', :ruby27, unsupported_on: :prism do
       let(:endless_method_config) { { 'EnforcedStyle' => 'allow_always' } }
 
       it 'corrects to a multiline method' do
@@ -331,10 +389,10 @@ RSpec.describe RuboCop::Cop::Style::SingleLineMethods, :config do
     end
   end
 
-  context 'when `Style/EndlessMethod` is disabled' do
+  context 'when `Style/EndlessMethod` is disabled', :ruby30 do
     before { config['Style/EndlessMethod'] = { 'Enabled' => false } }
 
-    it 'corrects to an normal method' do
+    it 'corrects to a normal method' do
       expect_correction(<<~RUBY.strip, source: 'def some_method; body end')
         def some_method;#{trailing_whitespace}
           body#{trailing_whitespace}

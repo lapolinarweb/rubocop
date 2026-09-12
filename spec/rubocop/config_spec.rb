@@ -8,6 +8,14 @@ RSpec.describe RuboCop::Config do
   let(:hash) { {} }
   let(:loaded_path) { 'example/.rubocop.yml' }
 
+  describe '.new' do
+    context 'without arguments' do
+      subject(:configuration) { described_class.new }
+
+      it { expect(configuration['Lint/BooleanSymbol']['SafeAutoCorrect']).to be(false) }
+    end
+  end
+
   describe '#validate', :isolated_environment do
     subject(:configuration) do
       # ConfigLoader.load_file will validate config
@@ -17,22 +25,68 @@ RSpec.describe RuboCop::Config do
     let(:configuration_path) { '.rubocop.yml' }
 
     context 'when the configuration includes any unrecognized cop name' do
+      include_context 'mock console output'
+
       before do
         create_file(configuration_path, <<~YAML)
           LyneLenth:
             Enabled: true
             Max: 100
         YAML
-        $stderr = StringIO.new
       end
 
-      after { $stderr = STDERR }
-
-      it 'raises an validation error' do
+      it 'raises a validation error' do
         expect { configuration }.to raise_error(
           RuboCop::ValidationError,
           'unrecognized cop or department LyneLenth found in .rubocop.yml'
         )
+      end
+    end
+
+    context 'when the configuration includes any unrecognized cop name and given `--ignore-unrecognized-cops` option' do
+      context 'there is unrecognized cop' do
+        include_context 'mock console output'
+
+        before do
+          create_file(configuration_path, <<~YAML)
+            LyneLenth:
+              Enabled: true
+              Max: 100
+          YAML
+          RuboCop::ConfigLoader.ignore_unrecognized_cops = true
+        end
+
+        after do
+          RuboCop::ConfigLoader.ignore_unrecognized_cops = nil
+        end
+
+        it 'prints a warning about the cop' do
+          configuration
+          expect($stderr.string)
+            .to eq("The following cops or departments are not recognized and will be ignored:\n" \
+                   "unrecognized cop or department LyneLenth found in .rubocop.yml\n")
+        end
+      end
+
+      context 'there are no unrecognized cops' do
+        include_context 'mock console output'
+
+        before do
+          create_file(configuration_path, <<~YAML)
+            Layout/LineLength:
+              Enabled: true
+          YAML
+          RuboCop::ConfigLoader.ignore_unrecognized_cops = true
+        end
+
+        after do
+          RuboCop::ConfigLoader.ignore_unrecognized_cops = nil
+        end
+
+        it 'does not print any warnings' do
+          configuration
+          expect($stderr.string).to eq('')
+        end
       end
     end
 
@@ -42,7 +96,20 @@ RSpec.describe RuboCop::Config do
       it 'raises validation error' do
         expect { configuration.validate }
           .to raise_error(RuboCop::ValidationError,
-                          %r{^empty section Layout/LineLength})
+                          %r{^empty section "Layout/LineLength"})
+      end
+    end
+
+    context 'when the configuration has the wrong type' do
+      before { create_file(configuration_path, ['Layout/LineLength: Enabled']) }
+
+      it 'raises validation error' do
+        expect { configuration.validate }.to(
+          raise_error(
+            RuboCop::ValidationError,
+            %r{^The configuration for "Layout/LineLength" in .* is not a Hash.\n\nFound: "Enabled"}
+          )
+        )
       end
     end
 
@@ -51,7 +118,7 @@ RSpec.describe RuboCop::Config do
 
       it 'raises validation error' do
         expect { configuration.validate }
-          .to raise_error(RuboCop::ValidationError, /^empty section AllCops/)
+          .to raise_error(RuboCop::ValidationError, /^empty section "AllCops"/)
       end
     end
 
@@ -73,16 +140,15 @@ RSpec.describe RuboCop::Config do
     end
 
     context 'when the configuration includes any unrecognized parameter' do
+      include_context 'mock console output'
+
       before do
         create_file(configuration_path, <<~YAML)
           Layout/LineLength:
             Enabled: true
             Min: 10
         YAML
-        $stderr = StringIO.new
       end
-
-      after { $stderr = STDERR }
 
       it 'prints a warning message' do
         configuration # ConfigLoader.load_file will validate config
@@ -110,6 +176,42 @@ RSpec.describe RuboCop::Config do
 
       it 'does not raise validation error' do
         expect { configuration.validate }.not_to raise_error
+      end
+    end
+
+    # Regression test for https://github.com/rubocop/rubocop/issues/14981
+    # Safe and SafeAutoCorrect are COMMON_PARAMS (valid for any cop), but many
+    # cops do not list them in config/default.yml. Without them in COMMON_PARAMS,
+    # setting these params triggers a spurious "does not support X parameter" warning.
+    context 'when the configuration sets Safe on a cop whose default config omits Safe' do
+      include_context 'mock console output'
+
+      before do
+        create_file(configuration_path, <<~YAML)
+          Lint/UselessAssignment:
+            Safe: false
+        YAML
+      end
+
+      it 'does not print a warning' do
+        configuration
+        expect($stderr.string).not_to include('does not support Safe parameter')
+      end
+    end
+
+    context 'when the configuration sets SafeAutoCorrect on a cop whose default config omits SafeAutoCorrect' do
+      include_context 'mock console output'
+
+      before do
+        create_file(configuration_path, <<~YAML)
+          Lint/UselessAssignment:
+            SafeAutoCorrect: false
+        YAML
+      end
+
+      it 'does not print a warning' do
+        configuration
+        expect($stderr.string).not_to include('does not support SafeAutoCorrect parameter')
       end
     end
 
@@ -180,7 +282,7 @@ RSpec.describe RuboCop::Config do
       end
     end
 
-    context 'when the configuration includes multiple valid enforced styles '\
+    context 'when the configuration includes multiple valid enforced styles ' \
             'and one invalid style' do
       before do
         create_file(configuration_path, <<~YAML)
@@ -286,8 +388,8 @@ RSpec.describe RuboCop::Config do
       end
     end
 
-    include_examples 'obsolete MaxLineLength parameter', 'Style/WhileUntilModifier'
-    include_examples 'obsolete MaxLineLength parameter', 'Style/IfUnlessModifier'
+    it_behaves_like 'obsolete MaxLineLength parameter', 'Style/WhileUntilModifier'
+    it_behaves_like 'obsolete MaxLineLength parameter', 'Style/IfUnlessModifier'
 
     context 'when the configuration includes obsolete parameters and cops' do
       before do
@@ -311,6 +413,26 @@ RSpec.describe RuboCop::Config do
             message.include?('Layout/SpaceAroundKeyword')
         end
         expect { configuration.validate }.to raise_error(RuboCop::ValidationError, message_matcher)
+      end
+    end
+
+    context 'when the configuration includes obsolete cop names that raise warnings', :mock_obsoletion do
+      before do
+        create_file(configuration_path, <<~YAML)
+          Layout/AlignArguments:
+            Enabled: false
+        YAML
+
+        create_file(obsoletion_configuration_path, <<~YAML)
+          renamed:
+            Layout/AlignArguments:
+              new_name: Layout/ArgumentAlignment
+              severity: warning
+        YAML
+      end
+
+      it 'does not raise validation error' do
+        expect { configuration.validate }.not_to raise_error
       end
     end
 
@@ -363,7 +485,7 @@ RSpec.describe RuboCop::Config do
           expect { configuration.validate }
             .to raise_error(
               RuboCop::ValidationError,
-              /configuration for Syntax cop found/
+              %r{configuration for Lint/Syntax cop found}
             )
         end
       end
@@ -371,7 +493,7 @@ RSpec.describe RuboCop::Config do
 
     describe 'conflicting Safe settings' do
       context 'when the configuration includes an unsafe cop that is ' \
-              'explicitly declared to have a safe auto-correction' do
+              'explicitly declared to have a safe autocorrection' do
         before do
           create_file(configuration_path, <<~YAML)
             Style/PreferredHashMethods:
@@ -384,13 +506,13 @@ RSpec.describe RuboCop::Config do
           expect { configuration.validate }
             .to raise_error(
               RuboCop::ValidationError,
-              /Unsafe cops cannot have a safe auto-correction/
+              /Unsafe cops cannot have a safe autocorrection/
             )
         end
       end
 
       context 'when the configuration includes an unsafe cop without ' \
-              'a declaration of its auto-correction' do
+              'a declaration of its autocorrection' do
         before do
           create_file(configuration_path, <<~YAML)
             Style/PreferredHashMethods:
@@ -456,22 +578,38 @@ RSpec.describe RuboCop::Config do
     context 'when the passed path matches any of patterns to include' do
       it 'returns true' do
         file_path = '/home/foo/project/Gemfile'
-        expect(configuration.file_to_include?(file_path)).to be_truthy
+        expect(configuration).to be_file_to_include(file_path)
       end
     end
 
     context 'when the passed path does not match any of patterns to include' do
       it 'returns false' do
         file_path = '/home/foo/project/Gemfile.lock'
-        expect(configuration.file_to_include?(file_path)).to be_falsey
+        expect(configuration).not_to be_file_to_include(file_path)
+      end
+    end
+
+    context 'when a relative pattern matches a parent directory in the absolute path' do
+      let(:hash) { { 'AllCops' => { 'Include' => ['**/app/**/*.rb'] } } }
+      let(:loaded_path) { '/app/myproject/.rubocop.yml' }
+
+      before do
+        allow(configuration).to receive(:base_dir_for_path_parameters).and_return('/app/myproject')
+      end
+
+      it 'only matches files inside the project' do
+        # This file is in an 'app' subdirectory of the project, so it should match.
+        expect(configuration).to be_file_to_include('/app/myproject/lib/app/file.rb')
+
+        # The file is under '/app' but not in an 'app' subdirectory of the project, so it should not
+        # match.
+        expect(configuration).not_to be_file_to_include('/app/myproject/config/application.rb')
       end
     end
   end
 
   describe '#file_to_exclude?' do
-    before { $stderr = StringIO.new }
-
-    after { $stderr = STDERR }
+    include_context 'mock console output'
 
     let(:hash) { { 'AllCops' => { 'Exclude' => ["#{Dir.pwd}/log/**/*", '**/bar.rb'] } } }
 
@@ -480,22 +618,22 @@ RSpec.describe RuboCop::Config do
     context 'when the passed path matches any of patterns to exclude' do
       it 'returns true' do
         file_path = "#{Dir.pwd}/log/foo.rb"
-        expect(configuration.file_to_exclude?(file_path)).to be_truthy
+        expect(configuration).to be_file_to_exclude(file_path)
 
-        expect(configuration.file_to_exclude?('log/foo.rb')).to be_truthy
+        expect(configuration).to be_file_to_exclude('log/foo.rb')
 
-        expect(configuration.file_to_exclude?('bar.rb')).to be_truthy
+        expect(configuration).to be_file_to_exclude('bar.rb')
       end
     end
 
     context 'when the passed path does not match any of patterns to exclude' do
       it 'returns false' do
         file_path = "#{Dir.pwd}/log_file.rb"
-        expect(configuration.file_to_exclude?(file_path)).to be_falsey
+        expect(configuration).not_to be_file_to_exclude(file_path)
 
-        expect(configuration.file_to_exclude?('app/controller.rb')).to be_falsey
+        expect(configuration).not_to be_file_to_exclude('app/controller.rb')
 
-        expect(configuration.file_to_exclude?('baz.rb')).to be_falsey
+        expect(configuration).not_to be_file_to_exclude('baz.rb')
       end
     end
   end
@@ -555,25 +693,25 @@ RSpec.describe RuboCop::Config do
     it 'returns true when Include config only includes regular paths' do
       configuration['AllCops'] = { 'Include' => ['**/Gemfile', 'config/unicorn.rb.example'] }
 
-      expect(configuration.possibly_include_hidden?).to be(false)
+      expect(configuration).not_to be_possibly_include_hidden
     end
 
     it 'returns true when Include config includes a regex' do
       configuration['AllCops'] = { 'Include' => [/foo/] }
 
-      expect(configuration.possibly_include_hidden?).to be(true)
+      expect(configuration).to be_possibly_include_hidden
     end
 
     it 'returns true when Include config includes a toplevel dotfile' do
       configuration['AllCops'] = { 'Include' => ['.foo'] }
 
-      expect(configuration.possibly_include_hidden?).to be(true)
+      expect(configuration).to be_possibly_include_hidden
     end
 
     it 'returns true when Include config includes a dotfile in a path' do
       configuration['AllCops'] = { 'Include' => ['foo/.bar'] }
 
-      expect(configuration.possibly_include_hidden?).to be(true)
+      expect(configuration).to be_possibly_include_hidden
     end
   end
 
@@ -600,11 +738,9 @@ RSpec.describe RuboCop::Config do
     let(:loaded_path) { 'example/.rubocop.yml' }
 
     context 'when a deprecated configuration is detected' do
+      include_context 'mock console output'
+
       let(:hash) { { 'AllCops' => { 'Includes' => [] } } }
-
-      before { $stderr = StringIO.new }
-
-      after { $stderr = STDERR }
 
       it 'prints a warning message for the loaded path' do
         configuration.check
@@ -649,6 +785,53 @@ RSpec.describe RuboCop::Config do
     end
   end
 
+  describe '#for_cop', :isolated_environment, :mock_obsoletion do
+    before do
+      create_file(obsoletion_configuration_path, <<~YAML)
+        renamed:
+          Lint/OldCop:
+            new_name: Lint/NewCop
+          Lint/MovedCop:
+            new_name: Lint/AnotherCop
+      YAML
+    end
+
+    let(:hash) do
+      {
+        'Style' => { 'Enabled' => false, 'Foo' => 42, 'Bar' => 666 },
+        'Style/Alias' => { 'Bar' => 44 },
+        'Lint/MovedCop' => { 'Bar' => 45 },
+        'Lint/OldCop' => { 'Bar' => 46, 'Enabled' => false },
+        'Lint/NewCop' => { 'Bar' => 47, 'Baz' => 1000 }
+      }
+    end
+
+    it 'returns the configuration for a cop' do
+      expect(configuration.for_cop('Style/Alias')).to eq({ 'Enabled' => false, 'Bar' => 44 })
+    end
+
+    it 'returns a bare configuration for a non-existing cop' do
+      expect(configuration.for_cop('Foo/Bar')).to eq({ 'Enabled' => true })
+    end
+
+    it 'returns the given configuration for a deprecated cop name' do
+      expect(configuration.for_cop('Lint/MovedCop')).to eq({ 'Bar' => 45 })
+    end
+
+    it 'maintains enabled status for a deprecated cop' do
+      expect(configuration.for_cop('Lint/OldCop')).to eq({ 'Bar' => 46, 'Enabled' => false })
+    end
+
+    it 'merges the deprecated name configuration and adds a warning for a renamed cop name' do
+      expect(configuration.for_cop('Lint/NewCop')).to eq(
+        { 'Bar' => 46, 'Baz' => 1000, 'Enabled' => false }
+      )
+      expect($stderr.string.chomp).to eq(
+        'Warning: Using `Lint/OldCop` configuration in example/.rubocop.yml for `Lint/NewCop`.'
+      )
+    end
+  end
+
   describe '#for_badge' do
     let(:hash) do
       {
@@ -671,6 +854,270 @@ RSpec.describe RuboCop::Config do
         { 'Enabled' => true,
           'Bar' => 43 }
       )
+    end
+
+    context 'when both the department and the cop define `Exclude`' do
+      let(:hash) do
+        {
+          'Style' => { 'Exclude' => ['foo.rb'] },
+          'Style/Alias' => { 'Exclude' => ['bar.rb'] }
+        }
+      end
+
+      it 'merges the two `Exclude` lists' do
+        expect(configuration.for_badge(RuboCop::Cop::Style::Alias.badge)).to eq(
+          { 'Enabled' => true,
+            'Exclude' => ['foo.rb', 'bar.rb'] }
+        )
+      end
+    end
+
+    context 'when only the cop defines `Exclude`' do
+      let(:hash) do
+        {
+          'Style' => { 'Foo' => 42 },
+          'Style/Alias' => { 'Exclude' => ['bar.rb'] }
+        }
+      end
+
+      it 'keeps the cop `Exclude`' do
+        expect(configuration.for_badge(RuboCop::Cop::Style::Alias.badge)).to eq(
+          { 'Enabled' => true,
+            'Foo' => 42,
+            'Exclude' => ['bar.rb'] }
+        )
+      end
+    end
+  end
+
+  describe '#for_enabled_cop' do
+    let(:hash) do
+      {
+        'Layout/TrailingWhitespace' => { 'Enabled' => true },
+        'Layout/LineLength' => { 'Enabled' => false },
+        'Metrics/MethodLength' => { 'Enabled' => 'pending' }
+      }
+    end
+
+    it 'returns config for an enabled cop' do
+      expect(configuration.for_enabled_cop('Layout/TrailingWhitespace')).to eq('Enabled' => true)
+    end
+
+    it 'returns an empty hash for a disabled cop' do
+      expect(configuration.for_enabled_cop('Layout/LineLength')).to be_empty
+    end
+
+    it 'returns config for an pending cop' do
+      expect(configuration.for_enabled_cop('Metrics/MethodLength')).to eq('Enabled' => 'pending')
+    end
+  end
+
+  describe '#cop_enabled?' do
+    let(:hash) do
+      {
+        'Layout/TrailingWhitespace' => { 'Enabled' => true },
+        'Layout/LineLength' => { 'Enabled' => false },
+        'Metrics/MethodLength' => { 'Enabled' => 'pending' }
+      }
+    end
+
+    it { is_expected.to be_cop_enabled('Layout/TrailingWhitespace') }
+    it { is_expected.not_to be_cop_enabled('Layout/LineLength') }
+    it { is_expected.to be_cop_enabled('Metrics/MethodLength') }
+  end
+
+  describe '#preview?' do
+    subject(:preview) { configuration.preview?(options) }
+
+    let(:options) { {} }
+
+    context 'when `AllCops: Preview` is not set' do
+      let(:hash) { {} }
+
+      it { is_expected.to be(false) }
+
+      context 'when `--preview` is given' do
+        let(:options) { { preview: true } }
+
+        it { is_expected.to be(true) }
+      end
+    end
+
+    context 'when `AllCops: Preview` is true' do
+      let(:hash) { { 'AllCops' => { 'Preview' => true } } }
+
+      it { is_expected.to be(true) }
+
+      context 'when `--no-preview` is given' do
+        let(:options) { { preview: false } }
+
+        it { is_expected.to be(false) }
+      end
+    end
+  end
+
+  describe '#pending_cops' do
+    subject(:pending_cops) { configuration.pending_cops.map(&:name) }
+
+    let(:hash) do
+      {
+        'Lint/Foo' => { 'Enabled' => 'pending', 'VersionAdded' => '1.18' },
+        'Lint/Bar' => { 'Enabled' => 'pending', 'VersionAdded' => '1.20' },
+        'Style/Baz' => { 'Enabled' => 'pending', 'VersionAdded' => '1.19' }
+      }.merge(new_cops_config)
+    end
+    let(:new_cops_config) { {} }
+
+    context 'when `NewCops` is not set' do
+      it 'returns all pending cops' do
+        expect(pending_cops).to eq(%w[Lint/Foo Lint/Bar Style/Baz])
+      end
+    end
+
+    context 'when `AllCops` has `NewCops: enable`' do
+      let(:new_cops_config) { { 'AllCops' => { 'NewCops' => 'enable' } } }
+
+      it 'returns no cops' do
+        expect(pending_cops).to be_empty
+      end
+    end
+
+    context 'when `AllCops` has `NewCops: disable`' do
+      let(:new_cops_config) { { 'AllCops' => { 'NewCops' => 'disable' } } }
+
+      it 'returns no cops' do
+        expect(pending_cops).to be_empty
+      end
+    end
+
+    context 'when a department has `NewCops: enable`' do
+      let(:new_cops_config) { { 'Lint' => { 'NewCops' => 'enable' } } }
+
+      it 'returns only cops of other departments' do
+        expect(pending_cops).to eq(%w[Style/Baz])
+      end
+    end
+
+    context 'when a department has `NewCops: disable`' do
+      let(:new_cops_config) { { 'Lint' => { 'NewCops' => 'disable' } } }
+
+      it 'returns only cops of other departments' do
+        expect(pending_cops).to eq(%w[Style/Baz])
+      end
+    end
+
+    context 'when a department has a version for `NewCops`' do
+      let(:new_cops_config) { { 'Lint' => { 'NewCops' => '1.19' } } }
+
+      it 'returns cops of the department added after the version and cops of other departments' do
+        expect(pending_cops).to eq(%w[Lint/Bar Style/Baz])
+      end
+    end
+
+    context 'when a department has `NewCops: pending` and `AllCops` has `NewCops: enable`' do
+      let(:new_cops_config) do
+        { 'AllCops' => { 'NewCops' => 'enable' }, 'Lint' => { 'NewCops' => 'pending' } }
+      end
+
+      it 'returns only cops of the department' do
+        expect(pending_cops).to eq(%w[Lint/Foo Lint/Bar])
+      end
+    end
+
+    context 'when a department has `Enabled: false`' do
+      let(:new_cops_config) { { 'Lint' => { 'Enabled' => false } } }
+
+      it 'returns only cops of other departments' do
+        expect(pending_cops).to eq(%w[Style/Baz])
+      end
+    end
+  end
+
+  describe '#enabled_new_cop?' do
+    subject(:enabled_new_cop) { configuration.enabled_new_cop?('Lint/Foo') }
+
+    let(:hash) do
+      { 'Lint/Foo' => { 'Enabled' => 'pending', 'VersionAdded' => '1.19' } }.merge(new_cops_config)
+    end
+    let(:new_cops_config) { {} }
+
+    context 'when `NewCops` is not set' do
+      it { is_expected.to be(false) }
+    end
+
+    context 'when `AllCops` has `NewCops: enable`' do
+      let(:new_cops_config) { { 'AllCops' => { 'NewCops' => 'enable' } } }
+
+      it { is_expected.to be(true) }
+    end
+
+    context 'when `AllCops` has `NewCops: disable`' do
+      let(:new_cops_config) { { 'AllCops' => { 'NewCops' => 'disable' } } }
+
+      it { is_expected.to be(false) }
+    end
+
+    context 'when `AllCops` has `NewCops: pending`' do
+      let(:new_cops_config) { { 'AllCops' => { 'NewCops' => 'pending' } } }
+
+      it { is_expected.to be(false) }
+    end
+
+    context 'when the department has `NewCops: enable`' do
+      let(:new_cops_config) { { 'Lint' => { 'NewCops' => 'enable' } } }
+
+      it { is_expected.to be(true) }
+    end
+
+    context 'when the department has `NewCops: disable` and `AllCops` has `NewCops: enable`' do
+      let(:new_cops_config) do
+        { 'AllCops' => { 'NewCops' => 'enable' }, 'Lint' => { 'NewCops' => 'disable' } }
+      end
+
+      it { is_expected.to be(false) }
+    end
+
+    context 'when the department has a version for `NewCops` equal to `VersionAdded`' do
+      let(:new_cops_config) { { 'Lint' => { 'NewCops' => '1.19' } } }
+
+      it { is_expected.to be(true) }
+    end
+
+    context 'when the department has a version for `NewCops` lower than `VersionAdded`' do
+      let(:new_cops_config) { { 'Lint' => { 'NewCops' => '1.18' } } }
+
+      it { is_expected.to be(false) }
+    end
+
+    context 'when the department has a version for `NewCops` higher than `VersionAdded`' do
+      let(:new_cops_config) { { 'Lint' => { 'NewCops' => '1.20' } } }
+
+      it { is_expected.to be(true) }
+    end
+
+    context 'when the department has a Float version for `NewCops`' do
+      let(:new_cops_config) { { 'Lint' => { 'NewCops' => 1.19 } } }
+
+      it { is_expected.to be(true) }
+    end
+
+    context 'when the department has a version for `NewCops` and the cop has `VersionAdded: N/A`' do
+      let(:hash) do
+        {
+          'Lint' => { 'NewCops' => '1.19' },
+          'Lint/Foo' => { 'Enabled' => 'pending', 'VersionAdded' => 'N/A' }
+        }
+      end
+
+      it { is_expected.to be(false) }
+    end
+
+    context 'when the department has a version for `NewCops` and the cop is not configured' do
+      subject(:enabled_new_cop) { configuration.enabled_new_cop?('Lint/Undefined') }
+
+      let(:new_cops_config) { { 'Lint' => { 'NewCops' => '1.19' } } }
+
+      it { is_expected.to be(false) }
     end
   end
 
@@ -695,7 +1142,7 @@ RSpec.describe RuboCop::Config do
       end
     end
 
-    context 'when an nested cop department is disabled' do
+    context 'when a nested cop department is disabled' do
       context 'but an individual cop is enabled' do
         let(:hash) do
           {
@@ -766,6 +1213,122 @@ RSpec.describe RuboCop::Config do
         it 'enables the cop that is not mentioned' do
           expect(cop_enabled('VeryCustomDepartment/CustomCop')).to be true
         end
+      end
+    end
+  end
+
+  describe '#gem_versions_in_target', :isolated_environment do
+    ['Gemfile.lock', 'gems.locked'].each do |file_name|
+      let(:base_path) { configuration.base_dir_for_path_parameters }
+      let(:lockfile_path) { File.join(base_path, file_name) }
+
+      context "and #{file_name} exists" do
+        it 'returns the locked gem versions' do
+          content =
+            <<~LOCKFILE
+              GEM
+                remote: https://rubygems.org/
+                specs:
+                  a (1.1.1)
+                  b (2.2.2)
+                  c (3.3.3)
+                  d (4.4.4)
+                    a (= 1.1.1)
+                    b (>= 1.1.1, < 3.3.3)
+                    c (~> 3.3)
+
+              PLATFORMS
+                ruby
+
+              DEPENDENCIES
+                rails (= 4.1.0)
+
+              BUNDLED WITH
+                2.4.19
+            LOCKFILE
+
+          expected = {
+            'a' => Gem::Version.new('1.1.1'),
+            'b' => Gem::Version.new('2.2.2'),
+            'c' => Gem::Version.new('3.3.3'),
+            'd' => Gem::Version.new('4.4.4')
+          }
+
+          create_file(lockfile_path, content)
+          expect(configuration.gem_versions_in_target).to eq expected
+        end
+      end
+    end
+
+    context 'and neither Gemfile.lock nor gems.locked exist' do
+      it 'returns nil' do
+        expect(configuration.gem_versions_in_target).to be_nil
+      end
+    end
+  end
+
+  describe '#target_rails_version', :isolated_environment do
+    let(:base_path) { configuration.base_dir_for_path_parameters }
+    let(:lockfile_path) { File.join(base_path, 'Gemfile.lock') }
+
+    context 'when bundler is loaded' do
+      context 'when a lockfile with railties exists' do
+        it 'returns the correct target rails version' do
+          content = <<~LOCKFILE
+            GEM
+              remote: https://rubygems.org/
+              specs:
+                rails (7.1.3.2)
+                  railties (= 7.1.3.2)
+                railties (7.1.3.2)
+
+            DEPENDENCIES
+              rails (= 7.1.3.2)
+          LOCKFILE
+
+          create_file(lockfile_path, content)
+          expect(configuration.target_rails_version).to eq 7.1
+        end
+      end
+
+      context 'when a lockfile with railties from a prerelease exists' do
+        it 'returns the correct target rails version' do
+          content = <<~LOCKFILE
+            GEM
+              remote: https://rubygems.org/
+              specs:
+                rails (8.0.0.alpha)
+                  railties (= 8.0.0.alpha)
+                railties (8.0.0.alpha)
+
+            DEPENDENCIES
+              rails (= 8.0.0.alpha)
+          LOCKFILE
+
+          create_file(lockfile_path, content)
+          expect(configuration.target_rails_version).to eq 8.0
+        end
+      end
+    end
+
+    context 'when bundler is not loaded' do
+      before { hide_const('Bundler') }
+
+      it 'falls back to the default rails version' do
+        content = <<~LOCKFILE
+          GEM
+            remote: https://rubygems.org/
+            specs:
+              rails (7.1.3.2)
+                railties (= 7.1.3.2)
+              railties (7.1.3.2)
+
+          DEPENDENCIES
+            rails (= 7.1.3.2)
+        LOCKFILE
+
+        create_file(lockfile_path, content)
+        expect(configuration.target_rails_version).to eq RuboCop::Config::DEFAULT_RAILS_VERSION
       end
     end
   end

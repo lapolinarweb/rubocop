@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Layout
-      # This cop checks for two or more consecutive blank lines.
+      # Checks for two or more consecutive blank lines.
       #
       # @example
       #
@@ -27,9 +27,11 @@ module RuboCop
 
         def on_new_investigation
           return if processed_source.tokens.empty?
+          # Quick check if we possibly have consecutive blank lines.
+          return unless processed_source.raw_source.include?("\n\n\n")
 
           lines = Set.new
-          processed_source.each_token { |token| lines << token.line }
+          processed_source.tokens.each { |token| lines << token.line }
 
           each_extra_empty_line(lines.sort) do |range|
             add_offense(range) do |corrector|

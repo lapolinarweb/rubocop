@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative 'hash_transform_method/autocorrection'
+
 module RuboCop
   module Cop
     # Common functionality for Style/HashTransformKeys and
@@ -9,12 +11,34 @@ module RuboCop
 
       RESTRICT_ON_SEND = %i[[] to_h].freeze
 
-      # @!method array_receiver?(node)
-      def_node_matcher :array_receiver?, <<~PATTERN
-        {(array ...) (send _ :each_with_index) (send _ :with_index _ ?) (send _ :zip ...)}
+      # Internal helper class to hold match data
+      Captures = Struct.new(:transformed_argname, :transforming_body_expr, :unchanged_body_expr) do
+        def noop_transformation?
+          transforming_body_expr.lvar_type? &&
+            transforming_body_expr.children == [transformed_argname]
+        end
+
+        def transformation_uses_both_args?
+          transforming_body_expr.descendants.include?(unchanged_body_expr)
+        end
+
+        def use_transformed_argname?
+          transforming_body_expr.each_descendant(:lvar).any? do |node|
+            node.source == transformed_argname.to_s
+          end
+        end
+      end
+
+      # @!method hash_receiver?(node)
+      def_node_matcher :hash_receiver?, <<~PATTERN
+        {(hash ...)
+         (send _ {:to_h :to_hash :merge :merge! :update :invert :except :tally} ...)
+         (block (send _ {:group_by :to_h :tally :transform_keys :transform_keys!
+                         :transform_values :transform_values!}) ...)
+         (block (send _ :each_with_object (hash)) ...)}
       PATTERN
 
-      def on_block(node)
+      def on_block(node) # rubocop:disable InternalAffairs/NumblockHandler, InternalAffairs/ItblockHandler -- the patterns matched here all name their block parameters
         on_bad_each_with_object(node) do |*match|
           handle_possible_offense(node, match, 'each_with_object')
         end
@@ -68,6 +92,12 @@ module RuboCop
         # `transform_values` if value transformation uses key.
         return if captures.transformation_uses_both_args?
 
+        return unless captures.use_transformed_argname?
+
+        # A splat transforming expression (e.g. `[k, *v]`) can't be used as a
+        # standalone block return value, so the rewrite would produce invalid Ruby.
+        return if captures.transforming_body_expr.splat_type?
+
         message = "Prefer `#{new_method_name}` over `#{match_desc}`."
         add_offense(node, message: message) do |corrector|
           correction = prepare_correction(node)
@@ -110,78 +140,6 @@ module RuboCop
         captures = extract_captures(correction.match)
         correction.set_new_arg_name(captures.transformed_argname, corrector)
         correction.set_new_body_expression(captures.transforming_body_expr, corrector)
-      end
-
-      # Internal helper class to hold match data
-      Captures = Struct.new(
-        :transformed_argname,
-        :transforming_body_expr,
-        :unchanged_body_expr
-      ) do
-        def noop_transformation?
-          transforming_body_expr.lvar_type? &&
-            transforming_body_expr.children == [transformed_argname]
-        end
-
-        def transformation_uses_both_args?
-          transforming_body_expr.descendants.include?(unchanged_body_expr)
-        end
-      end
-
-      # Internal helper class to hold autocorrect data
-      Autocorrection = Struct.new(:match, :block_node, :leading, :trailing) do
-        def self.from_each_with_object(node, match)
-          new(match, node, 0, 0)
-        end
-
-        def self.from_hash_brackets_map(node, match)
-          new(match, node.children.last, 'Hash['.length, ']'.length)
-        end
-
-        def self.from_map_to_h(node, match)
-          strip_trailing_chars = 0
-
-          unless node.parent&.block_type?
-            map_range = node.children.first.source_range
-            node_range = node.source_range
-            strip_trailing_chars = node_range.end_pos - map_range.end_pos
-          end
-
-          new(match, node.children.first, 0, strip_trailing_chars)
-        end
-
-        def self.from_to_h(node, match)
-          new(match, node, 0, 0)
-        end
-
-        def strip_prefix_and_suffix(node, corrector)
-          expression = node.loc.expression
-          corrector.remove_leading(expression, leading)
-          corrector.remove_trailing(expression, trailing)
-        end
-
-        def set_new_method_name(new_method_name, corrector)
-          range = block_node.send_node.loc.selector
-          if (send_end = block_node.send_node.loc.end)
-            # If there are arguments (only true in the `each_with_object`
-            # case)
-            range = range.begin.join(send_end)
-          end
-          corrector.replace(range, new_method_name)
-        end
-
-        def set_new_arg_name(transformed_argname, corrector)
-          corrector.replace(block_node.arguments.loc.expression, "|#{transformed_argname}|")
-        end
-
-        def set_new_body_expression(transforming_body_expr, corrector)
-          body_source = transforming_body_expr.loc.expression.source
-          if transforming_body_expr.hash_type? && !transforming_body_expr.braces?
-            body_source = "{ #{body_source} }"
-          end
-
-          corrector.replace(block_node.body, body_source)
-        end
       end
     end
   end

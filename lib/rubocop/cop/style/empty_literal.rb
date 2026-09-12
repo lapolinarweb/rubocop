@@ -3,13 +3,19 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for the use of a method, the result of which
+      # Checks for the use of a method, the result of which
       # would be a literal, like an empty array, hash, or string.
+      #
+      # NOTE: When frozen string literals are enabled, `String.new`
+      # isn't corrected to an empty string since the former is
+      # mutable and the latter would be frozen.
       #
       # @example
       #   # bad
       #   a = Array.new
+      #   a = Array[]
       #   h = Hash.new
+      #   h = Hash[]
       #   s = String.new
       #
       #   # good
@@ -19,16 +25,17 @@ module RuboCop
       class EmptyLiteral < Base
         include FrozenStringLiteral
         include RangeHelp
+        include StringLiteralsHelp
         extend AutoCorrector
 
-        ARR_MSG = 'Use array literal `[]` instead of `Array.new`.'
-        HASH_MSG = 'Use hash literal `{}` instead of `Hash.new`.'
+        ARR_MSG = 'Use array literal `[]` instead of `%<current>s`.'
+        HASH_MSG = 'Use hash literal `{}` instead of `%<current>s`.'
         STR_MSG = 'Use string literal `%<prefer>s` instead of `String.new`.'
 
-        RESTRICT_ON_SEND = %i[new].freeze
+        RESTRICT_ON_SEND = %i[new [] Array Hash].freeze
 
         # @!method array_node(node)
-        def_node_matcher :array_node, '(send (const {nil? cbase} :Array) :new)'
+        def_node_matcher :array_node, '(send (const {nil? cbase} :Array) :new (array)?)'
 
         # @!method hash_node(node)
         def_node_matcher :hash_node, '(send (const {nil? cbase} :Hash) :new)'
@@ -37,13 +44,34 @@ module RuboCop
         def_node_matcher :str_node, '(send (const {nil? cbase} :String) :new)'
 
         # @!method array_with_block(node)
-        def_node_matcher :array_with_block, '(block (send (const {nil? cbase} :Array) :new) args _)'
+        def_node_matcher :array_with_block, <<~PATTERN
+          {
+            (block (send (const {nil? cbase} :Array) :new) args _)
+            ({numblock itblock} (send (const {nil? cbase} :Array) :new) ...)
+          }
+        PATTERN
 
         # @!method hash_with_block(node)
         def_node_matcher :hash_with_block, <<~PATTERN
           {
             (block (send (const {nil? cbase} :Hash) :new) args _)
-            (numblock (send (const {nil? cbase} :Hash) :new) ...)
+            ({numblock itblock} (send (const {nil? cbase} :Hash) :new) ...)
+          }
+        PATTERN
+
+        # @!method array_with_index(node)
+        def_node_matcher :array_with_index, <<~PATTERN
+          {
+            (send (const {nil? cbase} :Array) :[])
+            (send nil? :Array (array))
+          }
+        PATTERN
+
+        # @!method hash_with_index(node)
+        def_node_matcher :hash_with_index, <<~PATTERN
+          {
+            (send (const {nil? cbase} :Hash) :[])
+            (send nil? :Hash (array))
           }
         PATTERN
 
@@ -59,31 +87,19 @@ module RuboCop
 
         def offense_message(node)
           if offense_array_node?(node)
-            ARR_MSG
+            format(ARR_MSG, current: node.source)
           elsif offense_hash_node?(node)
-            HASH_MSG
+            format(HASH_MSG, current: node.source)
           elsif str_node(node) && !frozen_strings?
             format(STR_MSG, prefer: preferred_string_literal)
           end
-        end
-
-        def preferred_string_literal
-          enforce_double_quotes? ? '""' : "''"
-        end
-
-        def enforce_double_quotes?
-          string_literals_config['EnforcedStyle'] == 'double_quotes'
-        end
-
-        def string_literals_config
-          config.for_cop('Style/StringLiterals')
         end
 
         def first_argument_unparenthesized?(node)
           parent = node.parent
           return false unless parent && %i[send super zsuper].include?(parent.type)
 
-          node.equal?(parent.arguments.first) && !parentheses?(node.parent)
+          node.equal?(parent.first_argument) && !parentheses?(node.parent)
         end
 
         def replacement_range(node)
@@ -100,12 +116,12 @@ module RuboCop
         end
 
         def offense_array_node?(node)
-          array_node(node) && !array_with_block(node.parent)
+          (array_node(node) && !array_with_block(node.parent)) || array_with_index(node)
         end
 
         def offense_hash_node?(node)
           # If Hash.new takes a block, it can't be changed to {}.
-          hash_node(node) && !hash_with_block(node.parent)
+          (hash_node(node) && !hash_with_block(node.parent)) || hash_with_index(node)
         end
 
         def correction(node)
@@ -119,7 +135,7 @@ module RuboCop
               # because the braces are interpreted as a block. We will have
               # to rewrite the arguments to wrap them in parenthesis.
               args = node.parent.arguments
-              "(#{args[1..-1].map(&:source).unshift('{}').join(', ')})"
+              "(#{args[1..].map(&:source).unshift('{}').join(', ')})"
             else
               '{}'
             end
@@ -129,8 +145,10 @@ module RuboCop
         def frozen_strings?
           return true if frozen_string_literals_enabled?
 
-          frozen_string_cop_enabled = config.for_cop('Style/FrozenStringLiteral')['Enabled']
-          frozen_string_cop_enabled && !frozen_string_literals_disabled?
+          frozen_string_cop_enabled = config.cop_enabled?('Style/FrozenStringLiteralComment')
+          frozen_string_cop_enabled &&
+            !frozen_string_literals_disabled? &&
+            string_literals_frozen_by_default?.nil?
         end
       end
     end

@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Layout
-      # This cop checks the indentation of the first argument in a method call.
+      # Checks the indentation of the first argument in a method call.
       # Arguments after the first one are checked by `Layout/ArgumentAlignment`,
       # not by this cop.
       #
@@ -35,6 +35,33 @@ module RuboCop
       #
       #   some_method nested_call(
       #   nested_first_param),
+      #   second_param
+      #
+      # @example EnforcedStyle: special_for_inner_method_call_in_parentheses (default)
+      #   # Same as `special_for_inner_method_call` except that the special rule
+      #   # only applies if the outer method call encloses its arguments in
+      #   # parentheses.
+      #
+      #   # good
+      #   some_method(
+      #     first_param,
+      #   second_param)
+      #
+      #   foo = some_method(
+      #     first_param,
+      #   second_param)
+      #
+      #   foo = some_method(nested_call(
+      #                       nested_first_param),
+      #   second_param)
+      #
+      #   foo = some_method(
+      #     nested_call(
+      #       nested_first_param),
+      #   second_param)
+      #
+      #   some_method nested_call(
+      #     nested_first_param),
       #   second_param
       #
       # @example EnforcedStyle: consistent
@@ -91,8 +118,8 @@ module RuboCop
       #
       # @example EnforcedStyle: special_for_inner_method_call
       #   # The first argument should normally be indented one step more than
-      #   # the preceding line, but if it's a argument for a method call that
-      #   # is itself a argument in a method call, then the inner argument
+      #   # the preceding line, but if it's an argument for a method call that
+      #   # is itself an argument in a method call, then the inner argument
       #   # should be indented relative to the inner method.
       #
       #   # good
@@ -117,33 +144,6 @@ module RuboCop
       #                 nested_first_param),
       #   second_param
       #
-      # @example EnforcedStyle: special_for_inner_method_call_in_parentheses (default)
-      #   # Same as `special_for_inner_method_call` except that the special rule
-      #   # only applies if the outer method call encloses its arguments in
-      #   # parentheses.
-      #
-      #   # good
-      #   some_method(
-      #     first_param,
-      #   second_param)
-      #
-      #   foo = some_method(
-      #     first_param,
-      #   second_param)
-      #
-      #   foo = some_method(nested_call(
-      #                       nested_first_param),
-      #   second_param)
-      #
-      #   foo = some_method(
-      #     nested_call(
-      #       nested_first_param),
-      #   second_param)
-      #
-      #   some_method nested_call(
-      #     nested_first_param),
-      #   second_param
-      #
       class FirstArgumentIndentation < Base
         include Alignment
         include ConfigurableEnforcedStyle
@@ -153,19 +153,60 @@ module RuboCop
         MSG = 'Indent the first argument one step more than %<base>s.'
 
         def on_send(node)
-          return if style != :consistent && enforce_first_argument_with_fixed_indentation?
-          return if !node.arguments? || bare_operator?(node) || node.setter_method?
+          return unless should_check?(node)
+          return if same_line?(node, node.first_argument)
+          return if enforce_first_argument_with_fixed_indentation? &&
+                    (!enable_layout_first_method_argument_line_break? ||
+                     conflicts_with_fixed_indentation_alignment?(node))
 
           indent = base_indentation(node) + configured_indentation_width
 
           check_alignment([node.first_argument], indent)
         end
         alias on_csend on_send
+        alias on_super on_send
 
         private
 
+        def should_check?(node)
+          node.arguments? && !bare_operator?(node) && !node.setter_method?
+        end
+
         def autocorrect(corrector, node)
-          AlignmentCorrector.correct(corrector, processed_source, node, column_delta)
+          return unless node
+
+          send_node = node.parent
+          return unless send_node
+
+          top_level_send = find_top_level_send(send_node)
+          node_to_correct =
+            should_correct_entire_chain?(send_node, top_level_send) ? top_level_send : node
+
+          AlignmentCorrector.correct(corrector, processed_source, node_to_correct, column_delta)
+        end
+
+        def should_correct_entire_chain?(send_node, top_level_send)
+          return false unless style == :special_for_inner_method_call_in_parentheses
+          return false unless inner_call?(top_level_send)
+          return false unless display_column(send_node.source_range) < column_delta.abs
+
+          top_level_send != send_node || begins_its_line?(top_level_send.loc.end)
+        end
+
+        def inner_call?(top_level_send)
+          outer_call = top_level_send.parent
+
+          outer_call&.send_type? && outer_call.parenthesized?
+        end
+
+        def find_top_level_send(send_node)
+          top_level_send = send_node
+          while top_level_send.parent&.send_type? &&
+                top_level_send.parent.receiver == top_level_send &&
+                top_level_send.parent.loc.dot
+            top_level_send = top_level_send.parent
+          end
+          top_level_send
         end
 
         def bare_operator?(node)
@@ -177,7 +218,7 @@ module RuboCop
 
           send_node = arg_node.parent
           text = base_range(send_node, arg_node).source.strip
-          base = if !/\n/.match?(text) && special_inner_call_indentation?(send_node)
+          base = if !text.include?("\n") && special_inner_call_indentation?(send_node)
                    "`#{text}`"
                  elsif comment_line?(text.lines.reverse_each.first)
                    'the start of the previous line (not counting the comment)'
@@ -218,7 +259,7 @@ module RuboCop
 
         def base_range(send_node, arg_node)
           parent = send_node.parent
-          start_node = if parent && (parent.splat_type? || parent.kwsplat_type?)
+          start_node = if parent&.type?(:splat, :kwsplat)
                          send_node.parent
                        else
                          send_node
@@ -253,7 +294,7 @@ module RuboCop
           @comment_lines ||=
             processed_source
             .comments
-            .select { |c| begins_its_line?(c.loc.expression) }
+            .select { |c| begins_its_line?(c.source_range) }
             .map { |c| c.loc.line }
         end
 
@@ -262,13 +303,31 @@ module RuboCop
         end
 
         def enforce_first_argument_with_fixed_indentation?
-          return false unless argument_alignment_config['Enabled']
-
+          argument_alignment_config = config.for_enabled_cop('Layout/ArgumentAlignment')
           argument_alignment_config['EnforcedStyle'] == 'with_fixed_indentation'
         end
 
-        def argument_alignment_config
-          config.for_cop('Layout/ArgumentAlignment')
+        def enable_layout_first_method_argument_line_break?
+          config.cop_enabled?('Layout/FirstMethodArgumentLineBreak')
+        end
+
+        def conflicts_with_fixed_indentation_alignment?(node)
+          return false unless special_inner_call_indentation?(node)
+          return false unless argument_alignment_applies?(node)
+
+          base_indentation(node) != indentation_of_method_line(node)
+        end
+
+        def argument_alignment_applies?(node)
+          return false if !node.call_type? || node.method?(:[]=)
+
+          node.arguments.size >= 2 ||
+            (node.first_argument.hash_type? && node.first_argument.pairs.count >= 2)
+        end
+
+        def indentation_of_method_line(node)
+          lineno = node.loc.selector ? node.loc.selector.line : node.loc.begin.line
+          processed_source.lines[lineno - 1] =~ /\S/
         end
       end
     end

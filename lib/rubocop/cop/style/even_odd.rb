@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for places where `Integer#even?` or `Integer#odd?`
+      # Checks for places where `Integer#even?` or `Integer#odd?`
       # can be used.
       #
       # @example
@@ -34,13 +34,23 @@ module RuboCop
           even_odd_candidate?(node) do |base_number, method, arg|
             replacement_method = replacement_method(arg, method)
             add_offense(node, message: format(MSG, method: replacement_method)) do |corrector|
-              correction = "#{base_number.source}.#{replacement_method}?"
+              correction = "#{receiver_source(base_number)}.#{replacement_method}?"
               corrector.replace(node, correction)
             end
           end
         end
 
         private
+
+        def receiver_source(node)
+          # A binary or unary operator receiver (e.g. `a * b`, `-a`) binds looser
+          # than the appended method call, so it must be wrapped in parentheses.
+          if node.send_type? && node.operator_method? && !node.method?(:[])
+            "(#{node.source})"
+          else
+            node.source
+          end
+        end
 
         def replacement_method(arg, method)
           case arg

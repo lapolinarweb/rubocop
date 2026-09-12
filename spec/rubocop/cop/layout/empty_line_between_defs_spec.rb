@@ -22,6 +22,25 @@ RSpec.describe RuboCop::Cop::Layout::EmptyLineBetweenDefs, :config do
         end
       end
     RUBY
+
+    expect_correction(<<~RUBY)
+      class K
+        def m
+        end
+
+        class J
+          def n
+          end
+
+          def o
+          end
+        end
+
+        # checks something
+        def p
+        end
+      end
+    RUBY
   end
 
   context 'when there are only comments between defs' do
@@ -75,6 +94,22 @@ RSpec.describe RuboCop::Cop::Layout::EmptyLineBetweenDefs, :config do
           end
           def bar
           ^^^^^^^ Expected 1 empty line between method definitions; found 0.
+            true
+          end
+        else
+          def foo
+            false
+          end
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        if condition
+          def foo
+            true
+          end
+
+          def bar
             true
           end
         else
@@ -225,7 +260,24 @@ RSpec.describe RuboCop::Cop::Layout::EmptyLineBetweenDefs, :config do
     RUBY
   end
 
-  it 'auto-corrects when there are too many new lines' do
+  it 'registers an offense when two method definitions are on the same line separated by a semicolon' do
+    expect_offense(<<~RUBY)
+      def a
+      end;def b
+          ^^^^^ Expected 1 empty line between method definitions; found 0.
+      end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      def a
+      end;
+
+      def b
+      end
+    RUBY
+  end
+
+  it 'autocorrects when there are too many new lines' do
     expect_offense(<<~RUBY)
       def a; end
 
@@ -415,7 +467,7 @@ RSpec.describe RuboCop::Cop::Layout::EmptyLineBetweenDefs, :config do
   end
 
   context 'EmptyLineBetweenClassDefs' do
-    it 'registers offense when no empty lines between class and method definitions' do
+    it 'registers an offense when no empty lines between class and method definitions' do
       expect_offense(<<~RUBY)
         class Foo
         end
@@ -467,7 +519,7 @@ RSpec.describe RuboCop::Cop::Layout::EmptyLineBetweenDefs, :config do
   end
 
   context 'EmptyLineBetweenModuleDefs' do
-    it 'registers offense when no empty lines between module and method definitions' do
+    it 'registers an offense when no empty lines between module and method definitions' do
       expect_offense(<<~RUBY)
         module Foo
         end
@@ -508,7 +560,7 @@ RSpec.describe RuboCop::Cop::Layout::EmptyLineBetweenDefs, :config do
   end
 
   context 'when empty lines between classes and modules together' do
-    it 'registers offense when no empty lines between module and method definitions' do
+    it 'registers an offense when no empty lines between module and method definitions' do
       expect_offense(<<~RUBY)
         class Foo
         end
@@ -546,6 +598,30 @@ RSpec.describe RuboCop::Cop::Layout::EmptyLineBetweenDefs, :config do
 
         expect_correction(<<~RUBY)
           def foo() = x
+
+          def bar
+            y
+          end
+        RUBY
+      end
+    end
+
+    context 'when the endless method body is a heredoc' do
+      it 'registers an offense and corrects after the heredoc, preserving its body' do
+        expect_offense(<<~RUBY)
+          def foo = <<~TEXT
+            hello
+          TEXT
+          def bar
+          ^^^^^^^ Expected 1 empty line between method definitions; found 0.
+            y
+          end
+        RUBY
+
+        expect_correction(<<~RUBY)
+          def foo = <<~TEXT
+            hello
+          TEXT
 
           def bar
             y
@@ -637,6 +713,157 @@ RSpec.describe RuboCop::Cop::Layout::EmptyLineBetweenDefs, :config do
         expect_no_offenses(<<~RUBY)
           def foo() = x
           def bar() = y
+        RUBY
+      end
+    end
+  end
+
+  context 'DefLikeMacros: [\'foo\']' do
+    let(:allow_adjacent_one_line_defs) { true }
+    let(:cop_config) do
+      {
+        'DefLikeMacros' => ['foo'],
+        'AllowAdjacentOneLineDefs' => allow_adjacent_one_line_defs
+      }
+    end
+
+    it 'registers an offense' do
+      expect_offense(<<~RUBY)
+        foo 'first foo' do
+          #foo body
+        end
+        foo 'second foo' do
+        ^^^^^^^^^^^^^^^^^^^ Expected 1 empty line between block definitions; found 0.
+          #foo body
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        foo 'first foo' do
+          #foo body
+        end
+
+        foo 'second foo' do
+          #foo body
+        end
+      RUBY
+    end
+
+    it 'registers an offense if next to method' do
+      expect_offense(<<~RUBY)
+        def foo_first_foo
+          #foo body
+        end
+        foo 'second foo' do
+        ^^^^^^^^^^^^^^^^^^^ Expected 1 empty line between block definitions; found 0.
+          #foo body
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        def foo_first_foo
+          #foo body
+        end
+
+        foo 'second foo' do
+          #foo body
+        end
+      RUBY
+    end
+
+    it 'registers an offense if next to numblock' do
+      expect_offense(<<~RUBY)
+        foo 'first foo' do
+          #foo body
+        end
+        foo 'second foo' do
+        ^^^^^^^^^^^^^^^^^^^ Expected 1 empty line between block definitions; found 0.
+          _1
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        foo 'first foo' do
+          #foo body
+        end
+
+        foo 'second foo' do
+          _1
+        end
+      RUBY
+    end
+
+    it 'registers an offense if next to itblock', :ruby34 do
+      expect_offense(<<~RUBY)
+        foo 'first foo' do
+          #foo body
+        end
+        foo 'second foo' do
+        ^^^^^^^^^^^^^^^^^^^ Expected 1 empty line between block definitions; found 0.
+          it
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        foo 'first foo' do
+          #foo body
+        end
+
+        foo 'second foo' do
+          it
+        end
+      RUBY
+    end
+
+    it 'does not register offense' do
+      expect_no_offenses(<<~RUBY)
+        foo 'first foo' do
+          #foo body
+        end
+
+        foo 'second foo' do
+          #foo body
+        end
+      RUBY
+    end
+
+    it 'does not register offense for non registered macro names' do
+      expect_no_offenses(<<~RUBY)
+        bar "bar" do
+          #bar body
+        end
+        foo 'first foo' do
+          #foo body
+        end
+
+        sig {void}
+        foo 'second foo' do
+          #foo body
+        end
+      RUBY
+    end
+
+    it 'does not register an offense for single-line macros' do
+      expect_no_offenses(<<~RUBY)
+        foo :first_attribute
+        foo :second_attribute
+      RUBY
+    end
+
+    context 'and AllowAdjacentOneLineDefs: false' do
+      let(:allow_adjacent_one_line_defs) { false }
+
+      it 'registers an offense for macros that take no block' do
+        expect_offense(<<~RUBY)
+          foo :first_attribute
+          foo :second_attribute
+          ^^^^^^^^^^^^^^^^^^^^^ Expected 1 empty line between send definitions; found 0.
+        RUBY
+
+        expect_correction(<<~RUBY)
+          foo :first_attribute
+
+          foo :second_attribute
         RUBY
       end
     end

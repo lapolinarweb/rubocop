@@ -3,7 +3,9 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for redundant `return` expressions.
+      # Checks for redundant `return` expressions. Ruby methods
+      # implicitly return the value of the last evaluated expression,
+      # so an explicit `return` at the end of a method body is unnecessary.
       #
       # @example
       #   # These bad cases should be extended to handle methods whose body is
@@ -22,9 +24,14 @@ module RuboCop
       #     return something
       #   end
       #
-      #   # good
+      #   # bad
       #   def test
       #     return something if something_else
+      #   end
+      #
+      #   # good
+      #   def test
+      #     something if something_else
       #   end
       #
       #   # good
@@ -53,6 +60,13 @@ module RuboCop
 
         MSG = 'Redundant `return` detected.'
         MULTI_RETURN_MSG = 'To return multiple values, use an array.'
+        RESTRICT_ON_SEND = %i[define_method define_singleton_method lambda].freeze
+
+        def on_send(node)
+          return unless node.block_literal?
+
+          check_branch(node.parent.body)
+        end
 
         def on_def(node)
           check_branch(node.body)
@@ -76,7 +90,7 @@ module RuboCop
             corrector.replace(first_argument, first_argument.source.delete_prefix('*'))
           end
 
-          keyword = range_with_surrounding_space(range: return_node.loc.keyword, side: :right)
+          keyword = range_with_surrounding_space(return_node.loc.keyword, side: :right)
           corrector.remove(keyword)
         end
 
@@ -94,13 +108,14 @@ module RuboCop
           corrector.insert_after(node.children.last, '}')
         end
 
-        # rubocop:disable Metrics/CyclomaticComplexity
+        # rubocop:disable-next Metrics/CyclomaticComplexity
         def check_branch(node)
           return unless node
 
           case node.type
           when :return then check_return_node(node)
           when :case   then check_case_node(node)
+          when :case_match then check_case_match_node(node)
           when :if     then check_if_node(node)
           when :rescue then check_rescue_node(node)
           when :resbody then check_resbody_node(node)
@@ -109,7 +124,6 @@ module RuboCop
             check_begin_node(node)
           end
         end
-        # rubocop:enable Metrics/CyclomaticComplexity
 
         def check_return_node(node)
           return if cop_config['AllowMultipleReturnValues'] && node.children.size > 1
@@ -128,8 +142,13 @@ module RuboCop
           check_branch(node.else_branch)
         end
 
+        def check_case_match_node(node)
+          node.in_pattern_branches.each { |in_pattern_node| check_branch(in_pattern_node.body) }
+          check_branch(node.else_branch)
+        end
+
         def check_if_node(node)
-          return if node.modifier_form? || node.ternary?
+          return if node.ternary?
 
           check_branch(node.if_branch)
           check_branch(node.else_branch)

@@ -99,6 +99,56 @@ RSpec.describe RuboCop::Cop::Style::MethodDefParentheses, :config do
         end
       RUBY
     end
+
+    it 'requires parens for anonymous block forwarding', :ruby31 do
+      expect_no_offenses(<<~RUBY)
+        def foo(&)
+          bar(&)
+        end
+      RUBY
+    end
+
+    it 'requires parens for anonymous rest arguments forwarding', :ruby32 do
+      expect_no_offenses(<<~RUBY)
+        def foo(*)
+          bar(*)
+        end
+      RUBY
+    end
+
+    it 'requires parens for anonymous keyword rest arguments forwarding', :ruby32 do
+      expect_no_offenses(<<~RUBY)
+        def foo(**)
+          bar(**)
+        end
+      RUBY
+    end
+
+    it 'removes the parens for named rest arguments' do
+      expect_offense(<<~RUBY)
+        def foo(*rest)
+               ^^^^^^^ Use def without parentheses.
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        def foo *rest
+        end
+      RUBY
+    end
+
+    it 'removes the parens for named keyword rest arguments' do
+      expect_offense(<<~RUBY)
+        def foo(**opts)
+               ^^^^^^^^ Use def without parentheses.
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        def foo **opts
+        end
+      RUBY
+    end
   end
 
   shared_examples 'endless methods' do
@@ -160,6 +210,54 @@ RSpec.describe RuboCop::Cop::Style::MethodDefParentheses, :config do
         def func(a, b)
         end
         def func(a, b)
+        end
+      RUBY
+    end
+
+    it 'registers an offense when using rest arguments without parentheses' do
+      expect_offense(<<~RUBY)
+        def foo *args
+                ^^^^^ Use def with parentheses when there are parameters.
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        def foo(*args)
+        end
+      RUBY
+    end
+
+    it 'registers an offense when using keyword rest arguments without parentheses' do
+      expect_offense(<<~RUBY)
+        def foo **opts
+                ^^^^^^ Use def with parentheses when there are parameters.
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        def foo(**opts)
+        end
+      RUBY
+    end
+
+    it 'registers an offense when using block argument without parentheses' do
+      expect_offense(<<~RUBY)
+        def foo &block
+                ^^^^^^ Use def with parentheses when there are parameters.
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        def foo(&block)
+        end
+      RUBY
+    end
+
+    it 'registers an offense when using forwarding arguments without parentheses', :ruby31 do
+      expect_offense(<<~RUBY)
+        def foo ...
+                ^^^ Use def with parentheses when there are parameters.
+          bar ...
         end
       RUBY
     end
@@ -236,6 +334,40 @@ RSpec.describe RuboCop::Cop::Style::MethodDefParentheses, :config do
 
     it_behaves_like 'no parentheses'
     it_behaves_like 'endless methods'
+
+    it 'requires parens when the parameters begin on a line below the method name' do
+      expect_no_offenses(<<~RUBY)
+        def func(
+          a,
+          b
+        )
+        end
+      RUBY
+    end
+
+    it 'requires parens when a sole parameter begins on a line below the method name' do
+      expect_no_offenses(<<~RUBY)
+        def func(
+          a
+        )
+        end
+      RUBY
+    end
+
+    it 'reports an offense when the parameters begin on the method name line' do
+      expect_offense(<<~RUBY)
+        def func(a,
+                ^^^ Use def without parentheses.
+          b)
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        def func a,
+          b
+        end
+      RUBY
+    end
   end
 
   context 'require_no_parentheses_except_multiline' do

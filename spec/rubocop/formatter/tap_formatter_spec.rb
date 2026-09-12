@@ -86,16 +86,16 @@ RSpec.describe RuboCop::Formatter::TapFormatter do
             RuboCop::Cop::Offense.new(
               :error,
               Parser::Source::Range.new(source_buffer,
-                                        (4 * line_length) + 1,
-                                        (4 * line_length) + 2),
+                                        (line_length * 4) + 1,
+                                        (line_length * 4) + 2),
               'bar',
               'Cop'
             ),
             RuboCop::Cop::Offense.new(
               :convention,
               Parser::Source::Range.new(source_buffer,
-                                        5 * line_length,
-                                        (5 * line_length) + 1),
+                                        line_length * 5,
+                                        (line_length * 5) + 1),
               'foo',
               'Cop'
             )
@@ -139,7 +139,7 @@ RSpec.describe RuboCop::Formatter::TapFormatter do
   end
 
   describe '#report_file', :config do
-    let(:cop_class) { RuboCop::Cop::Cop }
+    let(:cop_class) { RuboCop::Cop::Base }
     let(:output) { StringIO.new }
 
     before { cop.send(:begin_investigation, processed_source) }
@@ -152,16 +152,38 @@ RSpec.describe RuboCop::Formatter::TapFormatter do
       end
 
       it 'displays text containing the offending source line' do
-        location = source_range(source.index('[')..source.index(']'))
+        range = source_range(source.index('[')..source.index(']'))
 
-        cop.add_offense(nil, location: location, message: 'message 1')
-        formatter.report_file('test', cop.offenses)
+        offenses = cop.add_offense(range, message: 'message 1')
+        formatter.report_file('test', offenses)
 
         expect(output.string)
           .to eq <<~OUTPUT
             # test:1:21: C: message 1
             # do_something("あああ", ["いいい"])
             #                        ^^^^^^^^^^
+        OUTPUT
+      end
+    end
+
+    context 'when the source contains tabs' do
+      let(:source) do
+        <<~RUBY
+          \t\t\tdo_something("[123]")
+        RUBY
+      end
+
+      it 'preserves tabs in highlighted area' do
+        range = source_range(source.index('[')..source.index(']'))
+
+        offenses = cop.add_offense(range, message: 'message 1')
+        formatter.report_file('test', offenses)
+
+        expect(output.string)
+          .to eq <<~OUTPUT
+            # test:1:18: C: message 1
+            # \t\t\tdo_something("[123]")
+            # \t\t\t              ^^^^^
         OUTPUT
       end
     end

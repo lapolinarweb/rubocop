@@ -2,7 +2,7 @@
 
 module RuboCop
   module Cop
-    # This class does condition auto-correction
+    # This class does condition autocorrection
     class ConditionCorrector
       class << self
         def correct_negative_condition(corrector, node)
@@ -16,7 +16,7 @@ module RuboCop
 
         def negated_condition(node)
           condition = node.condition
-          condition = condition.children.first while condition.begin_type?
+          condition = condition.children.last while condition.begin_type?
           condition
         end
       end

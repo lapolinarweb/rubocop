@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Lint
-      # This cop checks for uses of literal strings converted to
+      # Checks for uses of literal strings converted to
       # a symbol where a literal symbol could be used instead.
       #
       # There are two possible styles for this cop.
@@ -19,6 +19,7 @@ module RuboCop
       #   'underscored_string'.to_sym
       #   :'underscored_symbol'
       #   'hyphenated-string'.to_sym
+      #   "string_#{interpolation}".to_sym
       #
       #   # good
       #   :string
@@ -26,6 +27,7 @@ module RuboCop
       #   :underscored_string
       #   :underscored_symbol
       #   :'hyphenated-string'
+      #   :"string_#{interpolation}"
       #
       # @example EnforcedStyle: strict (default)
       #
@@ -75,9 +77,29 @@ module RuboCop
 
         def on_send(node)
           return unless node.receiver
-          return unless node.receiver.str_type? || node.receiver.sym_type?
+          return unless (correction = symbol_conversion_correction(node.receiver))
 
-          register_offense(node, correction: node.receiver.value.to_sym.inspect)
+          register_offense(node, correction: correction)
+        end
+
+        def symbol_conversion_correction(receiver)
+          if receiver.type?(:str, :sym)
+            receiver.value.to_sym.inspect
+          elsif receiver.dstr_type? && !receiver.heredoc?
+            dstr_correction(receiver)
+          end
+        end
+
+        # Reuse the already-escaped inner source for a plain `"..."` string so embedded
+        # quotes stay escaped. Percent literals (`%{}`, `%Q{}`, ...) and adjacent string
+        # concatenation have multi-character or no delimiters, so slicing the source would
+        # corrupt them; fall back to the node's value there.
+        def dstr_correction(receiver)
+          if receiver.loc.begin&.source == '"'
+            ":\"#{receiver.source[1..-2]}\""
+          else
+            ":\"#{receiver.value.to_sym}\""
+          end
         end
 
         def on_sym(node)
@@ -124,7 +146,7 @@ module RuboCop
           source == value ||
             # `Symbol#inspect` uses double quotes, but allow single-quoted
             # symbols to work as well.
-            source.tr("'", '"') == value
+            source.gsub('"', '\"').tr("'", '"') == value
         end
 
         def requires_quotes?(sym_node)
@@ -136,7 +158,7 @@ module RuboCop
         end
 
         def in_percent_literal_array?(node)
-          node.parent&.array_type? && node.parent&.percent_literal?
+          node.parent&.array_type? && node.parent.percent_literal?
         end
 
         def correct_hash_key(node)
@@ -147,13 +169,14 @@ module RuboCop
           # will be ignored.
           return unless node.value.to_s.match?(/\A[a-z0-9_]/i)
 
-          correction = node.value.inspect.delete_prefix(':')
+          correction = node.value.inspect
+          correction = correction.delete_prefix(':') if node.parent.colon?
           return if properly_quoted?(node.source, correction)
 
           register_offense(
             node,
             correction: correction,
-            message: format(MSG, correction: "#{correction}:")
+            message: format(MSG, correction: node.parent.colon? ? "#{correction}:" : correction)
           )
         end
 

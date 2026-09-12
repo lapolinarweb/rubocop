@@ -1,21 +1,16 @@
 # frozen_string_literal: true
 
-if RUBY_VERSION < '2.6'
-  puts 'Changelog utilities available only for Ruby 2.6+'
-  exit(1)
-end
-
 # Changelog utility
 class Changelog
   ENTRIES_PATH = 'changelog/'
   FIRST_HEADER = /#{Regexp.escape("## master (unreleased)\n")}/m.freeze
-  ENTRIES_PATH_TEMPLATE = "#{ENTRIES_PATH}%<type>s_%<name>s.md"
+  ENTRIES_PATH_TEMPLATE = "#{ENTRIES_PATH}%<type>s_%<name>s_%<timestamp>s.md"
   TYPE_REGEXP = /#{Regexp.escape(ENTRIES_PATH)}([a-z]+)_/.freeze
   TYPE_TO_HEADER = { new: 'New features', fix: 'Bug fixes', change: 'Changes' }.freeze
   HEADER = /### (.*)/.freeze
   PATH = 'CHANGELOG.md'
   REF_URL = 'https://github.com/rubocop/rubocop'
-  MAX_LENGTH = 40
+  MAX_LENGTH = 80
   CONTRIBUTOR = '[@%<user>s]: https://github.com/%<user>s'
   SIGNATURE = Regexp.new(format(Regexp.escape('[@%<user>s][]'), user: '([\w-]+)'))
   EOF = "\n"
@@ -30,13 +25,22 @@ class Changelog
     end
 
     def write
-      Dir.mkdir(ENTRIES_PATH) unless Dir.exist?(ENTRIES_PATH)
       File.write(path, content)
       path
     end
 
     def path
-      format(ENTRIES_PATH_TEMPLATE, type: type, name: str_to_filename(body))
+      format(
+        ENTRIES_PATH_TEMPLATE,
+        type: type, name: filename_body, timestamp: Time.now.strftime('%Y%m%d%H%M%S')
+      )
+    end
+
+    # The changelog body usually starts with the same word as the entry type
+    # (e.g. a `fix` entry begins with "Fix ..."), which would produce a redundant
+    # `fix_fix_...` filename. Drop that leading duplicate.
+    def filename_body
+      str_to_filename(body).delete_prefix("#{type}_")
     end
 
     def content
@@ -58,10 +62,9 @@ class Changelog
 
     def str_to_filename(str)
       str
-        .downcase
         .split
-        .each { |s| s.gsub!(/\W/, '') }
         .reject(&:empty?)
+        .map { |s| prettify(s) }
         .inject do |result, word|
           s = "#{result}_#{word}"
           return result if s.length > MAX_LENGTH
@@ -78,7 +81,35 @@ class Changelog
 
       user
     end
+
+    private
+
+    def prettify(str)
+      str.gsub!(/\W/, '_')
+
+      # Separate word boundaries by `_`.
+      str.gsub!(/([A-Z]+)(?=[A-Z][a-z])|([a-z\d])(?=[A-Z])/) do
+        (Regexp.last_match(1) || Regexp.last_match(2)) << '_'
+      end
+
+      str.gsub!(/\A_+|_+\z/, '')
+      str.downcase!
+      str
+    end
   end
+
+  def self.pending?
+    entry_paths.any?
+  end
+
+  def self.entry_paths
+    Dir["#{ENTRIES_PATH}*"]
+  end
+
+  def self.read_entries
+    entry_paths.to_h { |path| [path, File.read(path)] }
+  end
+
   attr_reader :header, :rest
 
   def initialize(content: File.read(PATH), entries: Changelog.read_entries)
@@ -109,22 +140,10 @@ class Changelog
     merged_content << EOF
   end
 
-  def self.pending?
-    entry_paths.any?
-  end
-
-  def self.entry_paths
-    Dir["#{ENTRIES_PATH}*"]
-  end
-
-  def self.read_entries
-    entry_paths.to_h { |path| [path, File.read(path)] }
-  end
-
   def new_contributor_lines
-    contributors
-      .map { |user| format(CONTRIBUTOR, user: user) }
-      .reject { |line| @rest.include?(line) }
+    unique_contributor_names = contributors.map { |user| format(CONTRIBUTOR, user: user) }.uniq
+
+    unique_contributor_names.reject { |line| @rest.include?(line) }
   end
 
   def contributors

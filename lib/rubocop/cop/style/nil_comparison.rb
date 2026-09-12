@@ -3,10 +3,9 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for comparison of something with nil using `==` and
-      # `nil?`.
-      #
-      # Supported styles are: predicate, comparison.
+      # Checks for comparison of something with nil using `==` and
+      # `nil?`. Enforcing a consistent style (either the `nil?`
+      # predicate or `==` comparison) improves readability.
       #
       # @example EnforcedStyle: predicate (default)
       #
@@ -44,23 +43,54 @@ module RuboCop
         def_node_matcher :nil_check?, '(send _ :nil?)'
 
         def on_send(node)
+          return unless node.receiver
+
           style_check?(node) do
             add_offense(node.loc.selector) do |corrector|
-              new_code = if prefer_comparison?
-                           node.source.sub('.nil?', ' == nil')
-                         else
-                           node.source.sub(/\s*={2,3}\s*nil/, '.nil?')
-                         end
-
-              corrector.replace(node, new_code)
-
-              parent = node.parent
-              corrector.wrap(node, '(', ')') if parent.respond_to?(:method?) && parent.method?(:!)
+              if prefer_comparison?
+                autocorrect_to_comparison(corrector, node)
+              else
+                autocorrect_to_predicate(corrector, node)
+              end
             end
           end
         end
 
         private
+
+        def autocorrect_to_comparison(corrector, node)
+          range = node.loc.dot.join(node.loc.selector.end)
+          corrector.replace(range, ' == nil')
+          # The new `== nil` binds looser than an enclosing operator (e.g. `<<`,
+          # `!`), so wrap it to keep the original precedence.
+          corrector.wrap(node, '(', ')') if operator_expression?(node.parent)
+        end
+
+        def autocorrect_to_predicate(corrector, node)
+          receiver = node.receiver
+          if operator_expression?(receiver)
+            # A looser-binding receiver (e.g. `!x`, `a + b`) must be parenthesized
+            # so the appended `.nil?` applies to the whole expression.
+            corrector.replace(node, "(#{receiver.source}).nil?")
+          else
+            range = receiver.source_range.end.join(node.source_range.end)
+            corrector.replace(range, '.nil?')
+          end
+        end
+
+        def operator_expression?(node)
+          return false unless node
+
+          operator_send?(node) ||
+            node.operator_keyword? ||
+            (node.if_type? && node.ternary?) ||
+            node.type?(:range, :iflipflop, :eflipflop) ||
+            node.assignment?
+        end
+
+        def operator_send?(node)
+          node.send_type? && node.operator_method? && !node.method?(:[]) && !node.method?(:[]=)
+        end
 
         def message(_node)
           prefer_comparison? ? EXPLICIT_MSG : PREDICATE_MSG

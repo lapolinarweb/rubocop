@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Layout
-      # This cop checks the . position in multi-line method calls.
+      # Checks the . position in multi-line method calls.
       #
       # @example EnforcedStyle: leading (default)
       #   # bad
@@ -27,8 +27,12 @@ module RuboCop
         include RangeHelp
         extend AutoCorrector
 
+        def self.autocorrect_incompatible_with
+          [Style::RedundantSelf]
+        end
+
         def on_send(node)
-          return unless node.dot? || ampersand_dot?(node)
+          return unless node.dot? || node.safe_navigation?
 
           return correct_style_detected if proper_dot_position?(node)
 
@@ -68,12 +72,12 @@ module RuboCop
         end
 
         def proper_dot_position?(node)
+          selector_range = selector_range(node)
+
+          return true if same_line?(selector_range, end_range(node.receiver))
+
+          selector_line = selector_range.line
           receiver_line = receiver_end_line(node.receiver)
-          selector_line = selector_range(node).line
-
-          # receiver and selector are on the same line
-          return true if selector_line == receiver_line
-
           dot_line = node.loc.dot.line
 
           # don't register an offense if there is a line comment between the
@@ -108,7 +112,7 @@ module RuboCop
         end
 
         def last_heredoc_line(node)
-          if node.send_type?
+          if node.call_type?
             node.arguments.select { |arg| heredoc?(arg) }.map { |arg| arg.loc.heredoc_end.line }.max
           elsif heredoc?(node)
             node.loc.heredoc_end.line
@@ -116,16 +120,18 @@ module RuboCop
         end
 
         def heredoc?(node)
-          (node.str_type? || node.dstr_type?) && node.heredoc?
+          node.any_str_type? && node.heredoc?
+        end
+
+        def end_range(node)
+          node.source_range.end
         end
 
         def selector_range(node)
+          return node unless node.call_type?
+
           # l.(1) has no selector, so we use the opening parenthesis instead
           node.loc.selector || node.loc.begin
-        end
-
-        def ampersand_dot?(node)
-          node.loc.respond_to?(:dot) && node.loc.dot && node.loc.dot.is?('&.')
         end
       end
     end

@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require 'io/wait'
+
 module RuboCop
   class Runner
     attr_writer :errors # Needed only for testing.
@@ -23,15 +25,12 @@ RSpec.describe RuboCop::Runner, :isolated_environment do
       Process.kill 'INT', pid
     end
 
-    def wait_for_input(io)
-      line = nil
-
-      until line
-        line = io.gets
-        sleep 0.1
+    def wait_for_input(io, timeout: 30)
+      unless io.wait_readable(timeout)
+        raise "the forked runner produced no output within #{timeout}s"
       end
 
-      line
+      io.gets or raise 'the forked runner exited without writing a line'
     end
 
     around do |example|
@@ -40,21 +39,65 @@ RSpec.describe RuboCop::Runner, :isolated_environment do
       Signal.trap('INT', old_handler)
     end
 
+    context 'when a formatter raises while starting' do
+      let(:interrupting_formatter) do
+        Class.new(RuboCop::Formatter::ProgressFormatter) do
+          def started(_target_files)
+            raise Interrupt
+          end
+        end
+      end
+
+      it 'aborts cleanly instead of raising from the formatter' do
+        runner = described_class.new({ formatters: [[interrupting_formatter]] },
+                                     RuboCop::ConfigStore.new)
+
+        expect(runner.run(['example.rb'])).to be(false)
+        expect(runner).to be_aborting
+      end
+
+      it 'does not replace an error raised by an earlier formatter' do
+        failing_formatter = Class.new(RuboCop::Formatter::ProgressFormatter) do
+          def started(_target_files)
+            raise 'formatter boom'
+          end
+        end
+        runner = described_class.new(
+          { formatters: [[failing_formatter], ['progress', formatter_output_path]] },
+          RuboCop::ConfigStore.new
+        )
+
+        expect { runner.run(['example.rb']) }.to raise_error(RuntimeError, 'formatter boom')
+      end
+    end
+
     context 'with SIGINT' do
       it 'returns false' do
-        skip unless Process.respond_to?(:fork)
-
-        # Make sure the runner works slowly and thus is interruptible
-        allow(runner).to receive(:process_file) do
-          sleep 99
-        end
+        skip '`Process` does not respond to `fork` method.' unless Process.respond_to?(:fork)
 
         rd, wr = IO.pipe
+
+        # Make sure the runner works slowly and thus is interruptible, and signal when
+        # the forked child is inside `Runner#run`, whose `rescue Interrupt` turns
+        # the interrupt into an abort. An interrupt delivered before that point kills
+        # the child before it can write anything.
+        allow(runner).to receive(:process_file) do
+          wr.puts 'PROCESSING'
+          # The duration only has to outlast `wait_for_input`'s timeout, so that an interrupt
+          # that never arrives is reported there instead of letting the run finish on its own
+          # and write `true`.
+          sleep 99
+          []
+        end
 
         pid = Process.fork do
           rd.close
           wr.puts 'READY'
-          wr.puts runner.run(['example.rb'])
+          begin
+            wr.puts runner.run(['example.rb'])
+          rescue Exception => e # rubocop:disable Lint/RescueException -- all the deaths are unexpected, so we want to report it
+            wr.puts "EXCEPTION #{e.class}: #{e.message} (cause: #{e.cause.class})"
+          end
           wr.close
         end
 
@@ -64,12 +107,25 @@ RSpec.describe RuboCop::Runner, :isolated_environment do
         line = wait_for_input(rd)
         expect(line.chomp).to eq('READY')
 
+        # Wait until the runner is inside its interrupt-protected region.
+        line = wait_for_input(rd)
+        expect(line.chomp).to eq('PROCESSING')
+
         # Interrupt the runner
         interrupt(pid)
 
         # Make sure the runner returns false
         line = wait_for_input(rd)
         expect(line.chomp).to eq('false')
+      ensure
+        if pid
+          begin
+            Process.kill('KILL', pid)
+            Process.waitpid(pid)
+          rescue Errno::ESRCH, Errno::ECHILD
+            nil
+          end
+        end
       end
     end
   end
@@ -89,6 +145,34 @@ RSpec.describe RuboCop::Runner, :isolated_environment do
       RUBY
 
       it 'returns true' do
+        expect(runner.run([])).to be true
+      end
+    end
+
+    context 'with a cop supporting multiple sources', :restore_registry do
+      let(:source) { '' }
+      let!(:persisting_cop_class) do
+        stub_cop_class('Custom::Persisting') do
+          def self.support_multiple_source?
+            true
+          end
+        end
+      end
+      let(:options) do
+        super().merge(cache: 'false', only: ['Custom/Persisting'])
+      end
+
+      before do
+        create_empty_file('example2.rb')
+        create_file('.rubocop.yml', <<~YAML)
+          Custom/Persisting:
+            Enabled: true
+        YAML
+      end
+
+      it 'uses the same cop instance for every file' do
+        expect(persisting_cop_class).to receive(:new).once.and_call_original
+
         expect(runner.run([])).to be true
       end
     end
@@ -121,23 +205,277 @@ RSpec.describe RuboCop::Runner, :isolated_environment do
       end
     end
 
-    context 'if a cop crashes' do
+    context 'custom ruby extractors' do
+      around do |example|
+        described_class.ruby_extractors.unshift(custom_ruby_extractor)
+
+        # Ignore platform differences.
+        create_file('.rubocop.yml', <<~YAML)
+          Layout/EndOfLine:
+            Enabled: false
+        YAML
+
+        example.call
+      ensure
+        described_class.ruby_extractors.shift
+      end
+
+      context 'when the extractor matches' do
+        # rubocop:disable-next Layout/LineLength -- the source under test is what it is
+        let(:custom_ruby_extractor) do
+          lambda do |_processed_source|
+            [
+              {
+                offset: 1,
+                processed_source: RuboCop::ProcessedSource.new(<<~RUBY, 3.3, 'dummy.rb', parser_engine: parser_engine)
+                  # frozen_string_literal: true
+
+                  def valid_code; end
+                RUBY
+              },
+              {
+                offset: 2,
+                processed_source: RuboCop::ProcessedSource.new(source, 3.3, 'dummy.rb', parser_engine: parser_engine)
+              }
+            ]
+          end
+        end
+
+        let(:source) do
+          <<~RUBY
+            # frozen_string_literal: true
+
+            def INVALID_CODE; end
+          RUBY
+        end
+
+        it 'sends the offense to a formatter' do
+          runner.run([])
+          expect(formatter_output).to eq <<~RESULT
+            Inspecting 1 file
+            C
+
+            Offenses:
+
+            example.rb:3:7: C: Naming/MethodName: Use snake_case for method names.
+            def INVALID_CODE; end
+                  ^^^^^^^^^^^^
+
+            1 file inspected, 1 offense detected
+          RESULT
+        end
+      end
+
+      context 'when the extractor does not match' do
+        let(:custom_ruby_extractor) do
+          lambda do |_processed_source|
+          end
+        end
+
+        let(:source) { <<~RUBY }
+          # frozen_string_literal: true
+
+          def INVALID_CODE; end
+        RUBY
+
+        it 'sends the offense to a formatter' do
+          runner.run([])
+          expect(formatter_output).to eq <<~RESULT
+            Inspecting 1 file
+            C
+
+            Offenses:
+
+            example.rb:3:5: C: Naming/MethodName: Use snake_case for method names.
+            def INVALID_CODE; end
+                ^^^^^^^^^^^^
+
+            1 file inspected, 1 offense detected
+          RESULT
+        end
+      end
+
+      context 'when autocorrecting multiple extracted fragments' do
+        let(:options) do
+          {
+            formatters: [['progress', formatter_output_path]],
+            autocorrect: true,
+            only: ['Style/StringLiterals']
+          }
+        end
+
+        let(:template_source) do
+          <<~ERB
+            <%= "first" %>
+            <%= "second" %>
+            <%= #{third_fragment} %>
+          ERB
+        end
+        let(:source) { template_source }
+
+        let(:custom_ruby_extractor) do
+          lambda do |processed_source|
+            source = processed_source.buffer.source
+            fragments = []
+
+            source.scan(/<%= (?<ruby>.*?) %>/) do
+              match = Regexp.last_match
+              fragments << {
+                offset: match.begin(:ruby),
+                processed_source: RuboCop::ProcessedSource.new(
+                  match[:ruby],
+                  3.3,
+                  'dummy.rb',
+                  parser_engine: parser_engine
+                )
+              }
+            end
+
+            fragments
+          end
+        end
+
+        context 'when all fragments have offenses' do
+          let(:third_fragment) { '"third"' }
+
+          it 'applies all corrections with a single write' do
+            allow(File).to receive(:write).and_call_original
+            expect(File).to receive(:write)
+              .with(a_string_matching(/example\.rb\z/), anything)
+              .once
+              .and_call_original
+
+            expect(runner.run([])).to be true
+            expect(File.read('example.rb')).to eq(<<~ERB)
+              <%= 'first' %>
+              <%= 'second' %>
+              <%= 'third' %>
+            ERB
+          end
+        end
+
+        context 'when the last fragment has no offense' do
+          let(:third_fragment) { "'third'" }
+
+          it 'still applies earlier fragment corrections in one run' do
+            expect(runner.run([])).to be true
+            expect(File.read('example.rb')).to eq(<<~ERB)
+              <%= 'first' %>
+              <%= 'second' %>
+              <%= 'third' %>
+            ERB
+          end
+        end
+      end
+
+      context 'when using stdin with offset 0 extractor fragments' do
+        let(:options) do
+          {
+            formatters: [['progress', formatter_output_path]],
+            autocorrect: true,
+            stdin: "\"hello\"\n",
+            only: ['Style/StringLiterals']
+          }
+        end
+        let(:source) { '' }
+
+        let(:custom_ruby_extractor) do
+          lambda do |processed_source|
+            ruby_source = processed_source.buffer.source
+
+            [
+              {
+                offset: 0,
+                processed_source: RuboCop::ProcessedSource.new(
+                  ruby_source,
+                  3.3,
+                  'dummy.rb',
+                  parser_engine: parser_engine
+                )
+              }
+            ]
+          end
+        end
+
+        it 'autocorrects without crashing' do
+          expect { runner.run([]) }.not_to raise_error
+          expect(runner.instance_variable_get(:@options)[:stdin]).to eq("'hello'\n")
+        end
+      end
+
+      context 'when the extractor crashes' do
+        let(:source) { <<~RUBY }
+          # frozen_string_literal: true
+
+          def foo; end
+        RUBY
+
+        shared_examples 'error handling' do
+          it 'raises an error with the crashing extractor/file' do
+            expect do
+              runner.run([])
+            end.to raise_error(RuboCop::Error, /runner_spec\.rb failed to process .*example\.rb/)
+          end
+        end
+
+        context 'and it is a Proc' do
+          let(:custom_ruby_extractor) do
+            lambda do |_processed_source|
+              raise 'Oh no!'
+            end
+          end
+
+          it_behaves_like 'error handling'
+        end
+
+        context 'and it responds to `call`' do
+          let(:custom_ruby_extractor) do
+            Class.new do
+              def self.call(_processed_source)
+                raise 'Oh no!'
+              end
+            end
+          end
+
+          it_behaves_like 'error handling'
+        end
+      end
+    end
+
+    context 'when results should not be saved to the cache' do
       before do
         # The cache responds that it's not valid, which means that new results
-        # should normally be collected and saved...
+        # should normally be collected and saved.
         cache = instance_double(RuboCop::ResultCache, 'valid?' => false)
-        # ... but there's a crash in one cop.
-        runner.errors = ['An error occurred in ...']
 
         allow(RuboCop::ResultCache).to receive(:new) { cache }
       end
 
-      let(:source) { '' }
+      context 'if a cop crashes' do
+        before { runner.errors = ['An error occurred in ...'] }
 
-      it 'does not call ResultCache#save' do
-        # The double doesn't define #save, so we'd get an error if it were
-        # called.
-        runner.run([])
+        let(:source) { '' }
+
+        it 'does not call ResultCache#save' do
+          # The double doesn't define #save, so we'd get an error if it were
+          # called.
+          expect(runner.run([])).to be true
+        end
+      end
+
+      context 'if a warning is emitted for a file' do
+        include_context 'cli spec behavior'
+
+        let(:source) { 'x = 3 # rubocop:disable UselessAssignment' }
+
+        it 'does not call ResultCache#save' do
+          # The double doesn't define #save, so we'd get an error if it were called.
+          expect(runner.run([])).to be false
+
+          expect($stderr.string.chomp).to eq('example.rb: Warning: no department given for ' \
+                                             'UselessAssignment. Run `rubocop -a --only ' \
+                                             'Migration/DepartmentName` to fix.')
+        end
       end
     end
 
@@ -185,9 +523,11 @@ RSpec.describe RuboCop::Runner, :isolated_environment do
   end
 
   describe '#run with cops autocorrecting each-other' do
-    let(:source_file_path) { create_file('example.rb', source) }
+    include_context 'mock console output'
 
-    let(:options) { { auto_correct: true, formatters: [['progress', formatter_output_path]] } }
+    let!(:source_file_path) { create_file('example.rb', source) }
+
+    let(:options) { { autocorrect: true } }
 
     context 'with two conflicting cops' do
       subject(:runner) do
@@ -211,14 +551,27 @@ RSpec.describe RuboCop::Runner, :isolated_environment do
           end
         RUBY
 
-        it 'aborts because of an infinite loop' do
-          expect do
-            runner.run([])
-          end.to raise_error(
-            RuboCop::Runner::InfiniteCorrectionLoop,
+        it 'records the infinite loop error' do
+          runner.run([])
+          expect(runner.errors.size).to be(1)
+          expect(runner.errors[0].message).to eq(
             "Infinite loop detected in #{source_file_path} and caused by " \
             'Test/ClassMustBeAModuleCop -> Test/ModuleMustBeAClassCop'
           )
+        end
+
+        context 'when `raise_cop_error` is set' do
+          let(:options) { { autocorrect: true, raise_cop_error: true } }
+
+          it 'raises the infinite loop error' do
+            expect do
+              runner.run([])
+            end.to raise_error(
+              described_class::InfiniteCorrectionLoop,
+              "Infinite loop detected in #{source_file_path} and caused by " \
+              'Test/ClassMustBeAModuleCop -> Test/ModuleMustBeAClassCop'
+            )
+          end
         end
       end
 
@@ -231,11 +584,11 @@ RSpec.describe RuboCop::Runner, :isolated_environment do
           end
         RUBY
 
-        it 'aborts because of an infinite loop' do
-          expect do
-            runner.run([])
-          end.to raise_error(
-            RuboCop::Runner::InfiniteCorrectionLoop,
+        it 'records the infinite loop error' do
+          runner.run([])
+
+          expect(runner.errors.size).to be(1)
+          expect(runner.errors[0].message).to eq(
             "Infinite loop detected in #{source_file_path} and caused by " \
             'Test/ClassMustBeAModuleCop -> Test/ModuleMustBeAClassCop'
           )
@@ -267,14 +620,13 @@ RSpec.describe RuboCop::Runner, :isolated_environment do
           end
         RUBY
 
-        it 'aborts because of an infinite loop' do
-          expect do
-            runner.run([])
-          end.to raise_error(
-            RuboCop::Runner::InfiniteCorrectionLoop,
+        it 'records the infinite loop error' do
+          runner.run([])
+
+          expect(runner.errors.size).to be(1)
+          expect(runner.errors[0].message).to eq(
             "Infinite loop detected in #{source_file_path} and caused by " \
-            'Test/ClassMustBeAModuleCop, Test/AtoB ' \
-            '-> Test/ModuleMustBeAClassCop, Test/BtoA'
+            'Test/ClassMustBeAModuleCop, Test/AtoB -> Test/ModuleMustBeAClassCop, Test/BtoA'
           )
         end
       end
@@ -302,14 +654,104 @@ RSpec.describe RuboCop::Runner, :isolated_environment do
             end
           RUBY
 
-          it 'aborts because of an infinite loop' do
-            expect do
-              runner.run([])
-            end.to raise_error(
-              RuboCop::Runner::InfiniteCorrectionLoop,
+          it 'records the infinite correction error' do
+            runner.run([])
+
+            expect(runner.errors.size).to be(1)
+            expect(runner.errors[0].message).to eq(
               "Infinite loop detected in #{source_file_path} and caused by " \
               'Test/AtoB -> Test/BtoC -> Test/CtoA'
             )
+          end
+        end
+      end
+
+      context 'with display options' do
+        subject(:runner) { described_class.new(options, RuboCop::ConfigStore.new) }
+
+        before { create_file('example.rb', source) }
+
+        context '--display-only-safe-correctable' do
+          let(:options) do
+            {
+              formatters: [['progress', formatter_output_path]],
+              display_only_safe_correctable: true
+            }
+          end
+          let(:source) { <<~RUBY }
+
+            def foo()
+            end
+          RUBY
+
+          it 'returns false' do
+            expect(runner.run([])).to be false
+          end
+
+          it 'omits unsafe correctable `Style/FrozenStringLiteral`' do
+            runner.run([])
+            expect(formatter_output).to eq <<~RESULT
+              Inspecting 1 file
+              C
+
+              Offenses:
+
+              example.rb:2:1: C: [Correctable] Layout/LeadingEmptyLines: Unnecessary blank line at the beginning of the source.
+              def foo()
+              ^^^
+              example.rb:2:1: C: [Correctable] Style/EmptyMethod: Put empty method definitions on a single line.
+              def foo() ...
+              ^^^^^^^^^
+              example.rb:2:8: C: [Correctable] Style/DefWithParentheses: Omit the parentheses in defs when the method doesn't accept any arguments.
+              def foo()
+                     ^^
+
+              1 file inspected, 3 offenses detected, 3 offenses autocorrectable
+            RESULT
+          end
+        end
+
+        context '--display-only-correctable' do
+          let(:options) do
+            {
+              formatters: [['progress', formatter_output_path]],
+              display_only_correctable: true
+            }
+          end
+
+          let(:source) { <<~RUBY }
+
+            def foo()
+            end
+
+            'very-long-string-to-earn-un-autocorrectable-offense very-long-string-to-earn-un-autocorrectable-offense very-long-string-to-earn-un-autocorrectable-offense'
+          RUBY
+
+          it 'returns false' do
+            expect(runner.run([])).to be false
+          end
+
+          it 'omits uncorrectable `Layout/LineLength`' do
+            runner.run([])
+            expect(formatter_output).to eq <<~RESULT
+              Inspecting 1 file
+              C
+
+              Offenses:
+
+              example.rb:1:1: C: [Correctable] Style/FrozenStringLiteralComment: Missing frozen string literal comment.
+              example.rb:2:1: C: [Correctable] Layout/LeadingEmptyLines: Unnecessary blank line at the beginning of the source.
+              def foo()
+              ^^^
+              example.rb:2:1: C: [Correctable] Style/EmptyMethod: Put empty method definitions on a single line.
+              def foo() ...
+              ^^^^^^^^^
+              example.rb:2:8: C: [Correctable] Style/DefWithParentheses: Omit the parentheses in defs when the method doesn't accept any arguments.
+              def foo()
+                     ^^
+
+              1 file inspected, 4 offenses detected, 4 offenses autocorrectable
+            RESULT
           end
         end
       end

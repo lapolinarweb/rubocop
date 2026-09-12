@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-RSpec.describe RuboCop::Cop::Style::ConditionalAssignment, :config, :config, :config do
+RSpec.describe RuboCop::Cop::Style::ConditionalAssignment, :config do
   let(:config) do
     RuboCop::Config.new('Style/ConditionalAssignment' => {
                           'Enabled' => true,
@@ -1229,14 +1229,14 @@ RSpec.describe RuboCop::Cop::Style::ConditionalAssignment, :config, :config, :co
     RUBY
   end
 
-  describe 'auto-correct' do
+  describe 'autocorrect' do
     it 'corrects =~ in ternary operations' do
-      expect_offense(<<~'RUBY')
+      expect_offense(<<~RUBY)
         foo? ? bar =~ /a/ : bar =~ /b/
         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Use the return of the conditional for variable assignment and comparison.
       RUBY
 
-      expect_correction(<<~'RUBY')
+      expect_correction(<<~RUBY)
         bar =~ (foo? ? /a/ : /b/)
       RUBY
     end
@@ -1572,7 +1572,7 @@ RSpec.describe RuboCop::Cop::Style::ConditionalAssignment, :config, :config, :co
         RUBY
       end
 
-      it 'register an offense for multiple assignment in if else' do
+      it 'registers an offense for multiple assignment in if else' do
         expect_offense(<<~RUBY)
           if baz
           ^^^^^^ Use the return of the conditional for variable assignment and comparison.
@@ -1624,7 +1624,7 @@ RSpec.describe RuboCop::Cop::Style::ConditionalAssignment, :config, :config, :co
         RUBY
       end
 
-      it 'registers offense for multiple assignment in if elsif elsif else' do
+      it 'registers an offense for multiple assignment in if elsif elsif else' do
         expect_offense(<<~RUBY)
           if baz
           ^^^^^^ Use the return of the conditional for variable assignment and comparison.
@@ -1661,7 +1661,7 @@ RSpec.describe RuboCop::Cop::Style::ConditionalAssignment, :config, :config, :co
 
       it_behaves_like 'allows out of order multiple assignment in if elsif else'
 
-      it 'registers offense for multiple assignment in unless else' do
+      it 'registers an offense for multiple assignment in unless else' do
         expect_offense(<<~RUBY)
           unless baz
           ^^^^^^^^^^ Use the return of the conditional for variable assignment and comparison.
@@ -1684,7 +1684,7 @@ RSpec.describe RuboCop::Cop::Style::ConditionalAssignment, :config, :config, :co
         RUBY
       end
 
-      it 'registers offense for multiple assignments in case when with only one when' do
+      it 'registers an offense for multiple assignments in case when with only one when' do
         expect_offense(<<~RUBY)
           case foo
           ^^^^^^^^ Use the return of the conditional for variable assignment and comparison.
@@ -1709,7 +1709,7 @@ RSpec.describe RuboCop::Cop::Style::ConditionalAssignment, :config, :config, :co
         RUBY
       end
 
-      it 'registers offense for multiple assignments in case when with multiple whens' do
+      it 'registers an offense for multiple assignments in case when with multiple whens' do
         expect_offense(<<~RUBY)
           case foo
           ^^^^^^^^ Use the return of the conditional for variable assignment and comparison.
@@ -1924,7 +1924,7 @@ RSpec.describe RuboCop::Cop::Style::ConditionalAssignment, :config, :config, :co
     end
 
     it 'registers an offense for multiple assignment when an earlier ' \
-       'assignment is is protected by a modifier' do
+       'assignment is protected by a modifier' do
       expect_offense(<<~RUBY)
         if foo
         ^^^^^^ Use the return of the conditional for variable assignment and comparison.
@@ -1947,7 +1947,7 @@ RSpec.describe RuboCop::Cop::Style::ConditionalAssignment, :config, :config, :co
       RUBY
     end
 
-    context 'auto-correct' do
+    context 'autocorrect' do
       it 'corrects multiple assignment in if else' do
         expect_offense(<<~RUBY)
           if foo
@@ -2148,7 +2148,7 @@ RSpec.describe RuboCop::Cop::Style::ConditionalAssignment, :config, :config, :co
   end
 
   context 'EndAlignment configured to start_of_line' do
-    context 'auto-correct' do
+    context 'autocorrect' do
       it 'uses proper end alignment in if' do
         expect_offense(<<~RUBY)
           if foo

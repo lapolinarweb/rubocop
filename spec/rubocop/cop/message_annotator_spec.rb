@@ -62,9 +62,7 @@ RSpec.describe RuboCop::Cop::MessageAnnotator do
 
     context 'when StyleGuide is set in the config' do
       let(:config) do
-        RuboCop::Config.new(
-          'Cop/Cop' => { 'StyleGuide' => 'http://example.org/styleguide' }
-        )
+        RuboCop::Config.new('Cop/Cop' => { 'StyleGuide' => 'http://example.org/styleguide' })
       end
 
       it 'adds style guide url' do
@@ -158,15 +156,11 @@ RSpec.describe RuboCop::Cop::MessageAnnotator do
   describe '#urls' do
     let(:urls) { annotator.urls }
     let(:config) do
-      RuboCop::Config.new(
-        'AllCops' => {
-          'StyleGuideBaseURL' => 'http://example.org/styleguide'
-        }
-      )
+      RuboCop::Config.new('AllCops' => { 'StyleGuideBaseURL' => 'http://example.org/styleguide' })
     end
 
     it 'returns an empty array without StyleGuide URL' do
-      expect(urls.empty?).to be(true)
+      expect(urls).to be_empty
     end
 
     it 'returns style guide url when it is specified' do
@@ -174,18 +168,60 @@ RSpec.describe RuboCop::Cop::MessageAnnotator do
       expect(urls).to eq(%w[http://example.org/styleguide#target_based_url])
     end
 
-    it 'returns reference url when it is specified' do
+    it 'returns multiple reference urls' do
+      config['Cop/Cop'] = {
+        'References' => ['https://example.com/some_style_guide',
+                         'https://example.com/some_other_guide',
+                         '']
+      }
+
+      expect(urls).to eq(['https://example.com/some_style_guide',
+                          'https://example.com/some_other_guide'])
+    end
+
+    it 'handles References as a string' do
+      # Config validation should prevent this, but we handle it here anyway.
+      config['Cop/Cop'] = { 'References' => 'https://example.com/some_style_guide' }
+
+      expect(urls).to eq(['https://example.com/some_style_guide'])
+    end
+
+    it 'merges "References" with "Reference" when both are specified and "Reference" is an array' do
+      config['Cop/Cop'] = {
+        'References' => ['https://example.com/some_style_guide',
+                         'https://example.com/some_other_guide'],
+        'Reference' => ['https://example.com/some_style_guide']
+      }
+
+      expect(urls).to eq(%w[https://example.com/some_style_guide
+                            https://example.com/some_other_guide
+                            https://example.com/some_style_guide])
+    end
+
+    it 'merges "References" with "Reference" when both are specified and "Reference" is a simple string' do
+      config['Cop/Cop'] = {
+        'References' => ['https://example.com/some_style_guide',
+                         'https://example.com/some_other_guide'],
+        'Reference' => 'https://example.com/some_style_guide'
+      }
+
+      expect(urls).to eq(%w[https://example.com/some_style_guide
+                            https://example.com/some_other_guide
+                            https://example.com/some_style_guide])
+    end
+
+    it 'returns reference url when it is specified via legacy "Reference" key' do
       config['Cop/Cop'] = { 'Reference' => 'https://example.com/some_style_guide' }
       expect(urls).to eq(%w[https://example.com/some_style_guide])
     end
 
-    it 'returns an empty array if the reference url is blank' do
+    it 'returns an empty array if the legacy "Reference" key is blank' do
       config['Cop/Cop'] = { 'Reference' => '' }
 
-      expect(urls.empty?).to be(true)
+      expect(urls).to be_empty
     end
 
-    it 'returns multiple reference urls' do
+    it 'returns multiple reference urls when specified via legacy "Reference" key' do
       config['Cop/Cop'] = {
         'Reference' => ['https://example.com/some_style_guide',
                         'https://example.com/some_other_guide',
@@ -199,9 +235,11 @@ RSpec.describe RuboCop::Cop::MessageAnnotator do
     it 'returns style guide and reference url when they are specified' do
       config['Cop/Cop'] = {
         'StyleGuide' => '#target_based_url',
+        'References' => ['https://example.com/plural_reference'],
         'Reference' => 'https://example.com/some_style_guide'
       }
       expect(urls).to eq(%w[http://example.org/styleguide#target_based_url
+                            https://example.com/plural_reference
                             https://example.com/some_style_guide])
     end
   end

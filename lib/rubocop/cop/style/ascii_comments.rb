@@ -3,9 +3,12 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for non-ascii (non-English) characters
-      # in comments. You could set an array of allowed non-ascii chars in
-      # `AllowedChars` attribute (copyright notice "©" by default).
+      # Checks for non-ascii (non-English) characters
+      # in comments. Non-ascii characters can cause issues with
+      # portability and encoding across different environments
+      # and editors. You could set an array of allowed non-ascii
+      # chars in `AllowedChars` attribute (copyright notice "©"
+      # by default).
       #
       # @example
       #   # bad
@@ -30,7 +33,7 @@ module RuboCop
         private
 
         def first_offense_range(comment)
-          expression    = comment.loc.expression
+          expression    = comment.source_range
           first_offense = first_non_ascii_chars(comment.text)
 
           start_position = expression.begin_pos + comment.text.index(first_offense)
@@ -49,7 +52,7 @@ module RuboCop
         end
 
         def allowed_non_ascii_chars
-          cop_config['AllowedChars'] || []
+          @allowed_non_ascii_chars ||= (cop_config['AllowedChars'] || []).freeze
         end
       end
     end

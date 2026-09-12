@@ -52,6 +52,12 @@ RSpec.describe RuboCop::Cop::Layout::IndentationStyle, :config do
         __END__
         \tx = 0
       RUBY
+
+      expect_correction(<<~RUBY)
+        #{' ' * 2}x = 0
+        __END__
+        \tx = 0
+      RUBY
     end
 
     it 'accepts a line with a tab other than indentation' do
@@ -80,12 +86,12 @@ RSpec.describe RuboCop::Cop::Layout::IndentationStyle, :config do
 
     it 'registers and corrects an offense for a line with tab in a string indented with tab' do
       expect_offense(<<~RUBY)
-        \t(x = \"\t\")
+        \t(x = "\t")
         ^ Tab detected in indentation.
       RUBY
 
       expect_correction(<<-RUBY.strip_margin('|'))
-        |  (x = \"\t\")
+        |  (x = "\t")
       RUBY
     end
 
@@ -135,6 +141,10 @@ RSpec.describe RuboCop::Cop::Layout::IndentationStyle, :config do
          \tx = 0
         ^ Space detected in indentation.
       RUBY
+
+      expect_correction(<<~RUBY)
+        \tx = 0
+      RUBY
     end
 
     it 'registers offenses before __END__ but not after' do
@@ -143,6 +153,21 @@ RSpec.describe RuboCop::Cop::Layout::IndentationStyle, :config do
         ^^ Space detected in indentation.
         __END__
           x = 0
+      RUBY
+
+      expect_correction(<<~RUBY)
+        \tx = 0
+        __END__
+          x = 0
+      RUBY
+    end
+
+    it 'accepts spaces that align a line after the indenting tab' do
+      expect_no_offenses(<<~RUBY)
+        a = {
+        \tbb: 1,
+        \t c: 2
+        }
       RUBY
     end
 
@@ -170,7 +195,7 @@ RSpec.describe RuboCop::Cop::Layout::IndentationStyle, :config do
       expect_no_offenses("x = <<HELLO\n\thello\n\t\n\t\t\nhello\nHELLO")
     end
 
-    it 'registers and corrects an offense for a line indented with fractional number of'\
+    it 'registers and corrects an offense for a line indented with fractional number of' \
        'indentation groups by rounding down' do
       expect_offense(<<~RUBY)
            x = 0
@@ -184,12 +209,12 @@ RSpec.describe RuboCop::Cop::Layout::IndentationStyle, :config do
 
     it 'registers and corrects an offense for a line with tab in a string indented with space' do
       expect_offense(<<~RUBY)
-          (x = \"\t\")
+          (x = "\t")
         ^^ Space detected in indentation.
       RUBY
 
       expect_correction(<<~RUBY)
-        \t(x = \"\t\")
+        \t(x = "\t")
       RUBY
     end
 

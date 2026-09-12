@@ -14,14 +14,11 @@ RSpec.describe RuboCop::Cop::Style::CaseEquality, :config do
       RUBY
     end
 
-    it 'registers an offense and corrects for === when the receiver is a regexp' do
-      expect_offense(<<~RUBY)
+    it 'does not register an offense for === when the receiver is a regexp' do
+      # This detection is expected to be supported by `Performance/RegexpMatch`.
+      expect_no_offenses(<<~RUBY)
         /OMG/ === var
-              ^^^ Avoid the use of the case equality operator `===`.
       RUBY
-
-      # This correction is expected to be supported by `Performance/Regexp`.
-      expect_no_corrections
     end
 
     it 'registers an offense and corrects for === when the receiver is a range' do
@@ -59,7 +56,29 @@ RSpec.describe RuboCop::Cop::Style::CaseEquality, :config do
       RUBY
     end
 
-    include_examples 'offenses'
+    it 'wraps an operator-expression argument in parentheses when correcting' do
+      expect_offense(<<~RUBY)
+        Array === a + b
+              ^^^ Avoid the use of the case equality operator `===`.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        (a + b).is_a?(Array)
+      RUBY
+    end
+
+    it 'wraps a negated argument in parentheses when correcting' do
+      expect_offense(<<~RUBY)
+        Array === !foo
+              ^^^ Avoid the use of the case equality operator `===`.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        (!foo).is_a?(Array)
+      RUBY
+    end
+
+    it_behaves_like 'offenses'
   end
 
   context 'when AllowOnConstant is true' do
@@ -71,6 +90,44 @@ RSpec.describe RuboCop::Cop::Style::CaseEquality, :config do
       RUBY
     end
 
-    include_examples 'offenses'
+    it_behaves_like 'offenses'
+  end
+
+  context 'when AllowOnSelfClass is false' do
+    let(:cop_config) { { 'AllowOnSelfClass' => false } }
+
+    it 'registers an offense and corrects for === when the receiver is self.class' do
+      expect_offense(<<~RUBY)
+        self.class === var
+                   ^^^ Avoid the use of the case equality operator `===`.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        var.is_a?(self.class)
+      RUBY
+    end
+
+    it_behaves_like 'offenses'
+  end
+
+  context 'when AllowOnSelfClass is true' do
+    let(:cop_config) { { 'AllowOnSelfClass' => true } }
+
+    it 'does not register an offense for === when the receiver is self.class' do
+      expect_no_offenses(<<~RUBY)
+        self.class === var
+      RUBY
+    end
+
+    it 'registers an offense but does not correct for === when the receiver is self.klass' do
+      expect_offense(<<~RUBY)
+        self.klass === var
+                   ^^^ Avoid the use of the case equality operator `===`.
+      RUBY
+
+      expect_no_corrections
+    end
+
+    it_behaves_like 'offenses'
   end
 end

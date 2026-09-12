@@ -90,6 +90,34 @@ RSpec.describe RuboCop::Cop::Layout::SpaceInsideBlockBraces, :config do
     end
   end
 
+  context 'Ruby >= 2.7', :ruby27 do
+    it 'registers an offense for numblocks without inner space' do
+      expect_offense(<<~RUBY)
+        [1, 2, 3].each {_1 * 2}
+                        ^ Space missing inside {.
+                              ^ Space missing inside }.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        [1, 2, 3].each { _1 * 2 }
+      RUBY
+    end
+  end
+
+  context 'Ruby >= 3.4', :ruby34 do
+    it 'registers an offense for itblocks without inner space' do
+      expect_offense(<<~RUBY)
+        [1, 2, 3].each {it * 2}
+                        ^ Space missing inside {.
+                              ^ Space missing inside }.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        [1, 2, 3].each { it * 2 }
+      RUBY
+    end
+  end
+
   it 'accepts braces surrounded by spaces' do
     expect_no_offenses('each { puts }')
   end
@@ -134,7 +162,7 @@ RSpec.describe RuboCop::Cop::Layout::SpaceInsideBlockBraces, :config do
     RUBY
   end
 
-  it 'register offenses and correct both braces without inner space' do
+  it 'registers offenses and correct both braces without inner space' do
     expect_offense(<<~RUBY)
       a {}
       b { }
@@ -315,6 +343,14 @@ RSpec.describe RuboCop::Cop::Layout::SpaceInsideBlockBraces, :config do
       expect_no_offenses('each{puts}')
     end
 
+    it 'accepts when a method call with a multiline block is used as an argument' do
+      expect_no_offenses(<<~RUBY)
+        foo bar { |arg|
+          baz(arg)
+        }
+      RUBY
+    end
+
     context 'with passed in parameters' do
       context 'and space before block parameters allowed' do
         it 'accepts left brace with inner space' do
@@ -373,8 +409,37 @@ RSpec.describe RuboCop::Cop::Layout::SpaceInsideBlockBraces, :config do
           expect_offense(<<~RUBY)
             items.map {|item|
               item.do_something
-                               ^{} Space inside } detected.
               }
+            ^^ Space inside } detected.
+          RUBY
+
+          expect_correction(<<~RUBY)
+            items.map {|item|
+              item.do_something
+            }
+          RUBY
+        end
+
+        it 'accepts when braces are aligned in multiline block with bracket' do
+          expect_no_offenses(<<~RUBY)
+            foo {[
+              bar
+            ]}
+          RUBY
+        end
+
+        it 'registers an offense when braces are not aligned in multiline block with bracket' do
+          expect_offense(<<~RUBY)
+            foo {[
+              bar
+              ]}
+            ^^ Space inside } detected.
+          RUBY
+
+          expect_correction(<<~RUBY)
+            foo {[
+              bar
+            ]}
           RUBY
         end
       end

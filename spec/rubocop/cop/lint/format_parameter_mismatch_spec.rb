@@ -51,6 +51,13 @@ RSpec.describe RuboCop::Cop::Lint::FormatParameterMismatch, :config do
     RUBY
   end
 
+  it 'registers an offense when there are no expected format string' do
+    expect_offense(<<~RUBY)
+      format("something", 1)
+      ^^^^^^ Number of arguments (1) to `format` doesn't match the number of fields (0).
+    RUBY
+  end
+
   it 'registers an offense when there are more arguments than expected' do
     expect_offense(<<~RUBY)
       format("%s %s", 1, 2, 3)
@@ -70,7 +77,7 @@ RSpec.describe RuboCop::Cop::Lint::FormatParameterMismatch, :config do
     expect_no_offenses('format(A_CONST, 1, 2, 3)')
   end
 
-  it 'registers offense with sprintf' do
+  it 'registers an offense with sprintf' do
     expect_offense(<<~RUBY)
       sprintf("%s %s", 1, 2, 3)
       ^^^^^^^ Number of arguments (3) to `sprintf` doesn't match the number of fields (2).
@@ -242,6 +249,10 @@ RSpec.describe RuboCop::Cop::Lint::FormatParameterMismatch, :config do
     expect_no_offenses('format("%d%d", *test)')
   end
 
+  it 'does not register an offense for precision with no number' do
+    expect_no_offenses('format("%.d", 0)')
+  end
+
   context 'on format with %{} interpolations' do
     context 'and 1 argument' do
       it 'does not register an offense' do
@@ -299,6 +310,78 @@ RSpec.describe RuboCop::Cop::Lint::FormatParameterMismatch, :config do
 
     it 'does not register an offense for multiple wildcards' do
       expect_no_offenses('format("%*.*f %*.*f", 10, 2, 20.19, 5, 1, 11.22)')
+    end
+  end
+
+  context 'with interpolated string in format string' do
+    it 'registers an offense when the fields do not match' do
+      expect_offense(<<~'RUBY')
+        format("#{foo} %s %s", "bar")
+        ^^^^^^ Number of arguments (1) to `format` doesn't match the number of fields (2).
+      RUBY
+    end
+
+    it 'does not register an offense when the fields match' do
+      expect_no_offenses('format("#{foo} %s", "bar")')
+    end
+
+    it 'does not register an offense when only interpolated string' do
+      expect_no_offenses('format("#{foo}", "bar", "baz")')
+    end
+
+    it 'does not register an offense when using `Kernel.format` with the interpolated number of decimal places fields match' do
+      expect_no_offenses('Kernel.format("%.#{number_of_decimal_places}f", num)')
+    end
+
+    it 'registers an offense for String#% when the fields do not match' do
+      expect_offense(<<~'RUBY')
+        "%s %s" % ["#{foo}", 1, 2]
+                ^ Number of arguments (3) to `String#%` doesn't match the number of fields (2).
+      RUBY
+    end
+
+    it 'does not register an offense for String#% when the fields match' do
+      expect_no_offenses('"%s %s" % ["#{foo}", 1]')
+    end
+
+    it 'does not register an offense for String#% when only interpolated string' do
+      expect_no_offenses('"#{foo}" % [1, 2]')
+    end
+
+    it 'does not register an offense when an interpolated width' do
+      expect_no_offenses(<<~'RUBY')
+        format("%#{padding}s: %s", prefix, message)
+      RUBY
+    end
+
+    it 'does not register an offense with a negative interpolated width' do
+      expect_no_offenses(<<~'RUBY')
+        sprintf("| %-#{key_offset}s | %-#{val_offset}s |", key, value)
+      RUBY
+    end
+  end
+
+  context 'with interpolated string in argument' do
+    it 'registers an offense when the fields do not match' do
+      expect_offense(<<~'RUBY')
+        format("%s %s", "#{foo}")
+        ^^^^^^ Number of arguments (1) to `format` doesn't match the number of fields (2).
+      RUBY
+    end
+
+    it 'does not register an offense when the fields match' do
+      expect_no_offenses('format("%s", "#{foo}")')
+    end
+
+    it 'registers an offense for String#% when the fields do not match' do
+      expect_offense(<<~'RUBY')
+        "#{foo} %s %s" % [1, 2, 3]
+                       ^ Number of arguments (3) to `String#%` doesn't match the number of fields (2).
+      RUBY
+    end
+
+    it 'does not register an offense for String#% when the fields match' do
+      expect_no_offenses('"#{foo} %s %s" % [1, 2]')
     end
   end
 end

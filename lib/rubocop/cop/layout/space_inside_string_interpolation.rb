@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Layout
-      # This cop checks for whitespace within string interpolations.
+      # Checks for whitespace within string interpolations.
       #
       # @example EnforcedStyle: no_space (default)
       #   # bad
@@ -22,22 +22,21 @@ module RuboCop
         include Interpolation
         include SurroundingSpace
         include ConfigurableEnforcedStyle
-        include RangeHelp
         extend AutoCorrector
 
-        NO_SPACE_MSG = 'Space inside string interpolation detected.'
-        SPACE_MSG = 'Missing space inside string interpolation detected.'
+        MSG = '%<command>s space inside string interpolation.'
 
         def on_interpolation(begin_node)
           return if begin_node.multiline?
 
-          delims = delimiters(begin_node)
-          return if empty_brackets?(*delims)
+          tokens = processed_source.tokens_within(begin_node)
+          left, right = delimiters(begin_node)
+          return if empty_brackets?(left, right, tokens: tokens)
 
           if style == :no_space
-            no_space_offenses(begin_node, *delims, NO_SPACE_MSG)
+            no_space_offenses(begin_node, left, right, MSG)
           else
-            space_offenses(begin_node, *delims, SPACE_MSG)
+            space_offenses(begin_node, left, right, MSG)
           end
         end
 

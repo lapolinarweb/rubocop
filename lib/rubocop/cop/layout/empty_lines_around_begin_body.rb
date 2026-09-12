@@ -3,24 +3,23 @@
 module RuboCop
   module Cop
     module Layout
-      # This cop checks if empty lines exist around the bodies of begin-end
+      # Checks if empty lines exist around the bodies of begin-end
       # blocks.
       #
       # @example
       #
-      #   # good
-      #
-      #   begin
-      #     # ...
-      #   end
-      #
       #   # bad
-      #
       #   begin
       #
       #     # ...
       #
       #   end
+      #
+      #   # good
+      #   begin
+      #     # ...
+      #   end
+      #
       class EmptyLinesAroundBeginBody < Base
         include EmptyLinesAroundBody
         extend AutoCorrector

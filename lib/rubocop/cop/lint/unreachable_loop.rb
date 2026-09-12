@@ -3,15 +3,15 @@
 module RuboCop
   module Cop
     module Lint
-      # This cop checks for loops that will have at most one iteration.
+      # Checks for loops that will have at most one iteration.
       #
       # A loop that can never reach the second iteration is a possible error in the code.
       # In rare cases where only one iteration (or at most one iteration) is intended behavior,
       # the code should be refactored to use `if` conditionals.
       #
-      # NOTE: Block methods that are used with `Enumerable`s are considered to be loops.
+      # NOTE: Block methods that are used with ``Enumerable``s are considered to be loops.
       #
-      # `IgnoredPatterns` can be used to match against the block receiver in order to allow
+      # `AllowedPatterns` can be used to match against the block receiver in order to allow
       # code that would otherwise be registered as an offense (eg. `times` used not in an
       # `Enumerable` context).
       #
@@ -79,12 +79,12 @@ module RuboCop
       #   # bad
       #   2.times { raise ArgumentError }
       #
-      # @example IgnoredPatterns: [/(exactly|at_least|at_most)\(\d+\)\.times/] (default)
+      # @example AllowedPatterns: ['(exactly|at_least|at_most)\(\d+\)\.times'] (default)
       #
       #   # good
       #   exactly(2).times { raise StandardError }
       class UnreachableLoop < Base
-        include IgnoredPattern
+        include AllowedPattern
 
         MSG = 'This loop will have at most one iteration.'
         CONTINUE_KEYWORDS = %i[next redo].freeze
@@ -101,15 +101,18 @@ module RuboCop
           check(node) if loop_method?(node)
         end
 
+        alias on_numblock on_block
+        alias on_itblock on_block
+
         private
 
         def loop_method?(node)
-          return false unless node.block_type?
+          return false unless node.any_block_type?
 
           send_node = node.send_node
-          return false if matches_ignored_pattern?(send_node.source)
-
-          send_node.enumerable_method? || send_node.enumerator_method? || send_node.method?(:loop)
+          loopable = send_node.enumerable_method? || send_node.enumerator_method? ||
+                     send_node.method?(:loop)
+          loopable && !matches_allowed_pattern?(send_node.source)
         end
 
         def check(node)
@@ -156,7 +159,7 @@ module RuboCop
             break_statement && !preceded_by_continue_statement?(break_statement)
           when :if
             check_if(node)
-          when :case
+          when :case, :case_match
             check_case(node)
           else
             false
@@ -174,11 +177,20 @@ module RuboCop
           return false unless else_branch
           return false unless break_statement?(else_branch)
 
-          node.when_branches.all? { |branch| branch.body && break_statement?(branch.body) }
+          branches = if node.case_type?
+                       node.when_branches
+                     else
+                       node.in_pattern_branches
+                     end
+
+          branches.all? { |branch| branch.body && break_statement?(branch.body) }
         end
 
         def preceded_by_continue_statement?(break_statement)
           break_statement.left_siblings.any? do |sibling|
+            # Numblocks have the arguments count as a number or,
+            # itblocks have `:it` symbol in the AST.
+            next if sibling.is_a?(Integer) || sibling.is_a?(Symbol)
             next if sibling.loop_keyword? || loop_method?(sibling)
 
             sibling.each_descendant(*CONTINUE_KEYWORDS).any?

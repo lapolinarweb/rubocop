@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for usage of the %Q() syntax when %q() would do.
+      # Checks for usage of the %Q() syntax when %q() would do.
       #
       # @example EnforcedStyle: lower_case_q (default)
       #   # The `lower_case_q` style prefers `%q` unless
@@ -44,8 +44,8 @@ module RuboCop
 
           # Report offense only if changing case doesn't change semantics,
           # i.e., if the string would become dynamic or has special characters.
-          ast = ProcessedSource.new(corrected(node.source), target_ruby_version).ast
-          return if node.children != ast.children
+          ast = parse(corrected(node.source)).ast
+          return if node.children != ast&.children
 
           add_offense(node.loc.begin) do |corrector|
             corrector.replace(node, corrected(node.source))

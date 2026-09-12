@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
 RSpec.describe RuboCop::Cop::Naming::HeredocDelimiterNaming, :config do
-  let(:config) { RuboCop::Config.new(described_class.badge.to_s => cop_config) }
-
   let(:cop_config) { { 'ForbiddenDelimiters' => %w[END] } }
 
   context 'with an interpolated heredoc' do
@@ -89,6 +87,17 @@ RSpec.describe RuboCop::Cop::Naming::HeredocDelimiterNaming, :config do
             foo
           +
           ^ Use meaningful heredoc delimiters.
+        RUBY
+      end
+    end
+
+    # FIXME: `<<~''` is a syntax error in Ruby. This test was added because Parser gem can parse it,
+    # but this will be removed after https://github.com/whitequark/parser/issues/996 is resolved.
+    context 'when using blank heredoc delimiters', unsupported_on: :prism do
+      it 'registers an offense with a non-meaningful delimiter' do
+        expect_offense(<<~RUBY)
+          <<~''
+          ^^^^^ Use meaningful heredoc delimiters.
         RUBY
       end
     end

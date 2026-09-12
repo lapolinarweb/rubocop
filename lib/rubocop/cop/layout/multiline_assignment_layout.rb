@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Layout
-      # This cop checks whether the multiline assignments have a newline
+      # Checks whether the multiline assignments have a newline
       # after the assignment operator.
       #
       # @example EnforcedStyle: new_line (default)
@@ -69,11 +69,14 @@ module RuboCop
         SAME_LINE_OFFENSE = 'Right hand side of multi-line assignment is not ' \
                             'on the same line as the assignment operator `=`.'
 
+        BLOCK_TYPES = %i[block numblock itblock].freeze
+
+        # rubocop:disable-next Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
         def check_assignment(node, rhs)
           return if node.send_type? && node.loc.operator&.source != '='
           return unless rhs
           return unless supported_types.include?(rhs.type)
-          return if rhs.first_line == rhs.last_line
+          return if rhs.single_line? && (!rhs.block_type? || same_line?(node, rhs.loc.begin))
 
           check_by_enforced_style(node, rhs)
         end
@@ -88,7 +91,7 @@ module RuboCop
         end
 
         def check_new_line_offense(node, rhs)
-          return unless node.loc.operator.line == rhs.first_line
+          return unless same_line?(node.loc.operator, rhs)
 
           add_offense(node, message: NEW_LINE_OFFENSE) do |corrector|
             corrector.insert_after(node.loc.operator, "\n")
@@ -109,7 +112,10 @@ module RuboCop
         private
 
         def supported_types
-          @supported_types ||= cop_config['SupportedTypes'].map(&:to_sym)
+          @supported_types ||= cop_config['SupportedTypes'].flat_map do |type|
+            sym = type.to_sym
+            sym == :block ? BLOCK_TYPES : sym
+          end
         end
       end
     end

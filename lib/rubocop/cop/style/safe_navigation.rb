@@ -3,12 +3,11 @@
 module RuboCop
   module Cop
     module Style
-      # This cop transforms usages of a method call safeguarded by a non `nil`
+      # Transforms usages of a method call safeguarded by a non `nil`
       # check for the variable whose method is being called to
       # safe navigation (`&.`). If there is a method chain, all of the methods
       # in the chain need to be checked for safety, and all of the methods will
-      # need to be changed to use safe navigation. We have limited the cop to
-      # not register an offense for method chains that exceed 2 methods.
+      # need to be changed to use safe navigation.
       #
       # The default for `ConvertCodeThatCanStartToReturnNil` is `false`.
       # When configured to `true`, this will
@@ -18,15 +17,34 @@ module RuboCop
       # `foo&.bar` can start returning `nil` as well as what the method
       # returns.
       #
+      # The default for `MaxChainLength` is `2`.
+      # We have limited the cop to not register an offense for method chains
+      # that exceed this option's value.
+      #
+      # NOTE: This cop will recognize offenses but not autocorrect code when the
+      # right hand side (RHS) of the `&&` statement is an `||` statement
+      # (eg. `foo && (foo.bar? || foo.baz?)`). It can be corrected
+      # manually by removing the `foo &&` and adding `&.` to each `foo` on the RHS.
+      #
       # @safety
       #   Autocorrection is unsafe because if a value is `false`, the resulting
-      #   code will have different behaviour or raise an error.
+      #   code will have different behavior or raise an error.
       #
       #   [source,ruby]
       #   ----
       #   x = false
       #   x && x.foo  # return false
       #   x&.foo      # raises NoMethodError
+      #   ----
+      #
+      #   Additionally, when a method chain is converted, a `NoMethodError` that
+      #   the original code raised for an intermediate `nil` value is suppressed:
+      #
+      #   [source,ruby]
+      #   ----
+      #   x = Struct.new(:foo).new(nil)
+      #   x && x.foo.bar  # raises NoMethodError
+      #   x&.foo&.bar     # returns nil
       #   ----
       #
       # @example
@@ -46,6 +64,11 @@ module RuboCop
       #   foo && foo.bar(param1, param2)
       #   foo && foo.bar { |e| e.something }
       #   foo && foo.bar(param) { |e| e.something }
+      #
+      #   foo ? foo.bar : nil
+      #   foo.nil? ? nil : foo.bar
+      #   !foo.nil? ? foo.bar : nil
+      #   !foo ? nil : foo.bar
       #
       #   # good
       #   foo&.bar
@@ -73,14 +96,21 @@ module RuboCop
       #   foo.baz = bar if foo
       #   foo.baz + bar if foo
       #   foo.bar > 2 if foo
-      class SafeNavigation < Base
+      #
+      #   foo ? foo[index] : nil    # Ignored `foo&.[](index)` due to unclear readability benefit.
+      #   foo ? foo[idx] = v : nil  # Ignored `foo&.[]=(idx, v)` due to unclear readability benefit.
+      #   foo ? foo * 42 : nil      # Ignored `foo&.*(42)` due to unclear readability benefit.
+      class SafeNavigation < Base # rubocop:disable Metrics/ClassLength
         include NilMethods
         include RangeHelp
         extend AutoCorrector
+        extend TargetRubyVersion
 
         MSG = 'Use safe navigation (`&.`) instead of checking if an object ' \
               'exists before calling the method.'
         LOGIC_JUMP_KEYWORDS = %i[break fail next raise return throw yield].freeze
+
+        minimum_target_ruby_version 2.3
 
         # if format: (if checked_variable body nil)
         # unless format: (if checked_variable nil body)
@@ -99,48 +129,159 @@ module RuboCop
           }
         PATTERN
 
+        # @!method ternary_safe_navigation_candidate(node)
+        def_node_matcher :ternary_safe_navigation_candidate, <<~PATTERN
+          {
+            (if (send $_ {:nil? :!}) nil $_)
+
+            (if (send (send $_ :nil?) :!) $_ nil)
+
+            (if $_ $_ nil)
+          }
+        PATTERN
+
+        # @!method and_with_rhs_or?(node)
+        def_node_matcher :and_with_rhs_or?, '(and _ {or (begin or)})'
+
         # @!method not_nil_check?(node)
         def_node_matcher :not_nil_check?, '(send (send $_ :nil?) :!)'
 
+        # @!method and_inside_begin?(node)
+        def_node_matcher :and_inside_begin?, '`(begin and ...)'
+
+        # @!method strip_begin(node)
+        def_node_matcher :strip_begin, '{ (begin $!begin) $!(begin) }'
+
+        # rubocop:disable-next Metrics/AbcSize
         def on_if(node)
           return if allowed_if_condition?(node)
 
-          check_node(node)
+          checked_variable, receiver, method_chain, _method = extract_parts_from_if(node)
+          return unless offending_node?(node, checked_variable, method_chain, receiver)
+
+          body = extract_if_body(node)
+          method_call = receiver.parent
+          return if dotless_operator_call?(method_call) || method_call.double_colon?
+
+          removal_ranges = [begin_range(node, body), end_range(node, body)]
+
+          report_offense(node, method_chain, method_call, *removal_ranges) do |corrector|
+            corrector.replace(receiver, checked_variable.source) if checked_variable.csend_type?
+            corrector.insert_before(method_call.loc.dot, '&') unless method_call.safe_navigation?
+          end
         end
 
-        def on_and(node)
-          check_node(node)
+        def on_and(node) # rubocop:disable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/MethodLength
+          collect_and_clauses(node).each do |(lhs, lhs_operator_range), (rhs, _rhs_operator_range)|
+            lhs_not_nil_check = not_nil_check?(lhs)
+            lhs_receiver = lhs_not_nil_check || lhs
+            rhs_receiver = find_matching_receiver_invocation(strip_begin(rhs), lhs_receiver)
+
+            next if !cop_config['ConvertCodeThatCanStartToReturnNil'] && lhs_not_nil_check
+            next unless offending_node?(node, lhs_receiver, rhs, rhs_receiver)
+
+            # Since we are evaluating every clause in potentially a complex chain of `and` nodes,
+            # we need to ensure that there isn't an object check happening
+            lhs_method_chain = find_method_chain(lhs_receiver)
+            next unless lhs_method_chain == lhs_receiver || lhs_not_nil_check
+
+            report_offense(
+              node,
+              rhs, rhs_receiver,
+              range_with_surrounding_space(range: lhs.source_range, side: :right),
+              range_with_surrounding_space(range: lhs_operator_range, side: :right),
+              offense_range: range_between(lhs.source_range.begin_pos, rhs.source_range.end_pos)
+            ) do |corrector|
+              corrector.replace(rhs_receiver, lhs_receiver.source)
+            end
+            ignore_node(node)
+          end
         end
 
-        def check_node(node)
-          checked_variable, receiver, method_chain, method = extract_parts(node)
-          return unless receiver == checked_variable
-          return if use_var_only_in_unless_modifier?(node, checked_variable)
-          # method is already a method call so this is actually checking for a
-          # chain greater than 2
-          return if chain_size(method_chain, method) > 1
-          return if unsafe_method_used?(method_chain, method)
-          return if method_chain.method?(:empty?)
+        private
 
-          add_offense(node) { |corrector| autocorrect(corrector, node) }
+        def report_offense(node, rhs, rhs_receiver, *removal_ranges, offense_range: node)
+          add_offense(offense_range) do |corrector|
+            next if ignored_node?(node)
+
+            # If the RHS is an `or` we cannot safely autocorrect because in order to remove
+            # the non-nil check we need to add safe-navs to all clauses where the receiver is used
+            next if and_with_rhs_or?(node)
+
+            removal_ranges.each { |range| corrector.remove(range) }
+            yield corrector if block_given?
+
+            handle_comments(corrector, node, rhs)
+
+            add_safe_nav_to_all_methods_in_chain(corrector, rhs_receiver, rhs)
+          end
+        end
+
+        def find_method_chain(node)
+          return node unless node&.parent&.call_type?
+
+          find_method_chain(node.parent)
+        end
+
+        def collect_and_clauses(node)
+          # Collect the lhs, operator and rhs of all `and` nodes
+          # `and` nodes can be nested and can contain `begin` nodes
+          # This gives us a source-ordered list of clauses that is then used to look
+          # for matching receivers as well as operator locations for offense and corrections
+          node.each_descendant(:and)
+              .inject(and_parts(node)) { |nodes, and_node| concat_nodes(nodes, and_node) }
+              .sort_by { |a| a.is_a?(RuboCop::AST::Node) ? a.source_range.begin_pos : a.begin_pos }
+              .each_slice(2)
+              .each_cons(2)
+        end
+
+        def concat_nodes(nodes, and_node)
+          return nodes if and_node.each_ancestor(:block).any?
+
+          nodes.concat(and_parts(and_node))
+        end
+
+        def and_parts(node)
+          parts = [node.loc.operator]
+          parts << node.rhs unless and_inside_begin?(node.rhs)
+          parts << node.lhs unless node.lhs.and_type? || and_inside_begin?(node.lhs)
+          parts
+        end
+
+        def offending_node?(node, lhs_receiver, rhs, rhs_receiver) # rubocop:disable Metrics/CyclomaticComplexity
+          return false if !matching_nodes?(lhs_receiver, rhs_receiver) || rhs_receiver.nil?
+          return false if use_var_only_in_unless_modifier?(node, lhs_receiver)
+          return false if chain_length(rhs, rhs_receiver) > max_chain_length
+          return false if unsafe_method_used?(node, rhs, rhs_receiver.parent)
+          return false if rhs.send_type? && rhs.method?(:empty?)
+
+          true
         end
 
         def use_var_only_in_unless_modifier?(node, variable)
           node.if_type? && node.unless? && !method_called?(variable)
         end
 
-        private
+        def extract_if_body(node)
+          if node.ternary?
+            node.branches.find { |branch| !branch.nil_type? }
+          else
+            node.node_parts[1]
+          end
+        end
 
-        def autocorrect(corrector, node)
-          body = node.node_parts[1]
-          method_call = method_call(node)
+        def dotless_operator_call?(method_call)
+          return true if dotless_operator_method?(method_call)
 
-          corrector.remove(begin_range(node, body))
-          corrector.remove(end_range(node, body))
-          corrector.insert_before(method_call.loc.dot, '&')
-          handle_comments(corrector, node, method_call)
+          method_call = method_call.parent while method_call.parent.send_type?
 
-          add_safe_nav_to_all_methods_in_chain(corrector, method_call, body)
+          dotless_operator_method?(method_call)
+        end
+
+        def dotless_operator_method?(method_call)
+          return false if method_call.loc.dot
+
+          method_call.method?(:[]) || method_call.method?(:[]=) || method_call.operator_method?
         end
 
         def handle_comments(corrector, node, method_call)
@@ -170,41 +311,22 @@ module RuboCop
         end
 
         def allowed_if_condition?(node)
-          node.else? || node.elsif? || node.ternary?
-        end
-
-        def method_call(node)
-          _checked_variable, matching_receiver, = extract_parts(node)
-          matching_receiver.parent
-        end
-
-        def extract_parts(node)
-          case node.type
-          when :if
-            extract_parts_from_if(node)
-          when :and
-            extract_parts_from_and(node)
-          end
+          node.else? || node.elsif?
         end
 
         def extract_parts_from_if(node)
-          variable, receiver = modifier_if_safe_navigation_candidate(node)
+          variable, receiver =
+            if node.ternary?
+              ternary_safe_navigation_candidate(node)
+            else
+              modifier_if_safe_navigation_candidate(node)
+            end
 
           checked_variable, matching_receiver, method = extract_common_parts(receiver, variable)
 
           matching_receiver = nil if receiver && LOGIC_JUMP_KEYWORDS.include?(receiver.type)
 
           [checked_variable, matching_receiver, receiver, method]
-        end
-
-        def extract_parts_from_and(node)
-          checked_variable, rhs = *node
-          if cop_config['ConvertCodeThatCanStartToReturnNil']
-            checked_variable = not_nil_check?(checked_variable) || checked_variable
-          end
-
-          checked_variable, matching_receiver, method = extract_common_parts(rhs, checked_variable)
-          [checked_variable, matching_receiver, rhs, method]
         end
 
         def extract_common_parts(method_chain, checked_variable)
@@ -216,41 +338,60 @@ module RuboCop
         end
 
         def find_matching_receiver_invocation(method_chain, checked_variable)
-          return nil unless method_chain
+          return nil unless method_chain.respond_to?(:receiver)
 
-          receiver = if method_chain.block_type?
-                       method_chain.send_node.receiver
-                     else
-                       method_chain.receiver
-                     end
+          receiver = method_chain.receiver
 
-          return receiver if receiver == checked_variable
+          return receiver if matching_nodes?(receiver, checked_variable)
 
           find_matching_receiver_invocation(receiver, checked_variable)
         end
 
-        def chain_size(method_chain, method)
-          method.each_ancestor(:send).inject(0) do |total, ancestor|
+        def matching_nodes?(left, right)
+          left == right || matching_call_nodes?(left, right)
+        end
+
+        def matching_call_nodes?(left, right)
+          return false unless left && right.respond_to?(:call_type?)
+          return false unless left.call_type? && right.call_type?
+
+          # Compare receiver and method name, but ignore the difference between
+          # safe navigation method call (`&.`) and dot method call (`.`).
+          left_receiver, left_method, *left_args = left.children
+          right_receiver, right_method, *right_args = right.children
+
+          left_method == right_method &&
+            matching_nodes?(left_receiver, right_receiver) &&
+            left_args == right_args
+        end
+
+        def chain_length(method_chain, method)
+          method.each_ancestor(:call).inject(0) do |total, ancestor|
             break total + 1 if ancestor == method_chain
 
             total + 1
           end
         end
 
-        def unsafe_method_used?(method_chain, method)
-          return true if unsafe_method?(method)
+        def unsafe_method_used?(node, method_chain, method)
+          return true if unsafe_method?(node, method)
 
-          method.each_ancestor(:send).any? do |ancestor|
-            break true unless config.for_cop('Lint/SafeNavigationChain')['Enabled']
-
-            break true if unsafe_method?(ancestor)
-            break true if nil_methods.include?(ancestor.method_name)
-            break false if ancestor == method_chain
+          method.each_ancestor(:send) do |ancestor|
+            return true unless config.cop_enabled?('Lint/SafeNavigationChain')
+            return true if unsafe_method?(node, ancestor)
+            return true if nil_methods.include?(ancestor.method_name)
+            return false if ancestor == method_chain
           end
+          false
         end
 
-        def unsafe_method?(send_node)
-          negated?(send_node) || send_node.assignment? || !send_node.dot?
+        def unsafe_method?(node, send_node)
+          return true if negated?(send_node)
+
+          return false if node.respond_to?(:ternary?) && node.ternary?
+
+          send_node.assignment? ||
+            (!send_node.dot? && !send_node.safe_navigation?)
         end
 
         def negated?(send_node)
@@ -266,24 +407,28 @@ module RuboCop
         end
 
         def begin_range(node, method_call)
-          range_between(node.loc.expression.begin_pos, method_call.loc.expression.begin_pos)
+          range_between(node.source_range.begin_pos, method_call.source_range.begin_pos)
         end
 
         def end_range(node, method_call)
-          range_between(method_call.loc.expression.end_pos, node.loc.expression.end_pos)
+          range_between(method_call.source_range.end_pos, node.source_range.end_pos)
         end
 
         def add_safe_nav_to_all_methods_in_chain(corrector,
                                                  start_method,
                                                  method_chain)
           start_method.each_ancestor do |ancestor|
-            break unless %i[send block].include?(ancestor.type)
-            next unless ancestor.send_type?
+            break unless ancestor.type?(:call, :any_block)
+            next if !ancestor.send_type? || ancestor.operator_method?
 
             corrector.insert_before(ancestor.loc.dot, '&')
 
             break if ancestor == method_chain
           end
+        end
+
+        def max_chain_length
+          cop_config.fetch('MaxChainLength', 2)
         end
       end
     end

@@ -45,7 +45,15 @@ module RuboCop
       #
       #   spec.add_runtime_dependency 'rspec'
       #
-      #   # good only if TreatCommentsAsGroupSeparators is true
+      # @example TreatCommentsAsGroupSeparators: true (default)
+      #   # good
+      #   # For code quality
+      #   spec.add_dependency 'rubocop'
+      #   # For tests
+      #   spec.add_dependency 'rspec'
+      #
+      # @example TreatCommentsAsGroupSeparators: false
+      #   # bad
       #   # For code quality
       #   spec.add_dependency 'rubocop'
       #   # For tests
@@ -55,15 +63,14 @@ module RuboCop
         include OrderedGemNode
 
         MSG = 'Dependencies should be sorted in an alphabetical order within ' \
-              'their section of the gemspec. '\
+              'their section of the gemspec. ' \
               'Dependency `%<previous>s` should appear before `%<current>s`.'
 
         def on_new_investigation
           return if processed_source.blank?
 
-          dependency_declarations(processed_source.ast)
-            .each_cons(2) do |previous, current|
-            next unless consecutive_lines(previous, current)
+          dependency_declarations(processed_source.ast).each_cons(2) do |previous, current|
+            next unless consecutive_lines?(previous, current)
             next unless case_insensitive_out_of_order?(gem_name(current), gem_name(previous))
             next unless get_dependency_name(previous) == get_dependency_name(current)
 

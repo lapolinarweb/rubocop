@@ -152,7 +152,7 @@ RSpec.describe RuboCop::Cop::Layout::MultilineBlockLayout, :config do
     RUBY
   end
 
-  it 'registers offenses and corrrects for new lambda literal syntax' do
+  it 'registers offenses and corrects for new lambda literal syntax' do
     expect_offense(<<~RUBY)
       -> x do foo
               ^^^ Block body expression is on the same line as the block start.
@@ -211,7 +211,7 @@ RSpec.describe RuboCop::Cop::Layout::MultilineBlockLayout, :config do
     RUBY
   end
 
-  it 'registers an offense and corrects a do/end block with a mult-line body' do
+  it 'registers an offense and corrects a do/end block with a multi-line body' do
     expect_offense(<<~RUBY)
       test do |foo| bar
                     ^^^ Block body expression is on the same line as the block start.
@@ -227,7 +227,7 @@ RSpec.describe RuboCop::Cop::Layout::MultilineBlockLayout, :config do
     RUBY
   end
 
-  it 'autocorrects in more complex case with lambda and assignment, and '\
+  it 'autocorrects in more complex case with lambda and assignment, and ' \
      'aligns the next line two spaces out from the start of the block' do
     expect_offense(<<~RUBY)
       x = -> (y) { foo
@@ -330,7 +330,7 @@ RSpec.describe RuboCop::Cop::Layout::MultilineBlockLayout, :config do
     RUBY
   end
 
-  it 'auto-corrects nested parens correctly' do
+  it 'autocorrects nested parens correctly' do
     expect_offense(<<~RUBY)
       def f
         X.map do |
@@ -347,5 +347,87 @@ RSpec.describe RuboCop::Cop::Layout::MultilineBlockLayout, :config do
         end
       end
     RUBY
+  end
+
+  context 'when `Layout/LineLength` is disabled' do
+    let(:config) do
+      RuboCop::Config.new('Layout/LineLength' => { 'Enabled' => false })
+    end
+
+    it 'registers an offense' do
+      expect_offense(<<~RUBY)
+        test do
+        |(x, y)|
+        ^^^^^^^^ Block argument expression is not on the same line as the block start.
+          play_with(x, y)
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        test do |(x, y)|
+          play_with(x, y)
+        end
+      RUBY
+    end
+  end
+
+  context 'Ruby 2.7', :ruby27 do
+    it 'registers an offense and corrects for missing newline in {} block w/o params' do
+      expect_offense(<<~RUBY)
+        test { _1
+               ^^ Block body expression is on the same line as the block start.
+        }
+      RUBY
+
+      expect_correction(<<~RUBY)
+        test {#{trailing_whitespace}
+          _1
+        }
+      RUBY
+    end
+
+    it 'registers an offense and corrects for missing newline in do/end block with params' do
+      expect_offense(<<~RUBY)
+        test do _1
+                ^^ Block body expression is on the same line as the block start.
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        test do#{trailing_whitespace}
+          _1
+        end
+      RUBY
+    end
+  end
+
+  context 'Ruby 3.4', :ruby34 do
+    it 'registers an offense and corrects for missing newline in {} block w/o params' do
+      expect_offense(<<~RUBY)
+        test { it
+               ^^ Block body expression is on the same line as the block start.
+        }
+      RUBY
+
+      expect_correction(<<~RUBY)
+        test {#{trailing_whitespace}
+          it
+        }
+      RUBY
+    end
+
+    it 'registers an offense and corrects for missing newline in do/end block with params' do
+      expect_offense(<<~RUBY)
+        test do it
+                ^^ Block body expression is on the same line as the block start.
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        test do#{trailing_whitespace}
+          it
+        end
+      RUBY
+    end
   end
 end

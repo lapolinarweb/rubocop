@@ -8,16 +8,12 @@ module RuboCop
       # @example
       #
       #   # bad
-      #
       #   result = (1..4).reduce(0) do |acc, i|
       #     next if i.odd?
       #     acc + i
       #   end
       #
-      # @example
-      #
       #   # good
-      #
       #   result = (1..4).reduce(0) do |acc, i|
       #     next acc if i.odd?
       #     acc + i
@@ -25,13 +21,8 @@ module RuboCop
       class NextWithoutAccumulator < Base
         MSG = 'Use `next` with an accumulator argument in a `reduce`.'
 
-        # @!method on_body_of_reduce(node)
-        def_node_matcher :on_body_of_reduce, <<~PATTERN
-          (block (send _recv {:reduce :inject} !sym) _blockargs $(begin ...))
-        PATTERN
-
         def on_block(node)
-          on_body_of_reduce(node) do |body|
+          on_block_body_of_reduce(node) do |body|
             void_next = body.each_node(:next).find do |n|
               n.children.empty? && parent_block_node(n) == node
             end
@@ -39,11 +30,22 @@ module RuboCop
             add_offense(void_next) if void_next
           end
         end
+        alias on_numblock on_block
+        alias on_itblock on_block
 
         private
 
+        # @!method on_block_body_of_reduce(node)
+        def_node_matcher :on_block_body_of_reduce, <<~PATTERN
+          {
+            (block (call _recv {:reduce :inject} !sym) _blockargs $(begin ...))
+            (numblock (call _recv {:reduce :inject} !sym) _argscount $(begin ...))
+            (itblock (call _recv {:reduce :inject} !sym) _argscount $(begin ...))
+          }
+        PATTERN
+
         def parent_block_node(node)
-          node.each_ancestor(:block).first
+          node.each_ancestor(:any_block).first
         end
       end
     end

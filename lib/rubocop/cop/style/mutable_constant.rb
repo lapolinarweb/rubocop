@@ -3,8 +3,16 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks whether some constant value isn't a
+      # Checks whether some constant value isn't a
       # mutable literal (e.g. array or hash).
+      #
+      # When the `Recursive` option is enabled, mutable literals nested inside
+      # arrays and hashes are also frozen, so an offense on the outermost
+      # unfrozen literal will autocorrect every nested mutable literal as well.
+      # When the outer literal already has `.freeze` appended, the cop descends
+      # into it and reports each outermost unfrozen literal underneath. The
+      # option is disabled by default to preserve existing behavior; opt in to
+      # get strict nested freezing.
       #
       # Strict mode can be used to freeze all constants, rather than
       # just literals.
@@ -19,10 +27,11 @@ module RuboCop
       # acceptable value other than none, it will suppress the offenses
       # raised by this cop. It enforces frozen state.
       #
-      # NOTE: Regexp and Range literals are frozen objects since Ruby 3.0.
+      # NOTE: `Regexp` and `Range` literals are frozen objects since Ruby 3.0.
       #
-      # NOTE: From Ruby 3.0, this cop allows explicit freezing of interpolated
-      # string literals when `# frozen-string-literal: true` is used.
+      # NOTE: From Ruby 3.0, interpolated strings are not frozen when
+      # `# frozen-string-literal: true` is used, so this cop enforces explicit
+      # freezing for such strings.
       #
       # NOTE: From Ruby 3.0, this cop allows explicit freezing of constants when
       # the `shareable_constant_value` directive is used.
@@ -48,6 +57,17 @@ module RuboCop
       #   CONST = Something.new
       #
       #
+      # @example Recursive: false (default)
+      #   # good - only the outer container needs to be frozen
+      #   CONST = [{ a: [], b: 'foo' }].freeze
+      #
+      # @example Recursive: true
+      #   # bad - nested mutable literals must be frozen too
+      #   CONST = [{ a: [], b: 'foo' }].freeze
+      #
+      #   # good
+      #   CONST = [{ a: [].freeze, b: 'foo'.freeze }.freeze].freeze
+      #
       # @example EnforcedStyle: strict
       #   # bad
       #   CONST = Something.new
@@ -68,6 +88,9 @@ module RuboCop
       #       puts 1
       #     end
       #   end.freeze
+      #
+      #   # good - `Data.define` declares an immutable value type
+      #   CONST = Data.define(:foo, :bar)
       #
       # @example
       #   # Magic comment - shareable_constant_value: literal
@@ -124,24 +147,43 @@ module RuboCop
         MSG = 'Freeze mutable objects assigned to constants.'
 
         def on_casgn(node)
-          _scope, _const_name, value = *node
-          if value.nil? # This is only the case for `CONST += ...` or similarg66
+          if node.expression.nil? # This is only the case for `CONST += ...` or similar
             parent = node.parent
             return unless parent.or_asgn_type? # We only care about `CONST ||= ...`
 
-            value = parent.children.last
+            on_assignment(parent.children.last)
+          else
+            on_assignment(node.expression)
           end
-
-          on_assignment(value)
         end
 
         private
 
         def on_assignment(value)
-          if style == :strict
-            strict_check(value)
+          nodes = mutable_nodes(value) do |node|
+            if style == :strict
+              strict_check(node)
+            else
+              literal_check(node)
+            end
+          end
+
+          nodes.each do |node|
+            add_offense(node) { |corrector| autocorrect(corrector, node) }
+          end
+        end
+
+        def mutable_nodes(value, &block)
+          if recursive? && explicitly_frozen_literal?(value)
+            literal_children(value.receiver).flat_map { |c| mutable_nodes(c, &block) }
           else
-            check(value)
+            node_offending = yield(value)
+
+            if node_offending
+              [value]
+            else
+              []
+            end
           end
         end
 
@@ -151,18 +193,20 @@ module RuboCop
           return if frozen_string_literal?(value)
           return if shareable_constant_value?(value)
 
-          add_offense(value) { |corrector| autocorrect(corrector, value) }
+          true
         end
 
-        def check(value)
-          range_enclosed_in_parentheses = range_enclosed_in_parentheses?(value)
-          return unless mutable_literal?(value) ||
-                        (target_ruby_version <= 2.7 && range_enclosed_in_parentheses)
-
+        def literal_check(value)
+          return unless mutable_or_unfrozen_range?(value)
           return if frozen_string_literal?(value)
           return if shareable_constant_value?(value)
 
-          add_offense(value) { |corrector| autocorrect(corrector, value) }
+          true
+        end
+
+        def mutable_or_unfrozen_range?(value)
+          mutable_literal?(value) ||
+            (target_ruby_version <= 2.7 && range_enclosed_in_parentheses?(value))
         end
 
         def autocorrect(corrector, node)
@@ -171,13 +215,66 @@ module RuboCop
           splat_value = splat_value(node)
           if splat_value
             correct_splat_expansion(corrector, expr, splat_value)
-          elsif node.array_type? && !node.bracketed?
+            corrector.insert_after(expr, '.freeze')
+            return
+          end
+
+          if node.array_type? && !node.bracketed?
             corrector.wrap(expr, '[', ']')
           elsif requires_parentheses?(node)
             corrector.wrap(expr, '(', ')')
           end
 
           corrector.insert_after(expr, '.freeze')
+
+          freeze_nested_literals(corrector, node) if recursive?
+        end
+
+        # Recursively freezes every nested mutable literal inside an array or
+        # hash literal. Already-frozen subtrees are not re-frozen, but their
+        # children are still inspected for unfrozen literals deeper down.
+        def freeze_nested_literals(corrector, node)
+          literal_children(node).each do |child|
+            if explicitly_frozen_literal?(child)
+              freeze_nested_literals(corrector, child.receiver)
+            elsif freezable_nested_literal?(child)
+              autocorrect(corrector, child)
+            end
+          end
+        end
+
+        def freezable_nested_literal?(node)
+          return false if frozen_string_literal?(node)
+          return false if shareable_constant_value?(node)
+
+          mutable_literal?(node)
+        end
+
+        # Returns the child literals of an array or hash node that may
+        # themselves need freezing. For hashes, both keys and values are
+        # included. Percent-literal arrays (e.g. `%w(a b)`) are skipped because
+        # `.freeze` cannot be appended to their contents.
+        def literal_children(node)
+          case node.type
+          when :array
+            return [] if node.percent_literal?
+
+            node.children
+          when :hash
+            node.children.flat_map { |child| child.pair_type? ? child.children : [] }
+          else
+            []
+          end
+        end
+
+        def explicitly_frozen_literal?(node)
+          return false unless node.send_type? && node.method?(:freeze)
+
+          node.receiver && mutable_literal?(node.receiver)
+        end
+
+        def recursive?
+          cop_config.fetch('Recursive', false)
         end
 
         def mutable_literal?(value)
@@ -197,7 +294,7 @@ module RuboCop
         end
 
         def frozen_regexp_or_range_literals?(node)
-          target_ruby_version >= 3.0 && (node.regexp_type? || node.range_type?)
+          target_ruby_version >= 3.0 && node.type?(:regexp, :range)
         end
 
         def requires_parentheses?(node)
@@ -225,6 +322,8 @@ module RuboCop
             (const _ _)
             (send (const {nil? cbase} :Struct) :new ...)
             (block (send (const {nil? cbase} :Struct) :new ...) ...)
+            (send (const {nil? cbase} :Data) :define ...)
+            (block (send (const {nil? cbase} :Data) :define ...) ...)
             (send _ :freeze)
             (send {float int} {:+ :- :* :** :/ :% :<<} _)
             (send _ {:+ :- :* :** :/ :%} {float int})
@@ -238,7 +337,7 @@ module RuboCop
 
         # @!method range_enclosed_in_parentheses?(node)
         def_node_matcher :range_enclosed_in_parentheses?, <<~PATTERN
-          (begin ({irange erange} _ _))
+          (begin (range _ _))
         PATTERN
       end
     end

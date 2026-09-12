@@ -3,15 +3,15 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for consistent usage of the `DateTime` class over the
-      # `Time` class. This cop is disabled by default since these classes,
+      # Checks for consistent usage of the `Time` class over the
+      # `DateTime` class. This cop is disabled by default since these classes,
       # although highly overlapping, have particularities that make them not
       # replaceable in certain situations when dealing with multiple timezones
       # and/or DST.
       #
       # @safety
       #   Autocorrection is not safe, because `DateTime` and `Time` do not have
-      #   exactly the same behaviour, although in most cases the autocorrection
+      #   exactly the same behavior, although in most cases the autocorrection
       #   will be fine.
       #
       # @example
@@ -49,22 +49,22 @@ module RuboCop
       class DateTime < Base
         extend AutoCorrector
 
-        CLASS_MSG = 'Prefer Time over DateTime.'
-        COERCION_MSG = 'Do not use #to_datetime.'
+        CLASS_MSG = 'Prefer `Time` over `DateTime`.'
+        COERCION_MSG = 'Do not use `#to_datetime`.'
 
         # @!method date_time?(node)
         def_node_matcher :date_time?, <<~PATTERN
-          (send (const {nil? (cbase)} :DateTime) ...)
+          (call (const {nil? (cbase)} :DateTime) ...)
         PATTERN
 
         # @!method historic_date?(node)
         def_node_matcher :historic_date?, <<~PATTERN
-          (send _ _ _ (const (const {nil? (cbase)} :Date) _))
+          (call _ _ _ (const (const {nil? (cbase)} :Date) _))
         PATTERN
 
         # @!method to_datetime?(node)
         def_node_matcher :to_datetime?, <<~PATTERN
-          (send _ :to_datetime)
+          (call !nil? :to_datetime)
         PATTERN
 
         def on_send(node)
@@ -75,6 +75,7 @@ module RuboCop
 
           add_offense(node, message: message) { |corrector| autocorrect(corrector, node) }
         end
+        alias on_csend on_send
 
         private
 

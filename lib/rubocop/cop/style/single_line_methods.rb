@@ -3,14 +3,16 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for single-line method definitions that contain a body.
-      # It will accept single-line methods with no body.
+      # Checks for single-line method definitions that contain a body.
+      # Single-line methods with a body are harder to read and debug
+      # than their multi-line equivalents. It will accept single-line
+      # methods with no body.
       #
       # Endless methods added in Ruby 3.0 are also accepted by this cop.
       #
-      # If `Style/EndlessMethod` is enabled with `EnforcedStyle: allow_single_line` or
-      # `allow_always`, single-line methods will be auto-corrected to endless
-      # methods if there is only one statement in the body.
+      # If `Style/EndlessMethod` is enabled with `EnforcedStyle: allow_single_line`, `allow_always`,
+      # `require_single_line`, or `require_always`, single-line methods will be autocorrected
+      # to endless methods if there is only one statement in the body.
       #
       # @example
       #   # bad
@@ -65,10 +67,10 @@ module RuboCop
           return false if target_ruby_version < 3.0
           return false if disallow_endless_method_style?
           return false unless body_node
-          return false if body_node.parent.assignment_method? ||
+          return false if body_node.basic_conditional? || body_node.parent.assignment_method? ||
                           NOT_SUPPORTED_ENDLESS_METHOD_BODY_TYPES.include?(body_node.type)
 
-          !(body_node.begin_type? || body_node.kwbegin_type?)
+          !body_node.type?(:begin, :kwbegin)
         end
 
         def correct_to_multiline(corrector, node)
@@ -86,10 +88,10 @@ module RuboCop
         end
 
         def correct_to_endless(corrector, node)
-          self_receiver = node.self_receiver? ? 'self.' : ''
+          receiver = "#{node.receiver.source}." if node.receiver
           arguments = node.arguments.any? ? node.arguments.source : '()'
           body_source = method_body_source(node.body)
-          replacement = "def #{self_receiver}#{node.method_name}#{arguments} = #{body_source}"
+          replacement = "def #{receiver}#{node.method_name}#{arguments} = #{body_source}"
 
           corrector.replace(node, replacement)
         end
@@ -130,14 +132,16 @@ module RuboCop
         end
 
         def require_parentheses?(method_body)
-          method_body.send_type? && !method_body.arguments.empty? && !method_body.comparison_method?
+          return false unless method_body.send_type?
+          return false if method_body.arithmetic_operation?
+
+          !method_body.arguments.empty? && !method_body.comparison_method?
         end
 
         def disallow_endless_method_style?
-          endless_method_config = config.for_cop('Style/EndlessMethod')
-          return false unless endless_method_config['Enabled']
+          return true unless config.cop_enabled?('Style/EndlessMethod')
 
-          endless_method_config['EnforcedStyle'] == 'disallow'
+          config.for_cop('Style/EndlessMethod')['EnforcedStyle'] == 'disallow'
         end
       end
     end

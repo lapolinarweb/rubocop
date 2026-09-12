@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Lint
-      # This cop checks for duplicate elements in Regexp character classes.
+      # Checks for duplicate elements in `Regexp` character classes.
       #
       # @example
       #
@@ -34,23 +34,32 @@ module RuboCop
 
         def each_repeated_character_class_element_loc(node)
           node.parsed_tree&.each_expression do |expr|
-            next if expr.type != :set || expr.token == :intersection
+            next if skip_expression?(expr)
 
             seen = Set.new
+            group_expressions(node, expr.expressions) do |group|
+              group_source = group.to_s
 
-            expr.expressions.each do |child|
-              next if within_interpolation?(node, child)
+              yield group.expression if seen.include?(group_source)
 
-              child_source = child.to_s
-
-              yield child.expression if seen.include?(child_source)
-
-              seen << child_source
+              seen << group_source
             end
           end
         end
 
         private
+
+        def group_expressions(node, expressions)
+          expressions.each do |expression|
+            next if within_interpolation?(node, expression)
+
+            yield(expression)
+          end
+        end
+
+        def skip_expression?(expr)
+          expr.type != :set || expr.token == :intersection
+        end
 
         # Since we blank interpolations with a space for every char of the interpolation, we would
         # mark every space (except the first) as duplicate if we do not skip regexp_parser nodes
@@ -67,9 +76,7 @@ module RuboCop
           # Cache by loc, not by regexp content, as content can be repeated in multiple patterns
           key = node.loc
 
-          @interpolation_locs[key] ||= node.children.select(&:begin_type?).map do |interpolation|
-            interpolation.loc.expression
-          end
+          @interpolation_locs[key] ||= node.children.select(&:begin_type?).map(&:source_range)
         end
       end
     end

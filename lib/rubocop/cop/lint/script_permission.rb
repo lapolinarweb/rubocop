@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Lint
-      # This cop checks if a file which has a shebang line as
+      # Checks if a file which has a shebang line as
       # its first line is granted execute permission.
       #
       # @example
@@ -46,17 +46,21 @@ module RuboCop
           message = format_message_from(processed_source)
 
           add_offense(comment, message: message) do
-            autocorrect(comment) if autocorrect_requested?
+            autocorrect if autocorrect?
           end
         end
 
         private
 
-        def autocorrect(comment)
-          FileUtils.chmod('+x', comment.loc.expression.source_buffer.name)
+        def autocorrect
+          FileUtils.chmod('+x', processed_source.file_path)
         end
 
         def executable?(processed_source)
+          # Virtual sources (LSP buffers, programmatic `ProcessedSource`) have no file on
+          # disk to stat or `chmod`, so treat them as executable to skip the offense.
+          return true unless File.exist?(processed_source.file_path)
+
           # Returns true if stat is executable or if the operating system
           # doesn't distinguish executable files from nonexecutable files.
           # See at: https://github.com/ruby/ruby/blob/ruby_2_4/file.c#L5362

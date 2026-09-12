@@ -3,7 +3,28 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for strings that are just an interpolated expression.
+      # Checks for strings that are just an interpolated expression.
+      #
+      # @safety
+      #   Autocorrection is unsafe because when calling a destructive method to string,
+      #   the resulting string may have different behavior or raise `FrozenError`.
+      #
+      #   [source,ruby]
+      #   ----
+      #   x = 'a'
+      #   y = "#{x}"
+      #   y << 'b'   # return 'ab'
+      #   x          # return 'a'
+      #   y = x.to_s
+      #   y << 'b'   # return 'ab'
+      #   x          # return 'ab'
+      #
+      #   x = 'a'.freeze
+      #   y = "#{x}"
+      #   y << 'b'   # return 'ab'.
+      #   y = x.to_s
+      #   y << 'b'   # raise `FrozenError`.
+      #   ----
       #
       # @example
       #
@@ -28,9 +49,10 @@ module RuboCop
         def on_dstr(node)
           return unless single_interpolation?(node)
 
-          add_offense(node) do |corrector|
-            embedded_node = node.children.first
+          embedded_node = node.children.first
+          return if use_match_pattern?(embedded_node)
 
+          add_offense(node) do |corrector|
             if variable_interpolation?(embedded_node)
               autocorrect_variable_interpolation(corrector, embedded_node, node)
             elsif single_variable_interpolation?(embedded_node)
@@ -48,6 +70,14 @@ module RuboCop
             interpolation?(node.children.first) &&
             !implicit_concatenation?(node) &&
             !embedded_in_percent_array?(node)
+        end
+
+        def use_match_pattern?(node)
+          return false if target_ruby_version <= 2.7
+
+          node.children.any? do |child|
+            child.respond_to?(:match_pattern_type?) && child.match_pattern_type?
+          end
         end
 
         def single_variable_interpolation?(node)
@@ -76,16 +106,26 @@ module RuboCop
         end
 
         def autocorrect_variable_interpolation(corrector, embedded_node, node)
-          replacement = "#{embedded_node.loc.expression.source}.to_s"
+          replacement = "#{embedded_node.source}.to_s"
 
           corrector.replace(node, replacement)
         end
 
         def autocorrect_single_variable_interpolation(corrector, embedded_node, node)
-          variable_loc = embedded_node.children.first.loc
-          replacement = "#{variable_loc.expression.source}.to_s"
+          embedded_var = embedded_node.children.first
 
-          corrector.replace(node, replacement)
+          source = if require_parentheses?(embedded_var)
+                     receiver = range_between(
+                       embedded_var.source_range.begin_pos, embedded_var.loc.selector.end_pos
+                     )
+                     arguments = embedded_var.arguments.map(&:source).join(', ')
+
+                     "#{receiver.source}(#{arguments})"
+                   else
+                     embedded_var.source
+                   end
+
+          corrector.replace(node, "#{source}.to_s")
         end
 
         def autocorrect_other(corrector, embedded_node, node)
@@ -96,6 +136,10 @@ module RuboCop
           corrector.replace(loc.end, '')
           corrector.replace(embedded_loc.begin, '(')
           corrector.replace(embedded_loc.end, ').to_s')
+        end
+
+        def require_parentheses?(node)
+          node.send_type? && node.arguments.any? && !node.parenthesized_call?
         end
       end
     end

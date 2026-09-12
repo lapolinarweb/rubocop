@@ -3,11 +3,11 @@
 module RuboCop
   module Cop
     module Style
-      # Newcomers to ruby applications may write top-level methods,
+      # Newcomers to Ruby applications may write top-level methods,
       # when ideally they should be organized in appropriate classes or modules.
       # This cop looks for definitions of top-level methods and warns about them.
       #
-      # However for ruby scripts it is perfectly fine to use top-level methods.
+      # However, for Ruby scripts it is perfectly fine to use top-level methods.
       # Hence this cop is disabled by default.
       #
       # @example
@@ -63,6 +63,9 @@ module RuboCop
           add_offense(node)
         end
 
+        alias on_numblock on_block
+        alias on_itblock on_block
+
         private
 
         def top_level_method_definition?(node)
@@ -75,7 +78,7 @@ module RuboCop
 
         # @!method define_method_block?(node)
         def_node_matcher :define_method_block?, <<~PATTERN
-          (block (send _ {:define_method} _) ...)
+          (any_block (send _ :define_method _) ...)
         PATTERN
       end
     end

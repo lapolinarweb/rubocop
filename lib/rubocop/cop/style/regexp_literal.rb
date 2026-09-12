@@ -3,7 +3,16 @@
 module RuboCop
   module Cop
     module Style
-      # This cop enforces using // or %r around regular expressions.
+      # Enforces using `//` or `%r` around regular expressions.
+      #
+      # NOTE: The following `%r` cases using a regexp that starts with a blank or `=`
+      # as a method argument are allowed to prevent syntax errors.
+      #
+      # [source,ruby]
+      # ----
+      # do_something %r{ regexp} # `do_something / regexp/` is an invalid syntax.
+      # do_something %r{=regexp} # `do_something /=regexp/` is an invalid syntax.
+      # ----
       #
       # @example EnforcedStyle: slashes (default)
       #   # bad
@@ -89,7 +98,16 @@ module RuboCop
         MSG_USE_SLASHES = 'Use `//` around regular expression.'
         MSG_USE_PERCENT_R = 'Use `%r` around regular expression.'
 
+        PAIR_DELIMITER_PATTERNS = {
+          ['(', ')'] => /\\.|[()]/,
+          ['[', ']'] => /\\.|[\[\]]/,
+          ['{', '}'] => /\\.|[{}]/,
+          ['<', '>'] => /\\.|[<>]/
+        }.freeze
+
         def on_regexp(node)
+          return if slash_literal?(node) && percent_r_delimiters_conflict?(node)
+
           message = if slash_literal?(node)
                       MSG_USE_PERCENT_R unless allowed_slash_literal?(node)
                     else
@@ -105,6 +123,26 @@ module RuboCop
         end
 
         private
+
+        def percent_r_delimiters_conflict?(node)
+          opening, closing = preferred_delimiters
+          return false unless (pattern = PAIR_DELIMITER_PATTERNS[[opening, closing]])
+
+          !balanced_delimiters?(node_body(node), opening, closing, pattern)
+        end
+
+        def balanced_delimiters?(text, opening, closing, pattern)
+          depth = 0
+          text.scan(pattern) do |match|
+            if match == opening
+              depth += 1
+            elsif match == closing
+              depth -= 1
+              return false if depth.negative?
+            end
+          end
+          depth.zero?
+        end
 
         def allowed_slash_literal?(node)
           (style == :slashes && !contains_disallowed_slash?(node)) || allowed_mixed_slash?(node)
@@ -146,12 +184,12 @@ module RuboCop
         end
 
         def preferred_delimiters
-          config.for_cop('Style/PercentLiteralDelimiters') ['PreferredDelimiters']['%r'].chars
+          config.for_cop('Style/PercentLiteralDelimiters')['PreferredDelimiters']['%r'].chars
         end
 
         def allowed_omit_parentheses_with_percent_r_literal?(node)
           return false unless node.parent&.call_type?
-          return true if node.content.start_with?(' ')
+          return true if node.content.start_with?(' ', '=')
 
           enforced_style = config.for_cop('Style/MethodCallWithArgsParentheses')['EnforcedStyle']
 

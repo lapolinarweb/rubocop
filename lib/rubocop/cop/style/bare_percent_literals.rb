@@ -3,7 +3,9 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks if usage of %() or %Q() matches configuration.
+      # Checks if usage of `%()` or `%Q()` matches configuration.
+      # Consistent use of one style makes the codebase easier
+      # to read.
       #
       # @example EnforcedStyle: bare_percent (default)
       #   # bad
@@ -41,8 +43,7 @@ module RuboCop
 
         def check(node)
           return if node.heredoc?
-          return unless node.loc.respond_to?(:begin)
-          return unless node.loc.begin
+          return unless node.loc?(:begin)
 
           source = node.loc.begin.source
           if requires_percent_q?(source)

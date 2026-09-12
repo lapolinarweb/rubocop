@@ -33,24 +33,20 @@ module RuboCop
           branch.begin_type? ? Array(branch).last : branch
         end
 
-        # rubocop:disable Metrics/AbcSize
         def lhs(node)
           case node.type
           when :send
             lhs_for_send(node)
-          when :op_asgn
-            "#{node.children[0].source} #{node.children[1]}= "
-          when :and_asgn, :or_asgn
-            "#{node.children[0].source} #{node.loc.operator.source} "
+          when :op_asgn, :and_asgn, :or_asgn
+            "#{node.assignment_node.source} #{node.operator}= "
           when :casgn
             lhs_for_casgn(node)
           when *ConditionalAssignment::VARIABLE_ASSIGNMENT_TYPES
-            "#{node.children[0]} = "
+            "#{node.name} = "
           else
             node.source
           end
         end
-        # rubocop:enable Metrics/AbcSize
 
         def indent(cop, source)
           conf = cop.config.for_cop(END_ALIGNMENT)
@@ -73,7 +69,7 @@ module RuboCop
           elsif_branches << node.if_branch
 
           else_branch = node.else_branch
-          if else_branch&.if_type? && else_branch&.elsif?
+          if else_branch&.if_type? && else_branch.elsif?
             expand_elsif(else_branch, elsif_branches)
           else
             elsif_branches << else_branch
@@ -94,29 +90,26 @@ module RuboCop
         end
 
         def lhs_for_casgn(node)
-          namespace = node.children[0]
-          if namespace.nil? || namespace.cbase_type?
-            "#{namespace&.source}#{node.children[1]} = "
+          if node.namespace.nil?
+            "#{node.name} = "
+          elsif node.namespace.cbase_type?
+            "::#{node.name} = "
           else
-            "#{namespace.source}::#{node.children[1]} = "
+            "#{node.namespace.const_name}::#{node.name} = "
           end
-        end
-
-        def setter_method?(method_name)
-          method_name.to_s.end_with?(EQUAL) && !%i[!= == === >= <=].include?(method_name)
         end
 
         def assignment_rhs_exist?(node)
           parent = node.parent
           return true unless parent
 
-          !(parent.mlhs_type? || parent.resbody_type?)
+          !parent.type?(:mlhs, :resbody)
         end
       end
 
-      # Check for `if` and `case` statements where each branch is used for
-      # assignment to the same variable when using the return of the
-      # condition can be used instead.
+      # Checks for `if` and `case` statements where each branch is used for
+      # both the assignment and comparison of the same variable
+      # when using the return of the condition can be used instead.
       #
       # @example EnforcedStyle: assign_to_condition (default)
       #   # bad
@@ -210,19 +203,15 @@ module RuboCop
       class ConditionalAssignment < Base
         include ConditionalAssignmentHelper
         include ConfigurableEnforcedStyle
-        include IgnoredNode
+        include ReparsedEquivalence
         extend AutoCorrector
 
         MSG = 'Use the return of the conditional for variable assignment and comparison.'
-        ASSIGN_TO_CONDITION_MSG = 'Assign variables inside of conditionals'
+        ASSIGN_TO_CONDITION_MSG = 'Assign variables inside of conditionals.'
         VARIABLE_ASSIGNMENT_TYPES = %i[casgn cvasgn gvasgn ivasgn lvasgn].freeze
         ASSIGNMENT_TYPES = VARIABLE_ASSIGNMENT_TYPES + %i[and_asgn or_asgn op_asgn masgn].freeze
-        LINE_LENGTH = 'Layout/LineLength'
-        INDENTATION_WIDTH = 'Layout/IndentationWidth'
         ENABLED = 'Enabled'
-        MAX = 'Max'
         SINGLE_LINE_CONDITIONS_ONLY = 'SingleLineConditionsOnly'
-        WIDTH = 'Width'
 
         # The shovel operator `<<` does not have its own type. It is a `send`
         # type.
@@ -235,8 +224,9 @@ module RuboCop
         PATTERN
 
         ASSIGNMENT_TYPES.each do |type|
-          define_method "on_#{type}" do |node|
+          define_method :"on_#{type}" do |node|
             return if part_of_ignored_node?(node)
+            return if node.parent&.shorthand_asgn?
 
             check_assignment_to_condition(node)
           end
@@ -294,8 +284,12 @@ module RuboCop
 
           _condition, *branches, else_branch = *assignment
 
-          return unless else_branch
+          # Use the node accessor rather than the raw destructured branch: for
+          # `x = unless cond; body; end` (no `else`) the parser puts `body` in the
+          # else slot, but `else_branch` correctly reports there is no `else` clause.
+          return unless assignment.else_branch
           return if allowed_single_line?([*branches, else_branch])
+          return unless safe_to_correct?(node)
 
           add_offense(node, message: ASSIGN_TO_CONDITION_MSG) do |corrector|
             autocorrect(corrector, node)
@@ -314,22 +308,25 @@ module RuboCop
         end
 
         def allowed_single_line?(branches)
-          single_line_conditions_only? && branches.any?(&:begin_type?)
+          single_line_conditions_only? && branches.compact.any?(&:begin_type?)
         end
 
         def assignment_node(node)
-          *_variable, assignment = *node
+          assignment = node.send_type? ? node.last_argument : node.expression
+          return unless assignment
 
           # ignore pseudo-assignments without rhs in for nodes
           return if node.parent&.for_type?
 
-          assignment, = *assignment if assignment.begin_type? && assignment.children.one?
+          if assignment.begin_type? && assignment.children.one?
+            assignment = assignment.children.first
+          end
 
           assignment
         end
 
         def move_assignment_outside_condition(corrector, node)
-          if node.case_type? || node.case_match_type?
+          if node.type?(:case, :case_match)
             CaseCorrector.correct(corrector, self, node)
           elsif node.ternary?
             TernaryCorrector.correct(corrector, node)
@@ -339,11 +336,11 @@ module RuboCop
         end
 
         def move_assignment_inside_condition(corrector, node)
-          *_assignment, condition = *node
+          condition = node.send_type? ? node.last_argument : node.expression
 
           if ternary_condition?(condition)
             TernaryCorrector.move_assignment_inside_condition(corrector, node)
-          elsif condition.case_type? || condition.case_match_type?
+          elsif condition.type?(:case, :case_match)
             CaseCorrector.move_assignment_inside_condition(corrector, node)
           elsif condition.if_type?
             IfCorrector.move_assignment_inside_condition(corrector, node)
@@ -351,7 +348,7 @@ module RuboCop
         end
 
         def ternary_condition?(node)
-          [node, node.children.first].any? { |n| n.if_type? && n.ternary? }
+          [node, node.children.first].compact.any? { |n| n.if_type? && n.ternary? }
         end
 
         def lhs_all_match?(branches)
@@ -362,7 +359,7 @@ module RuboCop
         end
 
         def assignment_types_match?(*nodes)
-          return unless assignment_type?(nodes.first)
+          return false unless assignment_type?(nodes.first)
 
           nodes.map(&:type).uniq.one?
         end
@@ -372,6 +369,7 @@ module RuboCop
           return unless allowed_statements?(branches)
           return if allowed_single_line?(branches)
           return if correction_exceeds_line_limit?(node, branches)
+          return unless safe_to_correct?(node)
 
           add_offense(node) { |corrector| autocorrect(corrector, node) }
         end
@@ -384,24 +382,43 @@ module RuboCop
           end
         end
 
+        # The correction rewrites the conditional structurally, so full AST
+        # equivalence cannot be asserted, but the result must at least reparse
+        # to valid Ruby. Applying the correction to a throwaway buffer here
+        # also exercises the branch-shape handling before an offense is even
+        # reported, so unusual branches that the corrector cannot handle are
+        # left alone instead of crashing or emitting invalid code - the bug
+        # class behind most of this cop's history.
+        def safe_to_correct?(node)
+          correction_parses?(node)
+        rescue StandardError
+          false
+        end
+
+        # `ReparsedEquivalence#correction_parses?` contract: apply the exact
+        # correction this cop would perform.
+        def apply_reparse_correction(corrector, node)
+          autocorrect(corrector, node)
+        end
+
         def allowed_statements?(branches)
           return false unless branches.all?
 
-          statements = branches.map { |branch| tail(branch) }.compact
+          statements = branches.filter_map { |branch| tail(branch) }
 
           lhs_all_match?(statements) && statements.none?(&:masgn_type?) &&
             assignment_types_match?(*statements)
         end
 
         # If `Layout/LineLength` is enabled, we do not want to introduce an
-        # offense by auto-correcting this cop. Find the max configured line
+        # offense by autocorrecting this cop. Find the max configured line
         # length. Find the longest line of condition. Remove the assignment
         # from lines that contain the offending assignment because after
         # correcting, this will not be on the line anymore. Check if the length
         # of the longest line + the length of the corrected assignment is
         # greater than the max configured line length
         def correction_exceeds_line_limit?(node, branches)
-          return false unless line_length_cop_enabled?
+          return false unless config.cop_enabled?('Layout/LineLength')
 
           assignment = lhs(tail(branches[0]))
 
@@ -419,18 +436,6 @@ module RuboCop
           assignment + longest_line
         end
 
-        def line_length_cop_enabled?
-          config.for_cop(LINE_LENGTH)[ENABLED]
-        end
-
-        def max_line_length
-          config.for_cop(LINE_LENGTH)[MAX]
-        end
-
-        def indentation_width
-          config.for_cop(INDENTATION_WIDTH)[WIDTH] || 2
-        end
-
         def single_line_conditions_only?
           cop_config[SINGLE_LINE_CONDITIONS_ONLY]
         end
@@ -443,29 +448,46 @@ module RuboCop
       # Helper module to provide common methods to ConditionalAssignment
       # correctors
       module ConditionalCorrectorHelper
+        # rubocop:disable-next Metrics/AbcSize, Metrics/CyclomaticComplexity
         def remove_whitespace_in_branches(corrector, branch, condition, column)
           branch.each_node do |child|
+            next if child.source_range.nil?
+            next if child.parent.dstr_type?
+
             white_space = white_space_range(child, column)
-            corrector.remove(white_space) if white_space.source.strip.empty?
+            corrector.remove(white_space) if white_space
           end
 
-          [condition.loc.else, condition.loc.end].each do |loc|
-            corrector.remove_preceding(loc, loc.column - column)
+          if condition.loc.else && !same_line?(condition.else_branch, condition)
+            corrector.remove_preceding(condition.loc.else, condition.loc.else.column - column)
           end
+
+          return unless condition.loc.end && !same_line?(
+            condition.branches.last.parent.else_branch, condition.loc.end
+          )
+
+          corrector.remove_preceding(condition.loc.end, condition.loc.end.column - column)
+        end
+
+        def same_line?(node1, node2)
+          RuboCop::Cop::Util.same_line?(node1, node2)
         end
 
         def white_space_range(node, column)
-          expression = node.loc.expression
-          begin_pos = expression.begin_pos - (expression.column - column - 2)
+          expression = node.source_range
+          end_pos = expression.begin_pos
+          begin_pos = end_pos - (expression.column - column - 2)
 
-          Parser::Source::Range.new(expression.source_buffer, begin_pos, expression.begin_pos)
+          return nil if begin_pos > end_pos
+
+          white_space = Parser::Source::Range.new(expression.source_buffer, begin_pos, end_pos)
+          white_space if white_space.source.strip.empty?
         end
 
         def assignment(node)
-          *_, condition = *node
-          Parser::Source::Range.new(node.loc.expression.source_buffer,
-                                    node.loc.expression.begin_pos,
-                                    condition.loc.expression.begin_pos)
+          condition = node.send_type? ? node.last_argument : node.expression
+
+          node.source_range.begin.join(condition.source_range.begin)
         end
 
         def correct_if_branches(corrector, cop, node)
@@ -510,7 +532,7 @@ module RuboCop
           end
 
           def move_assignment_inside_condition(corrector, node)
-            *_var, rhs = *node
+            rhs = node.send_type? ? node.last_argument : node.expression
             if_branch, else_branch = extract_branches(node)
             assignment = assignment(node)
 
@@ -537,12 +559,12 @@ module RuboCop
           end
 
           def element_assignment?(node)
-            node.send_type? && node.method_name != :[]=
+            node.send_type? && !node.method?(:[]=)
           end
 
           def extract_branches(node)
-            *_var, rhs = *node
-            condition, = *rhs if rhs.begin_type? && rhs.children.one?
+            rhs = node.send_type? ? node.last_argument : node.expression
+            condition = rhs.children.first if rhs.begin_type? && rhs.children.one?
             _condition, if_branch, else_branch = *(condition || rhs)
 
             [if_branch, else_branch]
@@ -570,8 +592,8 @@ module RuboCop
           end
 
           def move_assignment_inside_condition(corrector, node)
-            column = node.loc.expression.column
-            *_var, condition = *node
+            column = node.source_range.column
+            condition = node.send_type? ? node.last_argument : node.expression
             assignment = assignment(node)
 
             corrector.remove(assignment)
@@ -599,6 +621,8 @@ module RuboCop
 
             return unless (branch_else = branch.parent.loc.else)
 
+            return if same_line?(branch_else, condition)
+
             corrector.remove_preceding(branch_else, branch_else.column - column)
           end
         end
@@ -621,8 +645,8 @@ module RuboCop
           end
 
           def move_assignment_inside_condition(corrector, node)
-            column = node.loc.expression.column
-            *_var, condition = *node
+            column = node.source_range.column
+            condition = node.send_type? ? node.last_argument : node.expression
             assignment = assignment(node)
 
             corrector.remove(assignment)
@@ -657,6 +681,8 @@ module RuboCop
             remove_whitespace_in_branches(corrector, branch, condition, column)
 
             parent_keyword = branch.parent.loc.keyword
+            return if same_line?(parent_keyword, condition)
+
             corrector.remove_preceding(parent_keyword, parent_keyword.column - column)
           end
         end

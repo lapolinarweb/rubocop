@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Naming
-      # This cop makes sure that rescued exceptions variables are named as
+      # Makes sure that rescued exception variables are named as
       # expected.
       #
       # The `PreferredName` config option takes a `String`. It represents
@@ -82,9 +82,7 @@ module RuboCop
           message = message(node)
 
           add_offense(range, message: message) do |corrector|
-            corrector.replace(range, preferred_name)
-
-            correct_node(corrector, node.body, offending_name, preferred_name)
+            autocorrect(corrector, node, range, offending_name, preferred_name)
           end
         end
 
@@ -92,7 +90,20 @@ module RuboCop
 
         def offense_range(resbody)
           variable = resbody.exception_variable
-          variable.loc.expression
+          variable.source_range
+        end
+
+        def autocorrect(corrector, node, range, offending_name, preferred_name)
+          corrector.replace(range, preferred_name)
+          # Once the exception variable is reassigned, later references point to a
+          # different value, so stop correcting after the reassignment - both in the
+          # body and in the code following the `begin`/`rescue`.
+          return if correct_node(corrector, node.body, offending_name, preferred_name)
+          return unless (kwbegin_node = node.parent.each_ancestor(:kwbegin).first)
+
+          kwbegin_node.right_siblings.each do |child_node|
+            break if correct_node(corrector, child_node, offending_name, preferred_name)
+          end
         end
 
         def variable_name_matches?(node, name)
@@ -101,35 +112,41 @@ module RuboCop
               variable_name_matches?(lvasgn_node, name)
             end
           else
-            node.children.first == name
+            node.name == name
           end
         end
 
+        # Returns the reassignment node once the exception variable is reassigned (a truthy
+        # signal to stop correcting later references), or `nil` when no reassignment is found.
+        # rubocop:disable-next Metrics/MethodLength
         def correct_node(corrector, node, offending_name, preferred_name)
           return unless node
 
           node.each_node(:lvar, :lvasgn, :masgn) do |child_node|
             next unless variable_name_matches?(child_node, offending_name)
 
-            corrector.replace(child_node, preferred_name) if child_node.lvar_type?
+            if child_node.lvar_type?
+              parent_node = child_node.parent
+              if parent_node.respond_to?(:value_omission?) && parent_node.value_omission?
+                corrector.insert_after(parent_node.loc.operator, " #{preferred_name}")
+              else
+                corrector.replace(child_node, preferred_name)
+              end
+            end
 
-            if child_node.masgn_type? || child_node.lvasgn_type?
+            if child_node.type?(:masgn, :lvasgn)
               correct_reassignment(corrector, child_node, offending_name, preferred_name)
-              break
+              return child_node
             end
           end
+          nil
         end
 
         # If the exception variable is reassigned, that assignment needs to be corrected.
         # Further `lvar` nodes will not be corrected though since they now refer to a
         # different variable.
         def correct_reassignment(corrector, node, offending_name, preferred_name)
-          if node.lvasgn_type?
-            correct_node(corrector, node.child_nodes.first, offending_name, preferred_name)
-          elsif node.masgn_type?
-            # With multiple assign, the assignments are in an array as the last child
-            correct_node(corrector, node.children.last, offending_name, preferred_name)
-          end
+          correct_node(corrector, node.rhs, offending_name, preferred_name)
         end
 
         def preferred_name(variable_name)
@@ -142,10 +159,7 @@ module RuboCop
         end
 
         def variable_name(node)
-          asgn_node = node.exception_variable
-          return unless asgn_node
-
-          asgn_node.children.last
+          node.exception_variable.name if node.exception_variable.respond_to?(:name)
         end
 
         def message(node)

@@ -3,18 +3,21 @@
 module RuboCop
   module Cop
     module Metrics
-      # This cop checks if the length of a method exceeds some maximum value.
-      # Comment lines can optionally be ignored.
+      # Checks if the length of a method exceeds some maximum value.
+      # Comment lines can optionally be allowed.
       # The maximum allowed length is configurable.
       #
-      # You can set literals you want to fold with `CountAsOne`.
-      # Available are: 'array', 'hash', and 'heredoc'. Each literal
-      # will be counted as one line regardless of its actual size.
+      # You can set constructs you want to fold with `CountAsOne`.
       #
-      # NOTE: The `ExcludedMethods` configuration is deprecated and only kept
-      # for backwards compatibility. Please use `IgnoredMethods` instead.
+      # Available are: 'array', 'hash', 'heredoc', and 'method_call'.
+      # Each construct will be counted as one line regardless of its actual size.
       #
-      # @example CountAsOne: ['array', 'heredoc']
+      # NOTE: The `ExcludedMethods` and `IgnoredMethods` configuration is
+      # deprecated and only kept for backwards compatibility.
+      # Please use `AllowedMethods` and `AllowedPatterns` instead.
+      # By default, there are no allowed methods.
+      #
+      # @example CountAsOne: ['array', 'hash', 'heredoc', 'method_call']
       #
       #   def m
       #     array = [       # +1
@@ -22,7 +25,7 @@ module RuboCop
       #       2
       #     ]
       #
-      #     hash = {        # +3
+      #     hash = {        # +1
       #       key: 'value'
       #     }
       #
@@ -30,33 +33,46 @@ module RuboCop
       #       Heredoc
       #       content.
       #     HEREDOC
-      #   end               # 5 points
+      #
+      #     foo(            # +1
+      #       1,
+      #       2
+      #     )
+      #   end               # 4 points
       #
       class MethodLength < Base
         include CodeLength
-        include IgnoredMethods
-
-        ignored_methods deprecated_key: 'ExcludedMethods'
+        include AllowedMethods
+        include AllowedPattern
 
         LABEL = 'Method'
 
         def on_def(node)
-          return if ignored_method?(node.method_name)
+          return if allowed?(node.method_name)
 
           check_code_length(node)
         end
         alias on_defs on_def
 
         def on_block(node)
-          return unless node.send_node.method?(:define_method)
+          return unless node.method?(:define_method)
+
+          method_name = node.send_node.first_argument
+          return if method_name&.basic_literal? && allowed?(method_name.value)
 
           check_code_length(node)
         end
+        alias on_numblock on_block
+        alias on_itblock on_block
 
         private
 
         def cop_label
           LABEL
+        end
+
+        def allowed?(method_name)
+          allowed_method?(method_name) || matches_allowed_pattern?(method_name)
         end
       end
     end

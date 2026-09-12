@@ -124,7 +124,92 @@ RSpec.describe RuboCop::Cop::Style::AccessorGrouping, :config do
       RUBY
     end
 
-    it 'registers offense and corrects if at least two separate accessors without comments' do
+    it 'does not register an offense for accessors with other methods' do
+      expect_no_offenses(<<~RUBY)
+        class Foo
+          extend T::Sig
+
+          annotation_method :one
+          attr_reader :one
+
+          annotation_method :two
+          attr_reader :two
+
+          sig { returns(Integer) }
+          attr_reader :three
+        end
+      RUBY
+    end
+
+    it 'does not register an offense for grouped accessors below a typechecked accessor method' do
+      expect_no_offenses(<<~RUBY)
+        class Foo
+          extend T::Sig
+
+          sig { returns(Integer) }
+          attr_reader :one
+
+          attr_reader :two, :three
+        end
+      RUBY
+    end
+
+    it 'registers an offense for grouped accessors distinct from a typechecked accessor method' do
+      expect_offense(<<~RUBY)
+        class Foo
+          extend T::Sig
+
+          sig { returns(Integer) }
+          attr_reader :one
+
+          attr_reader :two, :three
+          ^^^^^^^^^^^^^^^^^^^^^^^^ Group together all `attr_reader` attributes.
+
+          attr_reader :four
+          ^^^^^^^^^^^^^^^^^ Group together all `attr_reader` attributes.
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        class Foo
+          extend T::Sig
+
+          sig { returns(Integer) }
+          attr_reader :one
+
+          attr_reader :two, :three, :four
+        end
+      RUBY
+    end
+
+    it 'registers an offense for accessors with method definitions' do
+      expect_offense(<<~RUBY)
+        class Foo
+          def foo
+          end
+          attr_reader :one
+          ^^^^^^^^^^^^^^^^ Group together all `attr_reader` attributes.
+
+          def bar
+          end
+          attr_reader :two
+          ^^^^^^^^^^^^^^^^ Group together all `attr_reader` attributes.
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        class Foo
+          def foo
+          end
+          attr_reader :one, :two
+
+          def bar
+          end
+        end
+      RUBY
+    end
+
+    it 'registers an offense and corrects if at least two separate accessors without comments' do
       expect_offense(<<~RUBY)
         class Foo
           # @return [String] value of foo
@@ -151,6 +236,104 @@ RSpec.describe RuboCop::Cop::Style::AccessorGrouping, :config do
           attr_reader :four, :five
         end
       RUBY
+    end
+
+    it 'registers an offense and correct if the same accessor is listed twice' do
+      expect_offense(<<~RUBY)
+        class Foo
+          attr_reader :one
+          ^^^^^^^^^^^^^^^^ Group together all `attr_reader` attributes.
+          attr_reader :two
+          ^^^^^^^^^^^^^^^^ Group together all `attr_reader` attributes.
+          attr_reader :one
+          ^^^^^^^^^^^^^^^^ Group together all `attr_reader` attributes.
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        class Foo
+          attr_reader :one, :two
+        end
+      RUBY
+    end
+
+    it 'does not register an offense when the same accessor is given more than once in the same statement' do
+      expect_no_offenses(<<~RUBY)
+        class Foo
+          attr_reader :one, :one
+        end
+      RUBY
+    end
+
+    it 'does not register an offense for grouped accessors having RBS::Inline annotation' do
+      expect_no_offenses(<<~RUBY)
+        class Foo
+          attr_reader :one #: String
+
+          attr_reader :two, :three
+        end
+      RUBY
+    end
+
+    it 'registers an offense for grouped accessors having non-RBS::Inline annotation' do
+      expect_offense(<<~RUBY)
+        class Foo
+          attr_reader :one # comment #: String
+          ^^^^^^^^^^^^^^^^ Group together all `attr_reader` attributes.
+          attr_reader :two, :three
+          ^^^^^^^^^^^^^^^^^^^^^^^^ Group together all `attr_reader` attributes.
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        class Foo
+          attr_reader :one, :two, :three # comment #: String
+        end
+      RUBY
+    end
+
+    context 'when constant is used in accessor' do
+      it 'registers and corrects an offense considering ordering of constant' do
+        expect_offense(<<~RUBY)
+          class Foo
+            attr_reader :one
+            ^^^^^^^^^^^^^^^^ Group together all `attr_reader` attributes.
+            OTHER_ATTRS = %i[two three].freeze
+
+            attr_reader(*OTHER_ATTRS)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^ Group together all `attr_reader` attributes.
+          end
+        RUBY
+
+        expect_correction(<<~RUBY)
+          class Foo
+            OTHER_ATTRS = %i[two three].freeze
+
+            attr_reader :one, *OTHER_ATTRS
+          end
+        RUBY
+      end
+
+      it 'registers and corrects when there is no attr_reader after constant' do
+        expect_offense(<<~RUBY)
+          class Foo
+            attr_reader :one
+            ^^^^^^^^^^^^^^^^ Group together all `attr_reader` attributes.
+            attr_reader :bar
+            ^^^^^^^^^^^^^^^^ Group together all `attr_reader` attributes.
+
+            OTHER_ATTRS = %i[two three].freeze
+          end
+        RUBY
+
+        expect_correction(<<~RUBY)
+          class Foo
+            attr_reader :one, :bar
+
+            OTHER_ATTRS = %i[two three].freeze
+          end
+        RUBY
+      end
     end
   end
 
@@ -271,6 +454,125 @@ RSpec.describe RuboCop::Cop::Style::AccessorGrouping, :config do
           attr_reader :one, :two
         end
       RUBY
+    end
+
+    it 'does not register an offense if the same accessor is listed twice' do
+      expect_no_offenses(<<~RUBY)
+        class Foo
+          attr_reader :one
+          attr_reader :two
+          attr_reader :one
+        end
+      RUBY
+    end
+
+    it 'registers an offense and corrects when the same accessor is given more than once in the same statement' do
+      expect_offense(<<~RUBY)
+        class Foo
+          attr_reader :one, :two, :one
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Use one attribute per `attr_reader`.
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        class Foo
+          attr_reader :one
+          attr_reader :two
+        attr_reader :one
+        end
+      RUBY
+    end
+
+    it 'registers an offense and corrects when other method is followed by a space and grouped accessors' do
+      expect_offense(<<~RUBY)
+        class Foo
+          other_macro :zoo, :woo
+
+          attr_reader :foo, :bar
+          ^^^^^^^^^^^^^^^^^^^^^^ Use one attribute per `attr_reader`.
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        class Foo
+          other_macro :zoo, :woo
+
+          attr_reader :foo
+          attr_reader :bar
+        end
+      RUBY
+    end
+
+    context 'when there are comments for attributes with parentheses' do
+      it 'registers and corrects an offense' do
+        expect_offense(<<~RUBY)
+          class Foo
+            attr_reader(
+            ^^^^^^^^^^^^ Use one attribute per `attr_reader`.
+              # comment one
+              :one,
+              # comment two A
+              :two, # comment two B
+              :three # comment three
+            )
+          end
+        RUBY
+
+        expect_correction(<<~RUBY)
+          class Foo
+            # comment one
+          attr_reader :one
+            # comment two A
+            # comment two B
+            attr_reader :two
+            # comment three
+            attr_reader :three
+          end
+        RUBY
+      end
+    end
+
+    context 'when there are comments for attributes without parentheses' do
+      it 'registers and corrects an offense' do
+        expect_offense(<<~RUBY)
+          class Foo
+            attr_reader :a, # comment a
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^ Use one attribute per `attr_reader`.
+              :b, # comment b
+              :c # comment c
+          end
+        RUBY
+
+        expect_correction(<<~RUBY)
+          class Foo
+            # comment a
+          attr_reader :a
+            # comment b
+            attr_reader :b
+            # comment c
+            attr_reader :c
+          end
+        RUBY
+      end
+    end
+
+    context 'when there is a trailing comment on a single-line declaration' do
+      it 'registers an offense and does not duplicate the comment' do
+        expect_offense(<<~RUBY)
+          class Foo
+            attr_reader :bar, :baz # trailing comment
+            ^^^^^^^^^^^^^^^^^^^^^^ Use one attribute per `attr_reader`.
+          end
+        RUBY
+
+        expect_correction(<<~RUBY)
+          class Foo
+            # trailing comment
+          attr_reader :bar
+            attr_reader :baz
+          end
+        RUBY
+      end
     end
   end
 end

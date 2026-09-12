@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Lint
-      # This cop checks for `:true` and `:false` symbols.
+      # Checks for `:true` and `:false` symbols.
       # In most cases it would be a typo.
       #
       # @safety
@@ -18,8 +18,6 @@ module RuboCop
       #
       #   # good
       #   true
-      #
-      # @example
       #
       #   # bad
       #   :false
@@ -38,7 +36,7 @@ module RuboCop
           return unless boolean_symbol?(node)
 
           parent = node.parent
-          return if parent&.array_type? && parent&.percent_literal?(:symbol)
+          return if parent&.array_type? && parent.percent_literal?(:symbol)
 
           add_offense(node, message: format(MSG, boolean: node.value)) do |corrector|
             autocorrect(corrector, node)
@@ -50,7 +48,7 @@ module RuboCop
         def autocorrect(corrector, node)
           boolean_literal = node.source.delete(':')
           parent = node.parent
-          if parent&.pair_type? && node.equal?(parent.children[0])
+          if parent&.pair_type? && parent.colon? && node.equal?(parent.children[0])
             corrector.remove(parent.loc.operator)
             boolean_literal = "#{node.source} =>"
           end

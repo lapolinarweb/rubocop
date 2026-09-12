@@ -24,6 +24,13 @@ RSpec.describe RuboCop::Cop::Lint::RequireParentheses, :config do
     RUBY
   end
 
+  it 'registers an offense for a non-predicate method with a ternary whose condition uses `&&`' do
+    expect_offense(<<~RUBY)
+      foo a && b ? c : d
+      ^^^^^^^^^^ Use parentheses in the method call to avoid confusion about precedence.
+    RUBY
+  end
+
   context 'when using safe navigation operator' do
     it 'registers an offense for missing parentheses around expression with && operator' do
       expect_offense(<<~RUBY)
@@ -78,6 +85,18 @@ RSpec.describe RuboCop::Cop::Lint::RequireParentheses, :config do
 
   it 'accepts missing parentheses when method is not a predicate' do
     expect_no_offenses("weekdays.foo 'tuesday' && true == true")
+  end
+
+  it 'accepts missing parentheses when using ternary operator' do
+    expect_no_offenses('foo && bar ? baz : qux')
+  end
+
+  it 'accepts missing parentheses when using ternary operator in square brackets' do
+    expect_no_offenses('do_something[foo && bar ? baz : qux]')
+  end
+
+  it 'accepts missing parentheses when assigning ternary operator' do
+    expect_no_offenses('self.foo = bar && baz ? qux : quux')
   end
 
   it 'accepts calls to methods that are setters' do

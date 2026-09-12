@@ -3,13 +3,16 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for division with integers coerced to floats.
+      # Checks for division with integers coerced to floats.
       # It is recommended to either always use `fdiv` or coerce one side only.
       # This cop also provides other options for code consistency.
       #
+      # For `Regexp.last_match` and nth reference (e.g., `$1`), it assumes that the value
+      # is a string matched by a regular expression, and allows conversion with `#to_f`.
+      #
       # @safety
       #   This cop is unsafe, because if the operand variable is a string object
-      #   then `.to_f` will be removed and an error will occur.
+      #   then `#to_f` will be removed and an error will occur.
       #
       #   [source,ruby]
       #   ----
@@ -65,19 +68,31 @@ module RuboCop
 
         # @!method right_coerce?(node)
         def_node_matcher :right_coerce?, <<~PATTERN
-          (send _ :/ (send _ :to_f))
+          (send _ :/ #to_f_method?)
         PATTERN
         # @!method left_coerce?(node)
         def_node_matcher :left_coerce?, <<~PATTERN
-          (send (send _ :to_f) :/ _)
+          (send #to_f_method? :/ _)
         PATTERN
         # @!method both_coerce?(node)
         def_node_matcher :both_coerce?, <<~PATTERN
-          (send (send _ :to_f) :/ (send _ :to_f))
+          (send #to_f_method? :/ #to_f_method?)
         PATTERN
         # @!method any_coerce?(node)
         def_node_matcher :any_coerce?, <<~PATTERN
-          {(send _ :/ (send _ :to_f)) (send (send _ :to_f) :/ _)}
+          {(send _ :/ #to_f_method?) (send #to_f_method? :/ _)}
+        PATTERN
+        # @!method to_f_method?(node)
+        def_node_matcher :to_f_method?, <<~PATTERN
+          (send !nil? :to_f)
+        PATTERN
+
+        # @!method regexp_last_match?(node)
+        def_node_matcher :regexp_last_match?, <<~PATTERN
+          {
+            (send (const {nil? cbase} :Regexp) :last_match int)
+            (:nth_ref _)
+          }
         PATTERN
 
         def on_send(node)
@@ -92,7 +107,7 @@ module RuboCop
               remove_to_f_method(corrector, node.receiver)
               add_to_f_method(corrector, node.first_argument)
             when :fdiv
-              correct_from_slash_to_fdiv(corrector, node, node.receiver, node.first_argument)
+              correct_from_slash_to_fdiv(corrector, node.receiver, node.first_argument)
             end
           end
         end
@@ -100,6 +115,9 @@ module RuboCop
         private
 
         def offense_condition?(node)
+          return false if regexp_last_match?(node.receiver.receiver) ||
+                          regexp_last_match?(node.first_argument.receiver)
+
           case style
           when :left_coerce
             right_coerce?(node)
@@ -127,23 +145,17 @@ module RuboCop
           corrector.remove(send_node.loc.selector)
         end
 
-        def correct_from_slash_to_fdiv(corrector, node, receiver, argument)
-          receiver_source = extract_receiver_source(receiver)
-          argument_source = extract_receiver_source(argument)
+        def correct_from_slash_to_fdiv(corrector, receiver, argument)
+          remove_to_f_method(corrector, receiver) if to_f_method?(receiver)
 
-          if argument.respond_to?(:parenthesized?) && !argument.parenthesized?
-            argument_source = "(#{argument_source})"
-          end
+          argument_parenthesized = argument.begin_type?
+          corrector.replace(
+            receiver.source_range.end.join(argument.source_range.begin),
+            argument_parenthesized ? '.fdiv' : '.fdiv('
+          )
 
-          corrector.replace(node, "#{receiver_source}.fdiv#{argument_source}")
-        end
-
-        def extract_receiver_source(node)
-          if node.send_type? && node.method?(:to_f)
-            node.receiver.source
-          else
-            node.source
-          end
+          remove_to_f_method(corrector, argument) if to_f_method?(argument)
+          corrector.insert_after(argument, ')') unless argument_parenthesized
         end
       end
     end

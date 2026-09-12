@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
 RSpec.describe RuboCop::Cop::Lint::UselessMethodDefinition, :config do
-  let(:cop_config) { { 'AllowComments' => true } }
-
   it 'does not register an offense for empty constructor' do
     expect_no_offenses(<<~RUBY)
       class Foo
@@ -123,6 +121,50 @@ RSpec.describe RuboCop::Cop::Lint::UselessMethodDefinition, :config do
     RUBY
   end
 
+  it 'registers an offense and corrects when method definition with `public` access modifier containing only `super` call' do
+    expect_offense(<<~RUBY)
+      public def method
+             ^^^^^^^^^^ Useless method definition detected.
+        super
+      end
+    RUBY
+
+    expect_correction("\n")
+  end
+
+  it 'registers an offense and corrects when method definition with `protected` access modifier containing only `super` call' do
+    expect_offense(<<~RUBY)
+      protected def method
+                ^^^^^^^^^^ Useless method definition detected.
+        super
+      end
+    RUBY
+
+    expect_correction("\n")
+  end
+
+  it 'registers an offense and corrects when method definition with `private` access modifier containing only `super` call' do
+    expect_offense(<<~RUBY)
+      private def method
+              ^^^^^^^^^^ Useless method definition detected.
+        super
+      end
+    RUBY
+
+    expect_correction("\n")
+  end
+
+  it 'registers an offense and corrects when method definition with `module_function` access modifier containing only `super` call' do
+    expect_offense(<<~RUBY)
+      module_function def method
+                      ^^^^^^^^^^ Useless method definition detected.
+        super
+      end
+    RUBY
+
+    expect_correction("\n")
+  end
+
   it 'does not register an offense for method containing additional code to `super`' do
     expect_no_offenses(<<~RUBY)
       def method
@@ -148,6 +190,14 @@ RSpec.describe RuboCop::Cop::Lint::UselessMethodDefinition, :config do
     RUBY
   end
 
+  it 'does not register an offense when method definition contains rest arguments' do
+    expect_no_offenses(<<~RUBY)
+      def method(*args)
+        super
+      end
+    RUBY
+  end
+
   it 'does not register an offense when method definition contains optional argument' do
     expect_no_offenses(<<~RUBY)
       def method(x = 1)
@@ -159,6 +209,22 @@ RSpec.describe RuboCop::Cop::Lint::UselessMethodDefinition, :config do
   it 'does not register an offense when method definition contains optional keyword argument' do
     expect_no_offenses(<<~RUBY)
       def method(x: 1)
+        super
+      end
+    RUBY
+  end
+
+  it 'does not register an offense when method definition contains rest keyword arguments' do
+    expect_no_offenses(<<~RUBY)
+      def method(**options)
+        super
+      end
+    RUBY
+  end
+
+  it 'does not register an offense when method definition with generic method macro containing only `super` call' do
+    expect_no_offenses(<<~RUBY)
+      do_something def method
         super
       end
     RUBY

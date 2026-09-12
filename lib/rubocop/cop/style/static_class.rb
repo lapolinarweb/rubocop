@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for places where classes with only class methods can be
+      # Checks for places where classes with only class methods can be
       # replaced with a module. Classes should be used only when it makes sense to create
       # instances out of them.
       #
@@ -11,6 +11,11 @@ module RuboCop
       #   This cop is unsafe, because it is possible that this class is a parent
       #   for some other subclass, monkey-patched with instance methods or
       #   a dummy instance is instantiated from it somewhere.
+      #
+      # When `AllCops/UseProjectIndex` is enabled and the `rubydex` gem is
+      # installed, classes that are subclassed anywhere in the project are
+      # not reported, since converting them to modules would break their
+      # subclasses.
       #
       # @example
       #   # bad
@@ -44,17 +49,64 @@ module RuboCop
       #   end
       #
       class StaticClass < Base
+        include ProjectIndexHelp
+        include RangeHelp
         include VisibilityHelp
+        extend AutoCorrector
 
         MSG = 'Prefer modules to classes with only class methods.'
 
         def on_class(class_node)
           return if class_node.parent_class
+          return unless class_convertible_to_module?(class_node)
+          return if subclassed_in_project?(class_node)
 
-          add_offense(class_node) if class_convertible_to_module?(class_node)
+          add_offense(class_node) do |corrector|
+            autocorrect(corrector, class_node)
+          end
         end
 
         private
+
+        # When `AllCops/UseProjectIndex` is enabled, a class with descendants
+        # anywhere in the project is not reported: converting it to a module
+        # would break its subclasses.
+        def subclassed_in_project?(class_node)
+          return false unless project_index
+
+          declaration = resolve_constant_in_index(class_node.identifier)
+          return false unless declaration.is_a?(Rubydex::Class)
+
+          declaration.descendants.any? { |descendant| descendant.name != declaration.name }
+        rescue StandardError
+          false
+        end
+
+        def autocorrect(corrector, class_node)
+          corrector.replace(class_node.loc.keyword, 'module')
+          corrector.insert_after(class_node.loc.name, "\nmodule_function\n")
+
+          class_elements(class_node).each do |node|
+            if node.defs_type?
+              autocorrect_def(corrector, node)
+            elsif node.sclass_type?
+              autocorrect_sclass(corrector, node)
+            end
+          end
+        end
+
+        def autocorrect_def(corrector, node)
+          corrector.remove(
+            range_between(node.receiver.source_range.begin_pos, node.loc.name.begin_pos)
+          )
+        end
+
+        def autocorrect_sclass(corrector, node)
+          corrector.remove(
+            range_between(node.loc.keyword.begin_pos, node.identifier.source_range.end_pos)
+          )
+          corrector.remove(node.loc.end)
+        end
 
         def class_convertible_to_module?(class_node)
           nodes = class_elements(class_node)

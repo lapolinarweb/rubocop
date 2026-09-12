@@ -88,7 +88,7 @@ module RuboCop
         CHECKED_OPTIONS_CONFIG = 'OnlyFor'
         VERSION_SPECIFIERS_OPTION = 'version_specifiers'
         RESTRICTIVE_VERSION_SPECIFIERS_OPTION = 'restrictive_version_specifiers'
-        RESTRICTIVE_VERSION_PATTERN = /<|~>/.freeze
+        RESTRICTIVE_VERSION_PATTERN = /\A\s*(?:<|~>|\d|=)/.freeze
         RESTRICT_ON_SEND = %i[gem].freeze
 
         def on_send(node)
@@ -124,12 +124,12 @@ module RuboCop
         end
 
         def preceding_comment?(node1, node2)
-          node1 && node2 && precede?(node2, node1) && comment_line?(node2.loc.expression.source)
+          node1 && node2 && precede?(node2, node1) && comment_line?(node2.source)
         end
 
         def ignored_gem?(node)
-          ignored_gems = Array(cop_config['IgnoredGems'])
-          ignored_gems.include?(node.first_argument.value)
+          allowed_gems = Array(cop_config['AllowedGems'])
+          allowed_gems.include?(node.first_argument.value)
         end
 
         def checked_options_present?(node)
@@ -150,10 +150,10 @@ module RuboCop
         # Version specifications that restrict all updates going forward. This excludes versions
         # like ">= 1.0" or "!= 2.0.3".
         def restrictive_version_specified_gem?(node)
-          return unless version_specified_gem?(node)
+          return false unless version_specified_gem?(node)
 
-          node.arguments
-              .any? { |arg| arg&.str_type? && RESTRICTIVE_VERSION_PATTERN.match?(arg.to_s) }
+          node.arguments[1..]
+              .any? { |arg| arg&.str_type? && RESTRICTIVE_VERSION_PATTERN.match?(arg.value) }
         end
 
         def contains_checked_options?(node)
@@ -161,9 +161,11 @@ module RuboCop
         end
 
         def gem_options(node)
-          return [] unless node.arguments.last&.type == :hash
+          return [] unless node.last_argument&.hash_type?
 
-          node.arguments.last.keys.map(&:value)
+          # Only literal keys carry an option name to check; a non-literal key
+          # (e.g. a variable or method call) has no `value` and must be skipped.
+          node.last_argument.keys.filter_map { |key| key.value if key.type?(:sym, :str) }
         end
       end
     end

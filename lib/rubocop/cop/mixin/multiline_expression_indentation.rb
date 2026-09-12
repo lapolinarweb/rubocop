@@ -17,19 +17,24 @@ module RuboCop
 
         lhs = left_hand_side(node.receiver)
         rhs = right_hand_side(node)
+        return unless rhs
+
         range = offending_range(node, lhs, rhs, style)
         check(range, node, lhs, rhs)
       end
+      alias on_csend on_send
 
       private
 
-      # In a chain of method calls, we regard the top send node as the base
+      # In a chain of method calls, we regard the top call node as the base
       # for indentation of all lines following the first. For example:
       # a.
       #   b c { block }.            <-- b is indented relative to a
       #   d                         <-- d is indented relative to a
       def left_hand_side(lhs)
-        lhs = lhs.parent while lhs.parent&.send_type? && lhs.parent.loc.dot
+        while lhs.parent&.call_type? && lhs.parent.loc.dot && !lhs.parent.assignment_method?
+          lhs = lhs.parent
+        end
         lhs
       end
 
@@ -118,12 +123,10 @@ module RuboCop
 
       def indented_keyword_expression(node)
         if node.for_type?
-          expression = node.collection
+          node.collection
         else
-          expression, = *node
+          node.children.first
         end
-
-        expression
       end
 
       def argument_in_method_call(node, kind) # rubocop:todo Metrics/CyclomaticComplexity
@@ -184,23 +187,20 @@ module RuboCop
 
       def assignment_rhs(node)
         case node.type
-        when :casgn   then _scope, _lhs, rhs = *node
-        when :op_asgn then _lhs, _op, rhs = *node
-        when :send    then rhs = node.last_argument
-        else               _lhs, rhs = *node
+        when :casgn, :op_asgn then node.rhs
+        when :send, :csend    then node.last_argument
+        else                       node.children.last
         end
-        rhs
       end
 
       def not_for_this_cop?(node)
         node.ancestors.any? do |ancestor|
-          grouped_expression?(ancestor) ||
-            inside_arg_list_parentheses?(node, ancestor)
+          grouped_expression?(ancestor) || inside_arg_list_parentheses?(node, ancestor)
         end
       end
 
       def grouped_expression?(node)
-        node.begin_type? && node.loc.respond_to?(:begin) && node.loc.begin
+        node.begin_type? && node.loc?(:begin) && node.loc.begin
       end
 
       def inside_arg_list_parentheses?(node, ancestor)

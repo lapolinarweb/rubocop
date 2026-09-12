@@ -13,6 +13,7 @@ doc
 .bundle
 Gemfile.lock
 Gemfile.local
+vendor/
 
 # rbenv
 .ruby-version
@@ -20,6 +21,9 @@ Gemfile.local
 # rspec
 /spec/examples.txt
 /.test_queue_stats
+
+# RuboCop
+.rubocop
 
 # jeweler generated
 pkg
@@ -60,12 +64,14 @@ TAGS
 # For redcar:
 #.redcar
 
-# For rubinius:
-#*.rbc
-
 # For bundle binstubs
 bin/*
-!bin/rubocop-profile
 
 # For stackprof or others
 tmp/*
+
+# For vscode:
+.vscode
+
+# For Claude Code:
+.claude/

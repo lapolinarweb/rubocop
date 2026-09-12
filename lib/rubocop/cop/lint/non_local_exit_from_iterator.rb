@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Lint
-      # This cop checks for non-local exits from iterators without a return
+      # Checks for non-local exits from iterators without a return
       # value. It registers an offense under these conditions:
       #
       # * No value is returned,
@@ -46,7 +46,7 @@ module RuboCop
         def on_return(return_node)
           return if return_value?(return_node)
 
-          return_node.each_ancestor(:block, :def, :defs) do |node|
+          return_node.each_ancestor(:any_block, :any_def) do |node|
             break if scoped_node?(node)
 
             # if a proc is passed to `Module#define_method` or
@@ -54,7 +54,7 @@ module RuboCop
             # non-local exit error
             break if define_method?(node.send_node)
 
-            next unless node.arguments?
+            next if node.argument_list.empty?
 
             if chained_send?(node.send_node)
               add_offense(return_node.loc.keyword)
@@ -66,7 +66,7 @@ module RuboCop
         private
 
         def scoped_node?(node)
-          node.def_type? || node.defs_type? || node.lambda?
+          node.any_def_type? || node.lambda?
         end
 
         def return_value?(return_node)
@@ -74,7 +74,7 @@ module RuboCop
         end
 
         # @!method chained_send?(node)
-        def_node_matcher :chained_send?, '(send !nil? ...)'
+        def_node_matcher :chained_send?, '(call !nil? ...)'
 
         # @!method define_method?(node)
         def_node_matcher :define_method?, <<~PATTERN

@@ -15,6 +15,74 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
         puts a unless a = 123
       RUBY
     end
+
+    it 'accepts when the reassignment is nested in the condition expression' do
+      expect_no_offenses(<<~RUBY)
+        a = nil
+        puts a if (a = 123) != 0
+      RUBY
+    end
+
+    it 'accepts when the reference is inside string interpolation' do
+      expect_no_offenses(<<~'RUBY')
+        nerrs = 0
+        raise "there were #{nerrs}" if (nerrs = get_nerrs) != 0
+      RUBY
+    end
+
+    it 'still registers a useless assignment that follows the modifier' do
+      expect_offense(<<~'RUBY')
+        a = 0
+        puts "x #{a}" if (a = 1) != 0
+        a = 2
+        ^ Useless assignment to variable - `a`.
+      RUBY
+    end
+
+    it 'still registers an earlier assignment shadowed before the modifier' do
+      expect_offense(<<~'RUBY')
+        a = nil
+        ^ Useless assignment to variable - `a`.
+        a = 5
+        puts "x #{a}" if (a = 123) != 0
+      RUBY
+    end
+
+    it 'does not suppress a same-named variable in a different scope' do
+      expect_offense(<<~'RUBY')
+        a = nil
+        ^ Useless assignment to variable - `a`.
+        def foo
+          a = 10
+          puts "x #{a}" if (a = 1) != 0
+        end
+      RUBY
+    end
+
+    it 'still registers an earlier assignment when the reference follows the modifier' do
+      expect_offense(<<~RUBY)
+        x = 0
+        ^ Useless assignment to variable - `x`.
+        y = 1 if (x = 2) > 0
+        puts x, y
+      RUBY
+    end
+  end
+
+  context 'when a variable is assigned and assigned again in a modifier loop condition' do
+    it 'accepts with parentheses' do
+      expect_no_offenses(<<~RUBY)
+        a = nil
+        puts a while (a = false)
+      RUBY
+    end
+
+    it 'accepts without parentheses' do
+      expect_no_offenses(<<~RUBY)
+        a = nil
+        puts a until a = true
+      RUBY
+    end
   end
 
   context 'when a variable is assigned and unreferenced in a method' do
@@ -26,6 +94,18 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
           def some_method
             foo = 2
             ^^^ Useless assignment to variable - `foo`.
+            bar = 3
+            puts bar
+          end
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        class SomeClass
+          foo = 1
+          puts foo
+          def some_method
+            2
             bar = 3
             puts bar
           end
@@ -44,6 +124,18 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
           def self.some_method
             foo = 2
             ^^^ Useless assignment to variable - `foo`.
+            bar = 3
+            puts bar
+          end
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        class SomeClass
+          foo = 1
+          puts foo
+          def self.some_method
+            2
             bar = 3
             puts bar
           end
@@ -68,6 +160,19 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
           end
         end
       RUBY
+
+      expect_correction(<<~RUBY)
+        1.times do
+          foo = 1
+          puts foo
+          instance = Object.new
+          def instance.some_method
+            2
+            bar = 3
+            puts bar
+          end
+        end
+      RUBY
     end
   end
 
@@ -80,6 +185,18 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
           class SomeClass
             foo = 2
             ^^^ Useless assignment to variable - `foo`.
+            bar = 3
+            puts bar
+          end
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        1.times do
+          foo = 1
+          puts foo
+          class SomeClass
+            2
             bar = 3
             puts bar
           end
@@ -104,6 +221,19 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
           end
         end
       RUBY
+
+      expect_correction(<<~RUBY)
+        1.times do
+          foo = 1
+          puts foo
+          array_class = Array
+          class SomeClass < array_class
+            2
+            bar = 3
+            puts bar
+          end
+        end
+      RUBY
     end
   end
 
@@ -117,6 +247,19 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
           class << instance
             foo = 2
             ^^^ Useless assignment to variable - `foo`.
+            bar = 3
+            puts bar
+          end
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        1.times do
+          foo = 1
+          puts foo
+          instance = Object.new
+          class << instance
+            2
             bar = 3
             puts bar
           end
@@ -139,6 +282,18 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
           end
         end
       RUBY
+
+      expect_correction(<<~RUBY)
+        1.times do
+          foo = 1
+          puts foo
+          module SomeModule
+            2
+            bar = 3
+            puts bar
+          end
+        end
+      RUBY
     end
   end
 
@@ -152,11 +307,87 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
     end
   end
 
+  context 'when a variable is assigned and unreferenced in `for`' do
+    it 'registers an offense' do
+      expect_offense(<<~RUBY)
+        for item in items
+            ^^^^ Useless assignment to variable - `item`. Did you mean `items`?
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        for _ in items
+        end
+      RUBY
+    end
+  end
+
+  context 'when a variable is assigned before `for`' do
+    it 'registers an offense when it is not referenced' do
+      expect_offense(<<~RUBY)
+        node = foo
+        ^^^^ Useless assignment to variable - `node`.
+        for node in bar
+          return node if baz?
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        foo
+        for node in bar
+          return node if baz?
+        end
+      RUBY
+    end
+
+    it 'registers no offense when the variable is referenced in the collection' do
+      expect_no_offenses(<<~RUBY)
+        node = foo
+        for node in node.children
+          return node if bar?
+        end
+      RUBY
+    end
+  end
+
+  context 'when a variable is assigned and unreferenced in `for` with multiple variables' do
+    it 'registers an offense' do
+      expect_offense(<<~RUBY)
+        for i, j in items
+               ^ Useless assignment to variable - `j`.
+          do_something(i)
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        for i, _ in items
+          do_something(i)
+        end
+      RUBY
+    end
+  end
+
+  context 'when a variable is assigned and referenced in `for`' do
+    it 'does not register an offense' do
+      expect_no_offenses(<<~RUBY)
+        for item in items
+          do_something(item)
+        end
+      RUBY
+    end
+  end
+
   context 'when a variable is assigned and unreferenced in top level' do
     it 'registers an offense' do
       expect_offense(<<~RUBY)
         foo = 1
         ^^^ Useless assignment to variable - `foo`.
+        bar = 2
+        puts bar
+      RUBY
+
+      expect_correction(<<~RUBY)
+        1
         bar = 2
         puts bar
       RUBY
@@ -169,6 +400,21 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
         foo ||= 1
         ^^^ Useless assignment to variable - `foo`. Use `||` instead of `||=`.
       RUBY
+
+      expect_no_corrections
+    end
+  end
+
+  context 'when a variable is first assigned with `&&=`' do
+    it 'registers an offense but does not autocorrect (it would raise `NameError`)' do
+      expect_offense(<<~RUBY)
+        def foo
+          bar &&= 1
+          ^^^ Useless assignment to variable - `bar`. Use `&&` instead of `&&=`.
+        end
+      RUBY
+
+      expect_no_corrections
     end
   end
 
@@ -181,6 +427,15 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
           bar = 2
           foo = 3
           ^^^ Useless assignment to variable - `foo`.
+          puts bar
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        def some_method
+          1
+          bar = 2
+          3
           puts bar
         end
       RUBY
@@ -197,6 +452,14 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
           ^^^ Useless assignment to variable - `foo`.
         end
       RUBY
+
+      expect_correction(<<~RUBY)
+        def some_method
+          foo = 1
+          puts foo
+          3
+        end
+      RUBY
     end
   end
 
@@ -206,6 +469,14 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
         def some_method
           foo = 1
           ^^^ Useless assignment to variable - `foo`.
+          foo = 3
+          puts foo
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        def some_method
+          1
           foo = 3
           puts foo
         end
@@ -265,6 +536,34 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
           ^^^ Useless assignment to variable - `foo`.
         end
       RUBY
+
+      expect_correction(<<~RUBY)
+        1.times do |i; foo|
+          2
+        end
+      RUBY
+    end
+
+    it 'registers offenses for self assignment in numblock', :ruby27 do
+      expect_offense(<<~RUBY)
+        do_something { foo += _1 }
+                       ^^^ Useless assignment to variable - `foo`. Use `+` instead of `+=`.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        do_something { foo + _1 }
+      RUBY
+    end
+
+    it 'registers offenses for self assignment in itblock', :ruby34 do
+      expect_offense(<<~RUBY)
+        do_something { foo += it }
+                       ^^^ Useless assignment to variable - `foo`. Use `+` instead of `+=`.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        do_something { foo + it }
+      RUBY
     end
   end
 
@@ -275,6 +574,14 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
           while true
             foo = 1
             ^^^ Useless assignment to variable - `foo`.
+          end
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        def some_method
+          while true
+            1
           end
         end
       RUBY
@@ -333,10 +640,119 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
     end
   end
 
+  context 'when a variable is reassigned before a block' do
+    it 'registers an offense' do
+      expect_offense(<<~RUBY)
+        def some_method
+          foo = 1
+          ^^^ Useless assignment to variable - `foo`.
+          foo = 2
+          bar {
+            foo = 3
+          }
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        def some_method
+          1
+          foo = 2
+          bar {
+            foo = 3
+          }
+        end
+      RUBY
+    end
+  end
+
+  context 'when a variable is reassigned in another branch before a block' do
+    it 'accepts' do
+      expect_no_offenses(<<~RUBY)
+        def some_method
+          if baz
+            foo = 1
+          else
+            foo = 2
+            bar {
+              foo = 3
+            }
+          end
+
+          foo
+        end
+      RUBY
+    end
+  end
+
+  context 'when a variable is reassigned in another case branch before a block' do
+    it 'accepts' do
+      expect_no_offenses(<<~RUBY)
+        def some_method
+          case baz
+          when 1
+            foo = 1
+          else
+            foo = 2
+            bar {
+              foo = 3
+            }
+          end
+
+          foo
+        end
+      RUBY
+    end
+  end
+
+  context 'when assigning in branch' do
+    it 'accepts' do
+      expect_no_offenses(<<~RUBY)
+        def some_method
+          changed = false
+
+          if Random.rand > 1
+            changed = true
+          end
+
+          [].each do
+            changed = true
+          end
+
+          puts changed
+        end
+      RUBY
+    end
+  end
+
+  context 'when assigning in case' do
+    it 'accepts' do
+      expect_no_offenses(<<~RUBY)
+        def some_method
+          changed = false
+
+          case Random.rand
+          when 0.5
+            changed = true
+          when 1..20
+            changed = false
+          when 21..70
+            changed = true
+          end
+
+          [].each do
+            changed = true
+          end
+
+          puts changed
+        end
+      RUBY
+    end
+  end
+
   context "when a variable is reassigned in loop body but won't " \
           'be referenced either next iteration or loop condition' do
     it 'registers an offense' do
-      pending 'Requires an advanced logic that checks whether the return ' \
+      pending 'Requires advanced logic that checks whether the return ' \
               'value of an operator assignment is used or not.'
       expect_offense(<<~RUBY)
         def some_method
@@ -347,6 +763,20 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
             total += 1
             foo += 1
             ^^^ Useless assignment to variable - `foo`.
+          end
+
+          total
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        def some_method
+          total = 0
+          foo = 0
+
+          while total < 100
+            total += 1
+            foo = 1
           end
 
           total
@@ -368,6 +798,16 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
           end
         end
       RUBY
+
+      expect_correction(<<~RUBY)
+        while true
+          def some_method
+            foo = 1
+            puts foo
+            3
+          end
+        end
+      RUBY
     end
   end
 
@@ -385,6 +825,17 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
           end
         end
       RUBY
+
+      expect_correction(<<~RUBY)
+        foo = 1
+
+        while foo < 100
+          foo += 1
+          def some_method
+            1
+          end
+        end
+      RUBY
     end
   end
 
@@ -398,10 +849,18 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
           end
         end
       RUBY
+
+      expect_correction(<<~RUBY)
+        def some_method(flag)
+          if flag
+            1
+          end
+        end
+      RUBY
     end
   end
 
-  context 'when a unreferenced variable is reassigned in same branch ' \
+  context 'when an unreferenced variable is reassigned in same branch ' \
           'and referenced after the branching' do
     it 'registers an offense for the unreferenced assignment' do
       expect_offense(<<~RUBY)
@@ -409,6 +868,17 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
           if flag
             foo = 1
             ^^^ Useless assignment to variable - `foo`.
+            foo = 2
+          end
+
+          foo
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        def some_method(flag)
+          if flag
+            1
             foo = 2
           end
 
@@ -550,6 +1020,17 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
           end
         end
       RUBY
+
+      expect_correction(<<~RUBY)
+        def some_method(flag)
+          1
+
+          if flag
+            foo = 2
+            puts foo
+          end
+        end
+      RUBY
     end
   end
 
@@ -566,11 +1047,22 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
           end
         end
       RUBY
+
+      expect_correction(<<~RUBY)
+        def some_method(flag)
+          if flag
+            2
+          else
+            foo = 3
+            puts foo
+          end
+        end
+      RUBY
     end
   end
 
-  context 'when a variable is reassigned and unreferenced in a if branch' \
-          ' while the variable is referenced in the paired else branch' do
+  context 'when a variable is reassigned and unreferenced in an if branch ' \
+          'while the variable is referenced in the paired else branch' do
     it 'registers an offense for the reassignment in the if branch' do
       expect_offense(<<~RUBY)
         def some_method(flag)
@@ -580,6 +1072,19 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
             puts foo
             foo = 2
             ^^^ Useless assignment to variable - `foo`.
+          else
+            puts foo
+          end
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        def some_method(flag)
+          foo = 1
+
+          if flag
+            puts foo
+            2
           else
             puts foo
           end
@@ -599,10 +1104,18 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
           puts foo
         end
       RUBY
+
+      expect_correction(<<~RUBY)
+        if flag
+          1
+        else
+          puts foo
+        end
+      RUBY
     end
   end
 
-  context "when there's an unreferenced reassignment in a if branch " \
+  context "when there's an unreferenced reassignment in an if branch " \
           'while the variable is referenced in the paired elsif branch' do
     it 'registers an offense for the reassignment in the if branch' do
       expect_offense(<<~RUBY)
@@ -618,10 +1131,23 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
           end
         end
       RUBY
+
+      expect_correction(<<~RUBY)
+        def some_method(flag_a, flag_b)
+          foo = 1
+
+          if flag_a
+            puts foo
+            2
+          elsif flag_b
+            puts foo
+          end
+        end
+      RUBY
     end
   end
 
-  context "when there's an unreferenced reassignment in a if branch " \
+  context "when there's an unreferenced reassignment in an if branch " \
           'while the variable is referenced in a case branch ' \
           'in the paired else branch' do
     it 'registers an offense for the reassignment in the if branch' do
@@ -641,10 +1167,26 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
           end
         end
       RUBY
+
+      expect_correction(<<~RUBY)
+        def some_method(flag_a, flag_b)
+          foo = 1
+
+          if flag_a
+            puts foo
+            2
+          else
+            case
+            when flag_b
+              puts foo
+            end
+          end
+        end
+      RUBY
     end
   end
 
-  context 'when an assignment in a if branch is referenced in another if branch' do
+  context 'when an assignment in an if branch is referenced in another if branch' do
     it 'accepts' do
       expect_no_offenses(<<~RUBY)
         def some_method(flag_a, flag_b)
@@ -683,6 +1225,12 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
           ^^^ Useless assignment to variable - `foo`.
         end
       RUBY
+
+      expect_correction(<<~RUBY)
+        def some_method(flag)
+          1 unless foo
+        end
+      RUBY
     end
   end
 
@@ -697,7 +1245,7 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
     end
   end
 
-  context 'when a unreferenced variable is reassigned ' \
+  context 'when an unreferenced variable is reassigned ' \
           'on the left side of && and referenced after the &&' do
     it 'registers an offense for the unreferenced assignment' do
       expect_offense(<<~RUBY)
@@ -708,10 +1256,18 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
           foo
         end
       RUBY
+
+      expect_correction(<<~RUBY)
+        def some_method
+          1
+          (foo = do_something_returns_object_or_nil) && do_something
+          foo
+        end
+      RUBY
     end
   end
 
-  context 'when a unreferenced variable is reassigned ' \
+  context 'when an unreferenced variable is reassigned ' \
           'on the right side of && and referenced after the &&' do
     it 'accepts' do
       expect_no_offenses(<<~RUBY)
@@ -719,6 +1275,45 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
           foo = 1
           do_something_returns_object_or_nil && foo = 2
           foo
+        end
+      RUBY
+    end
+  end
+
+  context 'when an unreferenced variable is reassigned ' \
+          'on the right side of &&= and referenced after the &&=' do
+    it 'accepts' do
+      expect_no_offenses(<<~RUBY)
+        def some_method(bar)
+          foo = 1
+          bar &&= (foo = 2)
+          [foo, bar]
+        end
+      RUBY
+    end
+  end
+
+  context 'when an unreferenced variable is reassigned ' \
+          'on the right side of ||= and referenced after the ||=' do
+    it 'accepts' do
+      expect_no_offenses(<<~RUBY)
+        def some_method(bar)
+          foo = 1
+          bar ||= (foo = 2)
+          [foo, bar]
+        end
+      RUBY
+    end
+  end
+
+  context 'when an unreferenced variable is reassigned ' \
+          'on the right side of += and referenced after the +=' do
+    it 'accepts' do
+      expect_no_offenses(<<~RUBY)
+        def some_method(bar)
+          foo = 1
+          bar += (foo = 2)
+          [foo, bar]
         end
       RUBY
     end
@@ -732,6 +1327,19 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
           foo = foo.map { |i| i + 1 }
           puts foo
         end
+      RUBY
+    end
+
+    it 'registers an offense when the reassignment is the last statement' do
+      expect_offense(<<~RUBY)
+        foo = [1, 2]
+        foo = foo.map { |i| i + 1 }
+        ^^^ Useless assignment to variable - `foo`.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        foo = [1, 2]
+        foo.map { |i| i + 1 }
       RUBY
     end
   end
@@ -772,6 +1380,14 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
           foo
         end
       RUBY
+
+      expect_correction(<<~RUBY)
+        def some_method
+          foo = 1
+          foo += 2
+          foo
+        end
+      RUBY
     end
   end
 
@@ -795,6 +1411,8 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
           ^^^ Useless assignment to variable - `foo`. Use `||` instead of `||=`.
         end
       RUBY
+
+      expect_no_corrections
     end
   end
 
@@ -808,6 +1426,8 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
           some_return_value
         end
       RUBY
+
+      expect_no_corrections
     end
   end
 
@@ -820,6 +1440,109 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
           puts foo
         end
       RUBY
+
+      expect_correction(<<~RUBY)
+        def some_method
+          foo, _ = do_something
+          puts foo
+        end
+      RUBY
+    end
+  end
+
+  context 'when a variable is assigned as an argument to a method given to multiple assignment' do
+    it 'registers an offense' do
+      expect_offense(<<~RUBY)
+        def some_method
+          a, b = func(c = 3)
+                      ^ Useless assignment to variable - `c`.
+          [a, b]
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        def some_method
+          a, b = func(3)
+          [a, b]
+        end
+      RUBY
+    end
+  end
+
+  context 'when a variable is assigned as an argument to a method given to multiple assignment and later used' do
+    it 'does not register an offense' do
+      expect_no_offenses(<<~RUBY)
+        def some_method
+          a, b = func(c = 3)
+          [a, b, c]
+        end
+      RUBY
+    end
+  end
+
+  context 'when variables are assigned using chained assignment and remain unreferenced' do
+    it 'registers an offense' do
+      expect_offense(<<~RUBY)
+        def some_method
+          foo = bar = do_something
+          ^^^ Useless assignment to variable - `foo`.
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        def some_method
+          bar = do_something
+        end
+      RUBY
+    end
+  end
+
+  context 'when same name variables are assigned using chained assignment' do
+    it 'registers an offense' do
+      expect_offense(<<~RUBY)
+        def some_method
+          foo = foo = do_something
+          ^^^ Useless assignment to variable - `foo`.
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        def some_method
+          foo = do_something
+        end
+      RUBY
+    end
+  end
+
+  context 'when variables are assigned using unary operator in chained assignment and remain unreferenced' do
+    it 'registers an offense' do
+      expect_offense(<<~RUBY)
+        def some_method
+          foo = -bar = do_something
+          ^^^ Useless assignment to variable - `foo`.
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        def some_method
+          -bar = do_something
+        end
+      RUBY
+    end
+  end
+
+  context 'when variables are assigned with sequential assignment using the comma operator and unreferenced' do
+    it 'registers an offense' do
+      expect_offense(<<~RUBY)
+        def some_method
+          foo = 1, bar = 2
+          ^^^ Useless assignment to variable - `foo`.
+                   ^^^ Useless assignment to variable - `bar`.
+        end
+      RUBY
+
+      # NOTE: Removing the unused variables causes a syntax error, so it can't be autocorrected.
+      expect_no_corrections
     end
   end
 
@@ -831,6 +1554,97 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
           foo = 1
           foo, bar = do_something(foo)
           puts foo, bar
+        end
+      RUBY
+    end
+  end
+
+  context 'when part of a multiple assignment is enclosed in parentheses' do
+    it 'registers an offense when the variable in parentheses is not used' do
+      expect_offense(<<~RUBY)
+        def some_method
+          foo, (bar, baz) = do_something
+                     ^^^ Useless assignment to variable - `baz`. Use `_` or `_baz` as a variable name to indicate that it won't be used.
+          puts foo, bar
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        def some_method
+          foo, (bar, _) = do_something
+          puts foo, bar
+        end
+      RUBY
+    end
+
+    it 'registers an offense when the variable in nested parentheses is not used' do
+      expect_offense(<<~RUBY)
+        def some_method
+          foo, (bar, (baz, qux)) = do_something
+                           ^^^ Useless assignment to variable - `qux`. Use `_` or `_qux` as a variable name to indicate that it won't be used.
+          puts foo, bar, baz
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        def some_method
+          foo, (bar, (baz, _)) = do_something
+          puts foo, bar, baz
+        end
+      RUBY
+    end
+  end
+
+  context 'when part of a multiple assignment is enclosed in parentheses with splat' do
+    it 'registers an offense when the variable is not used' do
+      expect_offense(<<~RUBY)
+        def some_method
+          (foo, bar), *baz = do_something
+                       ^^^ Useless assignment to variable - `baz`. Use `_` or `_baz` as a variable name to indicate that it won't be used.
+          puts foo, bar
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        def some_method
+          (foo, bar), *_ = do_something
+          puts foo, bar
+        end
+      RUBY
+    end
+
+    it 'registers an offense when the variable is not used in nested assignment' do
+      expect_offense(<<~RUBY)
+        def some_method
+          foo, (*bar, baz) = do_something
+                 ^^^ Useless assignment to variable - `bar`. Use `_` or `_bar` as a variable name to indicate that it won't be used.
+          puts foo, baz
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        def some_method
+          foo, (*_, baz) = do_something
+          puts foo, baz
+        end
+      RUBY
+    end
+  end
+
+  context 'when a variable is assigned with rest assignment and unreferenced' do
+    it 'registers an offense' do
+      expect_offense(<<~RUBY)
+        def some_method
+          foo, *bar = do_something
+                ^^^ Useless assignment to variable - `bar`. Use `_` or `_bar` as a variable name to indicate that it won't be used.
+          puts foo
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        def some_method
+          foo, *_ = do_something
+          puts foo
         end
       RUBY
     end
@@ -865,6 +1679,15 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
           do_something
           foo = true
           ^^^ Useless assignment to variable - `foo`.
+        rescue
+          do_anything
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        begin
+          do_something
+          true
         rescue
           do_anything
         end
@@ -960,6 +1783,19 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
 
         puts foo
       RUBY
+
+      expect_correction(<<~RUBY)
+        foo = false
+
+        begin
+          do_something
+        rescue
+          true
+          foo = true
+        end
+
+        puts foo
+      RUBY
     end
   end
 
@@ -981,6 +1817,21 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
 
         puts foo
       RUBY
+
+      expect_correction(<<~RUBY)
+        foo = false
+
+        begin
+          do_something
+        rescue
+          true
+          foo = true
+        ensure
+          do_anything
+        end
+
+        puts foo
+      RUBY
     end
   end
 
@@ -995,6 +1846,19 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
         ensure
           foo = true
           ^^^ Useless assignment to variable - `foo`.
+          foo = true
+        end
+
+        puts foo
+      RUBY
+
+      expect_correction(<<~RUBY)
+        begin
+          do_something
+        rescue
+          do_anything
+        ensure
+          true
           foo = true
         end
 
@@ -1059,6 +1923,23 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
 
         puts foo
       RUBY
+
+      expect_correction(<<~RUBY)
+        begin
+          do_something
+          :in_begin
+        rescue FirstError
+          :in_first_rescue
+        rescue SecondError
+          :in_second_rescue
+        else
+          :in_else
+        ensure
+          foo = :in_ensure
+        end
+
+        puts foo
+      RUBY
     end
   end
 
@@ -1072,6 +1953,34 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
                              ^^^^^ Useless assignment to variable - `error`.
         rescue SecondError
           p error # => nil
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        begin
+          do_something
+        rescue FirstError
+        rescue SecondError
+          p error # => nil
+        end
+      RUBY
+    end
+  end
+
+  context 'when a rescued error variable is not used and no exception type is specified' do
+    it 'registers an offense' do
+      expect_offense(<<~RUBY)
+        begin
+          do_something
+        rescue => error
+                  ^^^^^ Useless assignment to variable - `error`.
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        begin
+          do_something
+        rescue
         end
       RUBY
     end
@@ -1097,6 +2006,13 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
           super
         end
       RUBY
+
+      expect_correction(<<~RUBY)
+        def some_method(bar)
+          1
+          super
+        end
+      RUBY
     end
   end
 
@@ -1109,6 +2025,13 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
           super(bar)
         end
       RUBY
+
+      expect_correction(<<~RUBY)
+        def some_method(foo, bar)
+          1
+          super(bar)
+        end
+      RUBY
     end
   end
 
@@ -1117,6 +2040,10 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
       expect_offense(<<~RUBY)
         /(?<foo>\w+)/ =~ 'FOO'
         ^^^^^^^^^^^^ Useless assignment to variable - `foo`.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        /(?:\w+)/ =~ 'FOO'
       RUBY
     end
   end
@@ -1127,6 +2054,12 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
         def some_method
           /(?<foo>\w+)/ =~ 'FOO'
           ^^^^^^^^^^^^^ Useless assignment to variable - `foo`.
+        end
+      RUBY
+
+      expect_correction(<<~'RUBY')
+        def some_method
+          /(?:\w+)/ =~ 'FOO'
         end
       RUBY
     end
@@ -1156,6 +2089,72 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
     end
   end
 
+  context 'when a pattern match variable is assigned with `in` and referenced in a block', :ruby27 do
+    it 'does not register an offense' do
+      expect_no_offenses(<<~RUBY)
+        def some_method
+          foo in { bar: bar }
+          baz { bar -= 1 }
+          foo
+        end
+      RUBY
+    end
+  end
+
+  context 'when a pattern match variable is assigned with `in` and unreferenced in a block', :ruby27 do
+    it 'registers an offense' do
+      expect_offense(<<~RUBY)
+        def some_method
+          foo in { bar: bar }
+          baz { qux -= 1 }
+                ^^^ Useless assignment to variable - `qux`. Use `-` instead of `-=`.
+          foo
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        def some_method
+          foo in { bar: bar }
+          baz { qux - 1 }
+          foo
+        end
+      RUBY
+    end
+  end
+
+  context 'when a pattern match variable is assigned with `=>` and referenced in a block', :ruby30 do
+    it 'does not register an offense' do
+      expect_no_offenses(<<~RUBY)
+        def some_method
+          foo => { bar: bar }
+          baz { bar -= 1 }
+          foo
+        end
+      RUBY
+    end
+  end
+
+  context 'when a pattern match variable is assigned with `=>` and unreferenced in a block', :ruby30 do
+    it 'registers an offense' do
+      expect_offense(<<~RUBY)
+        def some_method
+          foo => { bar: bar }
+          baz { qux -= 1 }
+                ^^^ Useless assignment to variable - `qux`. Use `-` instead of `-=`.
+          foo
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        def some_method
+          foo => { bar: bar }
+          baz { qux - 1 }
+          foo
+        end
+      RUBY
+    end
+  end
+
   context 'when a variable is assigned in begin and referenced outside' do
     it 'accepts' do
       expect_no_offenses(<<~RUBY)
@@ -1175,6 +2174,15 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
         def some_method
           foo = 1
           ^^^ Useless assignment to variable - `foo`.
+          1.times do |foo|
+            puts foo
+          end
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        def some_method
+          1
           1.times do |foo|
             puts foo
           end
@@ -1231,7 +2239,7 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
     end
   end
 
-  context 'when a optional keyword method argument is not used' do
+  context 'when an optional keyword method argument is not used' do
     it 'accepts' do
       expect_no_offenses(<<~RUBY)
         def some_method(name: value)
@@ -1283,6 +2291,10 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
         foo = 1
         ^^^ Useless assignment to variable - `foo`.
       RUBY
+
+      expect_correction(<<~RUBY)
+        1
+      RUBY
     end
   end
 
@@ -1304,6 +2316,11 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
                       ^^^ Useless assignment to variable - `foo`.
           end
         RUBY
+
+        expect_correction(<<~RUBY)
+          some_method(1) do
+          end
+        RUBY
       end
     end
   end
@@ -1314,6 +2331,64 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
         pattern = '*.rb'
         Dir.glob(pattern).map do |path|
         end
+      RUBY
+    end
+  end
+
+  context 'when a useless assignment wraps a block containing another useless assignment' do
+    it 'registers offenses and corrects' do
+      expect_offense(<<~RUBY)
+        foo = do_something {
+        ^^^ Useless assignment to variable - `foo`.
+          bar = do_something_else
+          ^^^ Useless assignment to variable - `bar`.
+        }
+      RUBY
+
+      expect_correction(<<~RUBY)
+        do_something {
+          do_something_else
+        }
+      RUBY
+    end
+  end
+
+  context 'using numbered block parameter', :ruby27 do
+    it 'does not register an offense when the variable is used' do
+      expect_no_offenses(<<~RUBY)
+        var = 42
+
+        do_something { _1 == var }
+      RUBY
+    end
+
+    it 'does not register an offense when the variable is assigned and later used' do
+      expect_no_offenses(<<~RUBY)
+        var = nil
+
+        do_something { var = _1 }
+
+        something_else(var)
+      RUBY
+    end
+  end
+
+  context 'using `it` block parameter', :ruby34 do
+    it 'does not register an offense when the variable is used' do
+      expect_no_offenses(<<~RUBY)
+        var = 42
+
+        do_something { it == var }
+      RUBY
+    end
+
+    it 'does not register an offense when the variable is assigned and later used' do
+      expect_no_offenses(<<~RUBY)
+        var = nil
+
+        do_something { var = it }
+
+        something_else(var)
       RUBY
     end
   end
@@ -1345,6 +2420,14 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
             puts environment
           end
         RUBY
+
+        expect_correction(<<~RUBY)
+          def some_method
+            {}
+            another_symbol
+            puts environment
+          end
+        RUBY
       end
     end
 
@@ -1359,6 +2442,15 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
             puts environment
           end
         RUBY
+
+        expect_correction(<<~RUBY)
+          def some_method
+            environment = nil
+            another_symbol
+            {}
+            puts environment
+          end
+        RUBY
       end
     end
 
@@ -1368,6 +2460,14 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
           def some_method
             enviromnent = {}
             ^^^^^^^^^^^ Useless assignment to variable - `enviromnent`.
+            another_symbol
+            puts envelope
+          end
+        RUBY
+
+        expect_correction(<<~RUBY)
+          def some_method
+            {}
             another_symbol
             puts envelope
           end
@@ -1385,6 +2485,14 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
             puts self.environment
           end
         RUBY
+
+        expect_correction(<<~RUBY)
+          def some_method
+            {}
+            another_symbol
+            puts self.environment
+          end
+        RUBY
       end
     end
 
@@ -1398,6 +2506,14 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
             puts environment(1)
           end
         RUBY
+
+        expect_correction(<<~RUBY)
+          def some_method
+            {}
+            another_symbol
+            puts environment(1)
+          end
+        RUBY
       end
     end
 
@@ -1407,6 +2523,16 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
           class SomeClass
             enviromnent = {}
             ^^^^^^^^^^^ Useless assignment to variable - `enviromnent`.
+
+            def some_method(environment)
+              puts environment
+            end
+          end
+        RUBY
+
+        expect_correction(<<~RUBY)
+          class SomeClass
+            {}
 
             def some_method(environment)
               puts environment
@@ -1428,6 +2554,187 @@ RSpec.describe RuboCop::Cop::Lint::UselessAssignment, :config do
         end
 
         do_something(res)
+      RUBY
+    end
+  end
+
+  context 'when duplicate assignments in the loop body' do
+    context 'while loop' do
+      it 'registers an offense' do
+        expect_offense(<<~RUBY)
+          while
+            foo = 1
+            ^^^ Useless assignment to variable - `foo`.
+            foo = 1
+            p foo
+          end
+        RUBY
+
+        expect_correction(<<~RUBY)
+          while
+            1
+            foo = 1
+            p foo
+          end
+        RUBY
+      end
+    end
+
+    context 'while loop with parenthesized body' do
+      it 'registers an offense' do
+        expect_offense(<<~RUBY)
+          while
+            (
+              foo = 1
+              ^^^ Useless assignment to variable - `foo`.
+              foo = 1
+            )
+            p foo
+          end
+        RUBY
+
+        expect_correction(<<~RUBY)
+          while
+            (
+              1
+              foo = 1
+            )
+            p foo
+          end
+        RUBY
+      end
+    end
+  end
+
+  context 'when duplicate assignments in `if` branch inside a loop' do
+    context 'while loop' do
+      it 'does not register an offense' do
+        expect_no_offenses(<<~RUBY)
+          while
+            if cond
+              var += 1
+            else
+              var -= 1
+            end
+          end
+        RUBY
+      end
+    end
+  end
+
+  context 'when duplicate assignments appear in `if` branch inside a loop and the variable is used outside `while` loop' do
+    context 'while loop' do
+      it 'does not register an offense' do
+        expect_no_offenses(<<~RUBY)
+          var = false
+          while loop_cond
+            if var
+              var = false
+              foo
+            else
+              var = true
+              bar
+            end
+          end
+        RUBY
+      end
+    end
+  end
+
+  context 'when duplicate assignments appear in nested `if` branches inside a loop and the variable is used outside `while` loop' do
+    context 'while loop' do
+      it 'does not register an offense' do
+        expect_no_offenses(<<~RUBY)
+          def parse_options
+            index = -1
+            while loop_cond
+              index += 1
+
+              if first_cond
+                index += 1
+              else
+                if second_cond
+                  index += 1
+                else
+                  if third_cond
+                    index += 1
+                  end
+                end
+              end
+            end
+          end
+        RUBY
+      end
+    end
+  end
+
+  context 'when duplicate assignments in `rescue` branch with `retry`' do
+    it 'does not register an offense' do
+      expect_no_offenses(<<~RUBY)
+        def testing
+        rescue Foo
+          attempts += 1
+          retry
+        rescue Bar
+          attempts += 1
+        end
+      RUBY
+    end
+  end
+
+  context 'when duplicate assignments in a case branch inside a loop' do
+    context 'while loop' do
+      it 'does not register an offense' do
+        expect_no_offenses(<<~RUBY)
+          while
+            case
+            when fizz then foo += 1
+            when buzz then foo -= 1
+            end
+          end
+        RUBY
+      end
+    end
+  end
+
+  context 'when duplicate assignments in a case-match branch inside a loop', :ruby27 do
+    context 'while loop' do
+      it 'does not register an offense' do
+        expect_no_offenses(<<~RUBY)
+          while
+            case expr
+            in fizz then foo += 1
+            in buzz then foo -= 1
+            end
+          end
+        RUBY
+      end
+    end
+  end
+
+  context 'when a variable is assigned in loop body and used in loop condition' do
+    it 'does not register an offense when variable is used directly in condition' do
+      expect_no_offenses(<<~RUBY)
+        keep_going = true
+        while keep_going
+          keep_going = false
+          if rand < 0.5
+            keep_going = true
+          end
+        end
+      RUBY
+    end
+
+    it 'does not register an offense when variable is used in condition expression' do
+      expect_no_offenses(<<~RUBY)
+        try = 0
+        while try < max_tries
+          try += 1
+          next if weak?
+          try = 0
+        end
+
+        raise(CombinationPoolExhaustedError)
       RUBY
     end
   end

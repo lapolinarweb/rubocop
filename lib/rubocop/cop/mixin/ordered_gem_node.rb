@@ -10,7 +10,7 @@ module RuboCop
       def get_source_range(node, comments_as_separators)
         unless comments_as_separators
           first_comment = processed_source.ast_with_comments[node].first
-          return first_comment.loc.expression unless first_comment.nil?
+          return first_comment.source_range unless first_comment.nil?
         end
         node.source_range
       end
@@ -24,7 +24,7 @@ module RuboCop
         gem_canonical_name(string_a) < gem_canonical_name(string_b)
       end
 
-      def consecutive_lines(previous, current)
+      def consecutive_lines?(previous, current)
         first_line = get_source_range(current, treat_comments_as_separators).first_line
         previous.source_range.last_line == first_line - 1
       end

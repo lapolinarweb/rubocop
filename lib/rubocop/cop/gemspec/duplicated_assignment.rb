@@ -3,13 +3,14 @@
 module RuboCop
   module Cop
     module Gemspec
-      # An attribute assignment method calls should be listed only once
+      # An attribute assignment method call should be listed only once
       # in a gemspec.
       #
-      # Assigning to an attribute with the same name using `spec.foo =` will be
-      # an unintended usage. On the other hand, duplication of methods such
-      # as `spec.requirements`, `spec.add_runtime_dependency`, and others are
-      # permitted because it is the intended use of appending values.
+      # Assigning to an attribute with the same name using `spec.foo =` or
+      # `spec.attribute#[]=` will be an unintended usage. On the other hand,
+      # duplication of methods such as `spec.requirements`,
+      # `spec.add_runtime_dependency`, and others are permitted because it is
+      # the intended use of appending values.
       #
       # @example
       #   # bad
@@ -31,62 +32,77 @@ module RuboCop
       #
       #   # good
       #   Gem::Specification.new do |spec|
-      #     spec.add_runtime_dependency('parallel', '~> 1.10')
-      #     spec.add_runtime_dependency('parser', '>= 2.3.3.1', '< 3.0')
+      #     spec.add_dependency('parallel', '~> 1.10')
+      #     spec.add_dependency('parser', '>= 2.3.3.1', '< 3.0')
       #   end
+      #
+      #   # bad
+      #   Gem::Specification.new do |spec|
+      #     spec.metadata["key"] = "value"
+      #     spec.metadata["key"] = "value"
+      #   end
+      #
+      #   # good
+      #   Gem::Specification.new do |spec|
+      #     spec.metadata["key"] = "value"
+      #   end
+      #
       class DuplicatedAssignment < Base
         include RangeHelp
+        include GemspecHelp
 
-        MSG = '`%<assignment>s` method calls already given on line '\
+        MSG = '`%<assignment>s` method calls already given on line ' \
               '%<line_of_first_occurrence>d of the gemspec.'
-
-        # @!method gem_specification(node)
-        def_node_search :gem_specification, <<~PATTERN
-          (block
-            (send
-              (const
-                (const {cbase nil?} :Gem) :Specification) :new)
-            (args
-              (arg $_)) ...)
-        PATTERN
-
-        # @!method assignment_method_declarations(node)
-        def_node_search :assignment_method_declarations, <<~PATTERN
-          (send
-            (lvar #match_block_variable_name?) #assignment_method? ...)
-        PATTERN
 
         def on_new_investigation
           return if processed_source.blank?
 
-          duplicated_assignment_method_nodes.each do |nodes|
-            nodes[1..-1].each do |node|
-              register_offense(
-                node,
-                node.method_name,
-                nodes.first.first_line
-              )
-            end
-          end
+          process_assignment_method_nodes
+          process_indexed_assignment_method_nodes
         end
 
         private
 
-        def match_block_variable_name?(receiver_name)
-          gem_specification(processed_source.ast) do |block_variable_name|
-            return block_variable_name == receiver_name
+        def process_assignment_method_nodes
+          duplicated_assignment_method_nodes.each do |nodes|
+            nodes[1..].each do |node|
+              register_offense(node, node.method_name, nodes.first.first_line)
+            end
           end
         end
 
-        def assignment_method?(method_name)
-          method_name.to_s.end_with?('=')
+        def process_indexed_assignment_method_nodes
+          duplicated_indexed_assignment_method_nodes.each do |nodes|
+            nodes[1..].each do |node|
+              assignment = "#{node.children.first.method_name}[#{node.first_argument.source}]="
+              register_offense(node, assignment, nodes.first.first_line)
+            end
+          end
         end
 
         def duplicated_assignment_method_nodes
           assignment_method_declarations(processed_source.ast)
-            .group_by(&:method_name)
+            .select(&:assignment_method?)
+            .group_by { |node| [enclosing_specification(node), node.method_name] }
             .values
             .select { |nodes| nodes.size > 1 }
+        end
+
+        def duplicated_indexed_assignment_method_nodes
+          indexed_assignment_method_declarations(processed_source.ast)
+            .group_by { |node| indexed_assignment_key(node) }
+            .values
+            .select { |nodes| nodes.size > 1 }
+        end
+
+        def indexed_assignment_key(node)
+          [enclosing_specification(node), node.children.first.method_name, node.first_argument]
+        end
+
+        # Assignments in separate `Gem::Specification.new` blocks are not duplicates of
+        # one another, so the enclosing specification is part of the grouping key.
+        def enclosing_specification(node)
+          node.each_ancestor(:block).find { |block| gem_specification?(block) }
         end
 
         def register_offense(node, assignment, line_of_first_occurrence)

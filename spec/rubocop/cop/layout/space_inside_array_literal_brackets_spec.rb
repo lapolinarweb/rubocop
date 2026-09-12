@@ -243,7 +243,7 @@ RSpec.describe RuboCop::Cop::Layout::SpaceInsideArrayLiteralBrackets, :config do
       RUBY
     end
 
-    it 'registers an offense and corrects multiline array on end bracketwith trailing method' do
+    it 'registers an offense and corrects multiline array on end bracket with trailing method' do
       expect_offense(<<~RUBY)
         [:good,
          :bad  ].compact
@@ -292,6 +292,146 @@ RSpec.describe RuboCop::Cop::Layout::SpaceInsideArrayLiteralBrackets, :config do
           b
            ]
       RUBY
+    end
+
+    context 'when using array pattern matching', :ruby27 do
+      it 'registers an offense when array pattern with spaces' do
+        expect_offense(<<~RUBY)
+          case foo
+          in [ bar, baz ]
+                       ^ Do not use space inside array brackets.
+              ^ Do not use space inside array brackets.
+          end
+        RUBY
+
+        expect_correction(<<~RUBY)
+          case foo
+          in [bar, baz]
+          end
+        RUBY
+      end
+
+      it 'does not register an offense when array pattern with no spaces' do
+        expect_no_offenses(<<~RUBY)
+          case foo
+          in [bar, baz]
+          end
+        RUBY
+      end
+    end
+
+    context 'when using one-line array `in` pattern matching', :ruby27 do
+      it 'registers an offense when array pattern with spaces' do
+        expect_offense(<<~RUBY)
+          foo in [ bar, baz ]
+                           ^ Do not use space inside array brackets.
+                  ^ Do not use space inside array brackets.
+        RUBY
+
+        expect_correction(<<~RUBY)
+          foo in [bar, baz]
+        RUBY
+      end
+
+      it 'does not register an offense when array pattern with no spaces' do
+        expect_no_offenses(<<~RUBY)
+          foo in [bar, baz]
+        RUBY
+      end
+    end
+
+    context 'when using one-line array `=>` pattern matching', :ruby30 do
+      it 'registers an offense when array pattern with spaces' do
+        expect_offense(<<~RUBY)
+          foo => [ bar, baz ]
+                           ^ Do not use space inside array brackets.
+                  ^ Do not use space inside array brackets.
+        RUBY
+
+        expect_correction(<<~RUBY)
+          foo => [bar, baz]
+        RUBY
+      end
+
+      it 'does not register an offense when array pattern with no spaces' do
+        expect_no_offenses(<<~RUBY)
+          foo => [bar, baz]
+        RUBY
+      end
+    end
+
+    context 'when using constant pattern matching', :ruby27 do
+      it 'registers an offense for empty pattern with spaces' do
+        expect_offense(<<~RUBY)
+          case value
+          in ADT[ ]
+                ^^^ #{no_space_in_empty_message}
+          end
+        RUBY
+
+        expect_correction(<<~RUBY)
+          case value
+          in ADT[]
+          end
+        RUBY
+      end
+
+      it 'registers an offense for empty nested pattern with spaces' do
+        expect_offense(<<~RUBY)
+          case value
+          in ADT[*head, ADT[ ]]
+                           ^^^ #{no_space_in_empty_message}
+          end
+        RUBY
+
+        expect_correction(<<~RUBY)
+          case value
+          in ADT[*head, ADT[]]
+          end
+        RUBY
+      end
+
+      it 'registers an offense for pattern with spaces' do
+        expect_offense(<<~RUBY)
+          case value
+          in ADT[ *head, tail ]
+                 ^ Do not use space inside array brackets.
+                             ^ Do not use space inside array brackets.
+          end
+        RUBY
+
+        expect_correction(<<~RUBY)
+          case value
+          in ADT[*head, tail]
+          end
+        RUBY
+      end
+
+      it 'registers an offense for nested constant with spaces' do
+        expect_offense(<<~RUBY)
+          case value
+          in ADT[ *head, ADT[ *headhead, tail ] ]
+                 ^ Do not use space inside array brackets.
+                             ^ Do not use space inside array brackets.
+                                             ^ Do not use space inside array brackets.
+                                               ^ Do not use space inside array brackets.
+          end
+        RUBY
+
+        expect_correction(<<~RUBY)
+          case value
+          in ADT[*head, ADT[*headhead, tail]]
+          end
+        RUBY
+      end
+
+      it 'does not register an offense for pattern with no spaces' do
+        expect_no_offenses(<<~RUBY)
+          case value
+          in ADT[*head, ADT[*headhead, tail]]
+          end
+        RUBY
+      end
     end
   end
 
@@ -423,7 +563,7 @@ RSpec.describe RuboCop::Cop::Layout::SpaceInsideArrayLiteralBrackets, :config do
       RUBY
     end
 
-    it 'registers an offense and corrects multiline array on end bracketwith trailing method' do
+    it 'registers an offense and corrects multiline array on end bracket with trailing method' do
       expect_offense(<<~RUBY)
         [ :good,
           :bad].compact
@@ -436,7 +576,7 @@ RSpec.describe RuboCop::Cop::Layout::SpaceInsideArrayLiteralBrackets, :config do
       RUBY
     end
 
-    it 'register an offense and corrects when 2 arrays are on one line' do
+    it 'registers an offense and corrects when 2 arrays are on one line' do
       expect_offense(<<~RUBY)
         [ 2, 3, 4 ] - [3, 4 ]
                       ^ #{use_space_message}
@@ -448,15 +588,136 @@ RSpec.describe RuboCop::Cop::Layout::SpaceInsideArrayLiteralBrackets, :config do
     end
   end
 
+  shared_examples 'array pattern without brackets' do
+    it 'does not register an offense' do
+      expect_no_offenses(<<~RUBY)
+        case ary
+        in a, b, c, d
+        end
+      RUBY
+    end
+  end
+
   context 'when EnforcedStyle is space' do
     let(:cop_config) { { 'EnforcedStyle' => 'space' } }
 
     it_behaves_like 'space inside arrays'
+    it_behaves_like 'array pattern without brackets'
 
     it 'does not register offense for valid 2-dimensional array' do
       expect_no_offenses(<<~RUBY)
         [ 1, [ 2,3,4 ], [ 5,6,7 ] ]
       RUBY
+    end
+
+    context 'when using array pattern matching', :ruby27 do
+      it 'registers an offense when array pattern with no spaces' do
+        expect_offense(<<~RUBY)
+          case foo
+          in [bar, baz]
+                      ^ Use space inside array brackets.
+             ^ Use space inside array brackets.
+          end
+        RUBY
+
+        expect_correction(<<~RUBY)
+          case foo
+          in [ bar, baz ]
+          end
+        RUBY
+      end
+
+      it 'does not register an offense when array pattern with spaces' do
+        expect_no_offenses(<<~RUBY)
+          case foo
+          in [ bar, baz ]
+          end
+        RUBY
+      end
+    end
+
+    context 'when using one-line array `in` pattern matching', :ruby27 do
+      it 'registers an offense when array pattern with no spaces' do
+        expect_offense(<<~RUBY)
+          foo in [bar, baz]
+                          ^ Use space inside array brackets.
+                 ^ Use space inside array brackets.
+        RUBY
+
+        expect_correction(<<~RUBY)
+          foo in [ bar, baz ]
+        RUBY
+      end
+
+      it 'does not register an offense when array pattern with spaces' do
+        expect_no_offenses(<<~RUBY)
+          foo in [ bar, baz ]
+        RUBY
+      end
+    end
+
+    context 'when using one-line array `=>` pattern matching', :ruby30 do
+      it 'registers an offense when array pattern with no spaces' do
+        expect_offense(<<~RUBY)
+          foo => [bar, baz]
+                          ^ Use space inside array brackets.
+                 ^ Use space inside array brackets.
+        RUBY
+
+        expect_correction(<<~RUBY)
+          foo => [ bar, baz ]
+        RUBY
+      end
+
+      it 'does not register an offense when array pattern with spaces' do
+        expect_no_offenses(<<~RUBY)
+          foo => [ bar, baz ]
+        RUBY
+      end
+    end
+
+    context 'when using constant pattern matching', :ruby27 do
+      it 'registers an offense for pattern with no spaces' do
+        expect_offense(<<~RUBY)
+          case value
+          in ADT[*head, tail]
+                ^ #{use_space_message}
+                            ^ #{use_space_message}
+          end
+        RUBY
+
+        expect_correction(<<~RUBY)
+          case value
+          in ADT[ *head, tail ]
+          end
+        RUBY
+      end
+
+      it 'registers an offense for nested constant with no spaces' do
+        expect_offense(<<~RUBY)
+          case value
+          in ADT[*head, ADT[*headhead, tail]]
+                ^ #{use_space_message}
+                           ^ #{use_space_message}
+                                           ^ #{use_space_message}
+                                            ^ #{use_space_message}
+          end
+        RUBY
+
+        expect_correction(<<~RUBY)
+          case value
+          in ADT[ *head, ADT[ *headhead, tail ] ]
+          end
+        RUBY
+      end
+
+      it 'does not register an offense for pattern with spaces' do
+        expect_no_offenses(<<~RUBY)
+          case value
+          in ADT[ *head, ADT[ *headhead, tail ] ]
+          end
+        RUBY
+      end
     end
   end
 
@@ -464,6 +725,7 @@ RSpec.describe RuboCop::Cop::Layout::SpaceInsideArrayLiteralBrackets, :config do
     let(:cop_config) { { 'EnforcedStyle' => 'compact' } }
 
     it_behaves_like 'space inside arrays'
+    it_behaves_like 'array pattern without brackets'
 
     it 'does not register offense for valid 2-dimensional array' do
       expect_no_offenses(<<~RUBY)
@@ -513,27 +775,27 @@ RSpec.describe RuboCop::Cop::Layout::SpaceInsideArrayLiteralBrackets, :config do
     end
 
     context 'multiline, 2-dimensional array with spaces' do
-      pending 'registers an offense and corrects at the beginning of array' do
+      it 'registers an offense and corrects at the beginning of array' do
         expect_offense(<<~RUBY)
           multiline = [ [ 1, 2, 3, 4 ],
                        ^ #{no_space_message}
             [ 3, 4, 5, 6 ]]
         RUBY
 
-        expect_correction(<<~RUBY, loop: false)
+        expect_correction(<<~RUBY)
           multiline = [[ 1, 2, 3, 4 ],
             [ 3, 4, 5, 6 ]]
         RUBY
       end
 
-      pending 'registers an offense and corrects at the end of array' do
+      it 'registers an offense and corrects at the end of array' do
         expect_offense(<<~RUBY)
           multiline = [[ 1, 2, 3, 4 ],
             [ 3, 4, 5, 6 ] ]
                           ^ #{no_space_message}
         RUBY
 
-        expect_correction(<<~RUBY, loop: false)
+        expect_correction(<<~RUBY)
           multiline = [[ 1, 2, 3, 4 ],
             [ 3, 4, 5, 6 ]]
         RUBY
@@ -541,7 +803,7 @@ RSpec.describe RuboCop::Cop::Layout::SpaceInsideArrayLiteralBrackets, :config do
     end
 
     context 'multiline, 2-dimensional array with newlines' do
-      pending 'registers an offense and corrects at the beginning of array' do
+      it 'registers an offense and corrects at the beginning of array' do
         expect_offense(<<~RUBY)
           multiline = [
                        ^{} #{no_space_message}
@@ -549,21 +811,21 @@ RSpec.describe RuboCop::Cop::Layout::SpaceInsideArrayLiteralBrackets, :config do
             [ 3, 4, 5, 6 ]]
         RUBY
 
-        expect_correction(<<~RUBY, loop: false)
+        expect_correction(<<~RUBY)
           multiline = [[ 1, 2, 3, 4 ],
             [ 3, 4, 5, 6 ]]
         RUBY
       end
 
-      pending 'registers an offense and corrects at the end of array' do
+      it 'registers an offense and corrects at the end of array' do
         expect_offense(<<~RUBY)
           multiline = [[ 1, 2, 3, 4 ],
             [ 3, 4, 5, 6 ]
-                          ^{} #{no_space_message}
           ]
+          ^{} #{no_space_message}
         RUBY
 
-        expect_correction(<<~RUBY, loop: false)
+        expect_correction(<<~RUBY)
           multiline = [[ 1, 2, 3, 4 ],
             [ 3, 4, 5, 6 ]]
         RUBY
@@ -597,6 +859,49 @@ RSpec.describe RuboCop::Cop::Layout::SpaceInsideArrayLiteralBrackets, :config do
       expect_correction(<<~RUBY)
         [[ a, b ], [ foo, [ bar, baz ]]]
       RUBY
+    end
+
+    context 'when using constant pattern matching', :ruby27 do
+      it 'registers an offense for pattern with no spaces' do
+        expect_offense(<<~RUBY)
+          case value
+          in ADT[*head, tail]
+                ^ #{use_space_message}
+                            ^ #{use_space_message}
+          end
+        RUBY
+
+        expect_correction(<<~RUBY)
+          case value
+          in ADT[ *head, tail ]
+          end
+        RUBY
+      end
+
+      it 'registers an offense for nested constant pattern with no spaces' do
+        expect_offense(<<~RUBY)
+          case value
+          in ADT[*head, ADT[*headhead, tail]]
+                ^ #{use_space_message}
+                           ^ #{use_space_message}
+                                           ^ #{use_space_message}
+          end
+        RUBY
+
+        expect_correction(<<~RUBY)
+          case value
+          in ADT[ *head, ADT[ *headhead, tail ]]
+          end
+        RUBY
+      end
+
+      it 'does not register an offense for pattern with spaces' do
+        expect_no_offenses(<<~RUBY)
+          case value
+          in ADT[ *head, ADT[ *headhead, tail ]]
+          end
+        RUBY
+      end
     end
   end
 end

@@ -29,6 +29,18 @@ RSpec.describe RuboCop::Cop::Layout::SpaceInsideReferenceBrackets, :config do
         a[]
       RUBY
     end
+
+    it 'registers an offense and corrects empty brackets with newline inside' do
+      expect_offense(<<~RUBY)
+        a[
+         ^ Do not use space inside empty reference brackets.
+        ]
+      RUBY
+
+      expect_correction(<<~RUBY)
+        a[]
+      RUBY
+    end
   end
 
   context 'with space inside empty braces allowed' do
@@ -38,7 +50,7 @@ RSpec.describe RuboCop::Cop::Layout::SpaceInsideReferenceBrackets, :config do
       expect_no_offenses('a[ ]')
     end
 
-    it 'registers offense and corrects empty brackets with no space inside' do
+    it 'registers an offense and corrects empty brackets with no space inside' do
       expect_offense(<<~RUBY)
         foo[]
            ^^ Use one space inside empty reference brackets.
@@ -49,10 +61,22 @@ RSpec.describe RuboCop::Cop::Layout::SpaceInsideReferenceBrackets, :config do
       RUBY
     end
 
-    it 'registers offense and corrects empty brackets with more than one space inside' do
+    it 'registers an offense and corrects empty brackets with more than one space inside' do
       expect_offense(<<~RUBY)
         a[      ]
          ^^^^^^^^ Use one space inside empty reference brackets.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        a[ ]
+      RUBY
+    end
+
+    it 'registers an offense and corrects empty brackets with newline inside' do
+      expect_offense(<<~RUBY)
+        a[
+         ^ Use one space inside empty reference brackets.
+        ]
       RUBY
 
       expect_correction(<<~RUBY)
@@ -93,6 +117,14 @@ RSpec.describe RuboCop::Cop::Layout::SpaceInsideReferenceBrackets, :config do
       RUBY
     end
 
+    it 'does not register offense for non-empty brackets with newline inside' do
+      expect_no_offenses(<<~RUBY)
+        foo[
+          bar
+        ]
+      RUBY
+    end
+
     it 'registers an offense and corrects when a reference bracket with a ' \
        'leading whitespace is assigned by another reference bracket' do
       expect_offense(<<~RUBY)
@@ -105,7 +137,7 @@ RSpec.describe RuboCop::Cop::Layout::SpaceInsideReferenceBrackets, :config do
       RUBY
     end
 
-    it 'registers an offense and correcs when a reference bracket with a ' \
+    it 'registers an offense and corrects when a reference bracket with a ' \
        'trailing whitespace is assigned by another reference bracket' do
       expect_offense(<<~RUBY)
         a["foo" ] = b["something"]
@@ -248,7 +280,7 @@ RSpec.describe RuboCop::Cop::Layout::SpaceInsideReferenceBrackets, :config do
       RUBY
     end
 
-    it 'register and correct multiple offenses for multiple sets of ref brackets' do
+    it 'registers and correct multiple offenses for multiple sets of ref brackets' do
       expect_offense(<<~RUBY)
         b[ :key]["foo"  ][   0 ]
           ^ Do not use space inside reference brackets.
@@ -262,7 +294,7 @@ RSpec.describe RuboCop::Cop::Layout::SpaceInsideReferenceBrackets, :config do
       RUBY
     end
 
-    it 'accpets extra spacing in array brackets' do
+    it 'registers an offense when extra spacing in array brackets' do
       expect_offense(<<~RUBY)
         j[ "pop"] = [89, nil, ""    ]
           ^ Do not use space inside reference brackets.

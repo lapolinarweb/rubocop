@@ -97,7 +97,151 @@ RSpec.describe RuboCop::Cop::Layout::EmptyLinesAroundExceptionHandlingKeywords, 
     RUBY
   end
 
-  include_examples 'accepts', 'no empty line', <<~RUBY
+  it 'registers an offense when there is a blank line above `rescue` keyword in a block', :ruby25 do
+    expect_offense(<<~RUBY)
+      foo do
+        f1
+
+      #{message} before the `rescue`.
+      rescue
+        f2
+      else
+        f3
+      end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      foo do
+        f1
+      rescue
+        f2
+      else
+        f3
+      end
+    RUBY
+  end
+
+  it 'registers an offense when `rescue` section starts with a blank line in a block', :ruby25 do
+    expect_offense(<<~RUBY)
+      foo do
+        f1
+      rescue
+
+      #{message} after the `rescue`.
+        f2
+      else
+        f3
+      end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      foo do
+        f1
+      rescue
+        f2
+      else
+        f3
+      end
+    RUBY
+  end
+
+  it 'registers an offense when `rescue` section ends with a blank line in a block', :ruby25 do
+    expect_offense(<<~RUBY)
+      foo do
+        f1
+      rescue
+        f2
+
+      #{message} before the `else`.
+      else
+        f3
+      end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      foo do
+        f1
+      rescue
+        f2
+      else
+        f3
+      end
+    RUBY
+  end
+
+  it 'registers an offense when there is a blank line above `rescue` keyword in a numbered block', :ruby27 do
+    expect_offense(<<~RUBY)
+      foo do
+        f1(_1)
+
+      #{message} before the `rescue`.
+      rescue
+        f2
+      else
+        f3
+      end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      foo do
+        f1(_1)
+      rescue
+        f2
+      else
+        f3
+      end
+    RUBY
+  end
+
+  it 'registers an offense when `rescue` section starts with a blank line in a numbered block', :ruby27 do
+    expect_offense(<<~RUBY)
+      foo do
+        f1(_1)
+      rescue
+
+      #{message} after the `rescue`.
+        f2
+      else
+        f3
+      end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      foo do
+        f1(_1)
+      rescue
+        f2
+      else
+        f3
+      end
+    RUBY
+  end
+
+  it 'registers an offense when `rescue` section ends with a blank line in a numbered block', :ruby27 do
+    expect_offense(<<~RUBY)
+      foo do
+        f1(_1)
+      rescue
+        f2
+
+      #{message} before the `else`.
+      else
+        f3
+      end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      foo do
+        f1(_1)
+      rescue
+        f2
+      else
+        f3
+      end
+    RUBY
+  end
+
+  it_behaves_like 'accepts', 'no empty line', <<~RUBY
     begin
       f1
     rescue
@@ -109,7 +253,7 @@ RSpec.describe RuboCop::Cop::Layout::EmptyLinesAroundExceptionHandlingKeywords, 
     end
   RUBY
 
-  include_examples 'accepts', 'empty lines around begin body', <<~RUBY
+  it_behaves_like 'accepts', 'empty lines around begin body', <<~RUBY
     begin
 
       f1
@@ -117,14 +261,58 @@ RSpec.describe RuboCop::Cop::Layout::EmptyLinesAroundExceptionHandlingKeywords, 
     end
   RUBY
 
-  include_examples 'accepts', 'empty begin', <<~RUBY
+  it_behaves_like 'accepts', 'empty begin', <<~RUBY
     begin
     end
   RUBY
 
-  include_examples 'accepts', 'empty method definition', <<~RUBY
+  it_behaves_like 'accepts', 'empty method definition', <<~RUBY
     def foo
     end
+  RUBY
+
+  it_behaves_like 'accepts', '`begin` and `rescue` are on the same line', <<~RUBY
+    begin; foo; rescue => e; end
+  RUBY
+
+  it_behaves_like 'accepts', '`rescue` and `end` are on the same line', <<~RUBY
+    begin
+      foo
+    rescue => e; end
+  RUBY
+
+  it_behaves_like 'accepts', 'last `rescue` and `end` are on the same line', <<~RUBY
+    begin
+      foo
+    rescue => x
+    rescue => y; end
+  RUBY
+
+  it_behaves_like 'accepts', '`def` and `rescue` are on the same line', <<~RUBY
+    def do_something; foo; rescue => e; end
+  RUBY
+
+  it_behaves_like 'accepts', '`ensure` and `end` are on the same line', <<~RUBY
+    def do_something
+    ensure end
+  RUBY
+
+  it_behaves_like 'accepts', '`else` and `end` are on the same line', <<~RUBY
+    def do_something
+    rescue
+    else end
+  RUBY
+
+  it_behaves_like 'accepts', '`ensure` body expression and `end` are on the same line', <<~RUBY
+    def do_something
+    foo
+    ensure bar end
+  RUBY
+
+  it_behaves_like 'accepts', '`else` body expression and `end` are on the same line', <<~RUBY
+    def do_something
+    rescue
+    else foo end
   RUBY
 
   it 'with complex begin-end - registers many offenses' do

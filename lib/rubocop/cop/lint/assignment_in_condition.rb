@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Lint
-      # This cop checks for assignments in the conditions of
+      # Checks for assignments in the conditions of
       # if/while/until.
       #
       # `AllowSafeAssignment` option for safe assignment.
@@ -11,30 +11,36 @@ module RuboCop
       # an assignment to indicate "I know I'm using an assignment
       # as a condition. It's not a mistake."
       #
+      # @safety
+      #   This cop's autocorrection is unsafe because it assumes that
+      #   the author meant to use an assignment result as a condition.
+      #
       # @example
       #   # bad
-      #   if some_var = true
+      #   if some_var = value
       #     do_something
       #   end
       #
       #   # good
-      #   if some_var == true
+      #   if some_var == value
       #     do_something
       #   end
       #
       # @example AllowSafeAssignment: true (default)
       #   # good
-      #   if (some_var = true)
+      #   if (some_var = value)
       #     do_something
       #   end
       #
       # @example AllowSafeAssignment: false
       #   # bad
-      #   if (some_var = true)
+      #   if (some_var = value)
       #     do_something
       #   end
       #
       class AssignmentInCondition < Base
+        extend AutoCorrector
+
         include SafeAssignment
 
         MSG_WITH_SAFE_ASSIGNMENT_ALLOWED =
@@ -44,16 +50,18 @@ module RuboCop
         MSG_WITHOUT_SAFE_ASSIGNMENT_ALLOWED =
           'Use `==` if you meant to do a comparison or move the assignment ' \
           'up out of the condition.'
-        ASGN_TYPES = [:begin, *AST::Node::EQUALS_ASSIGNMENTS, :send].freeze
+        ASGN_TYPES = [:begin, *AST::Node::EQUALS_ASSIGNMENTS, :send, :csend].freeze
 
         def on_if(node)
-          return if node.condition.block_type?
-
-          traverse_node(node.condition, ASGN_TYPES) do |asgn_node|
+          traverse_node(node.condition) do |asgn_node|
             next :skip_children if skip_children?(asgn_node)
             next if allowed_construct?(asgn_node)
 
-            add_offense(asgn_node.loc.operator)
+            add_offense(asgn_node.loc.operator) do |corrector|
+              next unless safe_assignment_allowed?
+
+              corrector.wrap(asgn_node, '(', ')')
+            end
           end
         end
         alias on_while on_if
@@ -70,26 +78,42 @@ module RuboCop
         end
 
         def allowed_construct?(asgn_node)
-          asgn_node.begin_type? || conditional_assignment?(asgn_node)
+          return true if asgn_node.begin_type?
+
+          conditional_assignment?(asgn_node) || discarded_assignment?(asgn_node)
         end
 
         def conditional_assignment?(asgn_node)
           !asgn_node.loc.operator
         end
 
+        # An assignment that is a statement of a multi-statement `begin`
+        # (e.g. `(foo = bar; baz)`) has its value discarded, so it is not used
+        # as the condition. Wrapping it in parentheses would only conflict with
+        # `Style/RedundantParentheses`, so it is left alone.
+        def discarded_assignment?(asgn_node)
+          parent = asgn_node.parent
+
+          parent&.begin_type? && parent.children.size > 1
+        end
+
         def skip_children?(asgn_node)
-          (asgn_node.send_type? && !asgn_node.assignment_method?) ||
+          (asgn_node.call_type? && !asgn_node.assignment_method?) ||
             empty_condition?(asgn_node) ||
             (safe_assignment_allowed? && safe_assignment?(asgn_node))
         end
 
-        # each_node/visit_descendants_with_types with :skip_children
-        def traverse_node(node, types, &block)
-          result = yield node if types.include?(node.type)
+        def traverse_node(node, &block)
+          # if the node is a block, any assignments are irrelevant
+          return if node.any_block_type?
+          # an assignment inside `defined?` is never executed
+          return if node.defined_type?
+
+          result = yield node if ASGN_TYPES.include?(node.type)
 
           return if result == :skip_children
 
-          node.each_child_node { |child| traverse_node(child, types, &block) }
+          node.each_child_node { |child| traverse_node(child, &block) }
         end
       end
     end

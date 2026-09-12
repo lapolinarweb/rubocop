@@ -3,25 +3,21 @@
 module RuboCop
   module Cop
     module Lint
-      # This cop looks for error classes inheriting from `Exception`
-      # and its standard library subclasses, excluding subclasses of
-      # `StandardError`. It is configurable to suggest using either
-      # `RuntimeError` (default) or `StandardError` instead.
+      # Looks for error classes inheriting from `Exception`.
+      # It is configurable to suggest using either `StandardError` (default) or
+      # `RuntimeError` instead.
       #
-      # @example EnforcedStyle: runtime_error (default)
-      #   # bad
+      # @safety
+      #   This cop's autocorrection is unsafe because `rescue` that omit
+      #   exception class handle `StandardError` and its subclasses,
+      #   but not `Exception` and its subclasses.
       #
-      #   class C < Exception; end
+      # When `AllCops/UseProjectIndex` is enabled and the `rubydex` gem is
+      # installed, indirect inheritance is also detected: a class whose parent
+      # (defined anywhere in the project) ultimately inherits from `Exception`
+      # is reported, without autocorrection.
       #
-      #   C = Class.new(Exception)
-      #
-      #   # good
-      #
-      #   class C < RuntimeError; end
-      #
-      #   C = Class.new(RuntimeError)
-      #
-      # @example EnforcedStyle: standard_error
+      # @example EnforcedStyle: standard_error (default)
       #   # bad
       #
       #   class C < Exception; end
@@ -33,28 +29,30 @@ module RuboCop
       #   class C < StandardError; end
       #
       #   C = Class.new(StandardError)
+      #
+      # @example EnforcedStyle: runtime_error
+      #   # bad
+      #
+      #   class C < Exception; end
+      #
+      #   C = Class.new(Exception)
+      #
+      #   # good
+      #
+      #   class C < RuntimeError; end
+      #
+      #   C = Class.new(RuntimeError)
       class InheritException < Base
         include ConfigurableEnforcedStyle
+        include ProjectIndexHelp
         extend AutoCorrector
 
-        MSG = 'Inherit from `%<prefer>s` instead of `%<current>s`.'
+        MSG = 'Inherit from `%<prefer>s` instead of `Exception`.'
+        INDIRECT_MSG = 'Inherit from `%<prefer>s` instead of `Exception` (inherited via `%<via>s`).'
         PREFERRED_BASE_CLASS = {
           runtime_error: 'RuntimeError',
           standard_error: 'StandardError'
         }.freeze
-        ILLEGAL_CLASSES = %w[
-          Exception
-          SystemStackError
-          NoMemoryError
-          SecurityError
-          NotImplementedError
-          LoadError
-          SyntaxError
-          ScriptError
-          Interrupt
-          SignalException
-          SystemExit
-        ].freeze
 
         RESTRICT_ON_SEND = %i[new].freeze
 
@@ -66,18 +64,26 @@ module RuboCop
         PATTERN
 
         def on_class(node)
-          return unless node.parent_class && illegal_class_name?(node.parent_class)
+          parent_class = node.parent_class
+          return unless parent_class
 
-          message = message(node.parent_class)
+          if exception_class?(parent_class)
+            return if inherit_exception_class_with_omitted_namespace?(node)
 
-          add_offense(node.parent_class, message: message) do |corrector|
-            corrector.replace(node.parent_class, preferred_base_class)
+            add_offense(parent_class, message: message(parent_class)) do |corrector|
+              corrector.replace(parent_class, preferred_base_class)
+            end
+          elsif (via = inherits_exception_via(parent_class))
+            # No autocorrection: the `Exception` inheritance lives at another
+            # class' definition site, possibly in another file.
+            message = format(INDIRECT_MSG, prefer: preferred_base_class, via: via)
+            add_offense(parent_class, message: message)
           end
         end
 
         def on_send(node)
           constant = class_new_call?(node)
-          return unless constant && illegal_class_name?(constant)
+          return unless constant && exception_class?(constant)
 
           message = message(constant)
 
@@ -92,8 +98,48 @@ module RuboCop
           format(MSG, prefer: preferred_base_class, current: node.const_name)
         end
 
-        def illegal_class_name?(class_node)
-          ILLEGAL_CLASSES.include?(class_node.const_name)
+        def exception_class?(class_node)
+          class_node.const_name == 'Exception'
+        end
+
+        # When `AllCops/UseProjectIndex` is enabled, indirect inheritance is
+        # detected by walking the parent's indexed ancestry: `Exception` itself
+        # is not indexed, so a chain ending in it shows up as an ancestor whose
+        # superclass reference is unresolved and literally named `Exception`.
+        # Returns the name of that ancestor, or `nil`.
+        def inherits_exception_via(parent_class)
+          return nil unless project_index && parent_class.const_type?
+
+          declaration = resolve_constant_in_index(parent_class)
+          return nil unless declaration.is_a?(Rubydex::Class)
+
+          exception_ancestor(declaration)&.name
+        rescue StandardError
+          nil
+        end
+
+        def exception_ancestor(declaration)
+          declaration.ancestors.find do |ancestor|
+            ancestor.is_a?(Rubydex::Class) && exception_superclass_reference?(ancestor)
+          end
+        end
+
+        def exception_superclass_reference?(ancestor)
+          ancestor.definitions.any? do |definition|
+            next false unless definition.is_a?(Rubydex::ClassDefinition)
+
+            superclass = definition.superclass
+            superclass.is_a?(Rubydex::UnresolvedConstantReference) &&
+              superclass.name.delete_prefix('::') == 'Exception'
+          end
+        end
+
+        def inherit_exception_class_with_omitted_namespace?(class_node)
+          return false if class_node.parent_class.namespace&.cbase_type?
+
+          class_node.left_siblings.any? do |sibling|
+            sibling.respond_to?(:identifier) && exception_class?(sibling.identifier)
+          end
         end
 
         def preferred_base_class

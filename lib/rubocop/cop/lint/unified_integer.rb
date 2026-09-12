@@ -3,19 +3,15 @@
 module RuboCop
   module Cop
     module Lint
-      # This cop checks for using Fixnum or Bignum constant.
+      # Checks for using Fixnum or Bignum constant.
       #
       # @example
       #
       #   # bad
-      #
       #   1.is_a?(Fixnum)
       #   1.is_a?(Bignum)
       #
-      # @example
-      #
       #   # good
-      #
       #   1.is_a?(Integer)
       class UnifiedInteger < Base
         extend AutoCorrector
@@ -33,6 +29,8 @@ module RuboCop
           return unless klass
 
           add_offense(node, message: format(MSG, klass: klass)) do |corrector|
+            next if target_ruby_version <= 2.3
+
             corrector.replace(node.loc.name, 'Integer')
           end
         end

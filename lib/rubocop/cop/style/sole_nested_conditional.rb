@@ -15,6 +15,11 @@ module RuboCop
       #     end
       #   end
       #
+      #   # bad
+      #   if condition_b
+      #     do_something
+      #   end if condition_a
+      #
       #   # good
       #   if condition_a && condition_b
       #     do_something
@@ -26,14 +31,24 @@ module RuboCop
       #     do_something if condition_b
       #   end
       #
+      #   # bad
+      #   if condition_b
+      #     do_something
+      #   end if condition_a
+      #
       # @example AllowModifier: true
       #   # good
       #   if condition_a
       #     do_something if condition_b
       #   end
       #
+      #   # good
+      #   if condition_b
+      #     do_something
+      #   end if condition_a
       class SoleNestedConditional < Base
         include RangeHelp
+        include ReparsedEquivalence
         extend AutoCorrector
 
         MSG = 'Consider merging nested conditions into outer `%<conditional_type>s` conditions.'
@@ -43,19 +58,38 @@ module RuboCop
         end
 
         def on_if(node)
-          return if node.ternary? || node.else? || node.elsif?
+          return unless offending_conditional?(node)
 
           if_branch = node.if_branch
-          return if use_variable_assignment_in_condition?(node.condition, if_branch)
-          return unless offending_branch?(if_branch)
+          return unless correction_parses?(node)
 
           message = format(MSG, conditional_type: node.keyword)
           add_offense(if_branch.loc.keyword, message: message) do |corrector|
+            next if ignored_node?(node)
+
             autocorrect(corrector, node, if_branch)
+            ignore_node(if_branch)
           end
         end
 
         private
+
+        def offending_conditional?(node)
+          return false if node.ternary? || node.else? || node.elsif?
+
+          if_branch = node.if_branch
+          return false if use_variable_assignment_in_condition?(node.condition, if_branch)
+
+          offending_branch?(node, if_branch)
+        end
+
+        # Merging the conditionals intentionally produces a different AST, so
+        # full equivalence cannot be checked, but the corrected source must at
+        # least remain parseable (see `ReparsedEquivalence#correction_parses?`),
+        # which suppresses the entire produces-invalid-code bug class.
+        def apply_reparse_correction(corrector, node)
+          autocorrect(corrector, node, node.if_branch)
+        end
 
         def use_variable_assignment_in_condition?(condition, if_branch)
           assigned_variables = assigned_variables(condition)
@@ -72,102 +106,150 @@ module RuboCop
           end
         end
 
-        def offending_branch?(branch)
+        def offending_branch?(node, branch)
           return false unless branch
 
           branch.if_type? &&
             !branch.else? &&
             !branch.ternary? &&
-            !(branch.modifier_form? && allow_modifier?)
+            !((node.modifier_form? || branch.modifier_form?) && allow_modifier?)
         end
 
         def autocorrect(corrector, node, if_branch)
-          corrector.wrap(node.condition, '(', ')') if node.condition.or_type?
-
-          correct_from_unless_to_if(corrector, node) if node.unless?
-
-          and_operator = if_branch.unless? ? ' && !' : ' && '
-          if if_branch.modifier_form?
-            correct_for_guard_condition_style(corrector, node, if_branch, and_operator)
+          if node.modifier_form?
+            autocorrect_outer_condition_modify_form(corrector, node, if_branch)
           else
-            correct_for_basic_condition_style(corrector, node, if_branch, and_operator)
+            autocorrect_outer_condition_basic(corrector, node, if_branch)
+          end
+        end
+
+        def autocorrect_outer_condition_basic(corrector, node, if_branch)
+          correct_node(corrector, node)
+
+          if if_branch.modifier_form?
+            correct_for_guard_condition_style(corrector, node, if_branch)
+          else
+            correct_for_basic_condition_style(corrector, node, if_branch)
             correct_for_comment(corrector, node, if_branch)
           end
         end
 
-        def correct_from_unless_to_if(corrector, node)
-          corrector.replace(node.loc.keyword, 'if')
-
-          condition = node.condition
-          if condition.send_type? && condition.comparison_method? && !condition.parenthesized?
-            corrector.wrap(node.condition, '!(', ')')
-          else
-            corrector.insert_before(node.condition, '!')
-          end
+        def correct_node(corrector, node)
+          corrector.replace(node.loc.keyword, 'if') if node.unless?
+          corrector.replace(node.condition, chainable_condition(node))
         end
 
-        def correct_for_guard_condition_style(corrector, node, if_branch, and_operator)
-          outer_condition = node.condition
-          correct_outer_condition(corrector, outer_condition)
+        def correct_for_guard_condition_style(corrector, node, if_branch)
+          corrector.insert_after(node.condition, " && #{chainable_condition(if_branch)}")
 
-          condition = if_branch.condition
-          corrector.insert_after(outer_condition, replacement_condition(and_operator, condition))
-
-          range = range_between(if_branch.loc.keyword.begin_pos, condition.source_range.end_pos)
-          corrector.remove(range_with_surrounding_space(range: range, newlines: false))
-          corrector.remove(if_branch.loc.keyword)
+          range = range_between(
+            if_branch.loc.keyword.begin_pos, if_branch.condition.source_range.end_pos
+          )
+          corrector.remove(range_with_surrounding_space(range, newlines: false))
         end
 
-        def correct_for_basic_condition_style(corrector, node, if_branch, and_operator)
+        # rubocop:disable-next Metrics/AbcSize
+        def correct_for_basic_condition_style(corrector, node, if_branch)
           range = range_between(
             node.condition.source_range.end_pos, if_branch.condition.source_range.begin_pos
           )
-          corrector.replace(range, and_operator)
-          corrector.remove(range_by_whole_lines(node.loc.end, include_final_newline: true))
-          corrector.wrap(if_branch.condition, '(', ')') if wrap_condition?(if_branch.condition)
+          corrector.replace(range, ' && ')
+
+          corrector.replace(if_branch.condition, chainable_condition(if_branch))
+
+          end_range = if same_line?(node.loc.end, node.if_branch.loc.end)
+                        node.loc.end
+                      else
+                        range_by_whole_lines(node.loc.end, include_final_newline: true)
+                      end
+          corrector.remove(end_range)
+        end
+
+        def autocorrect_outer_condition_modify_form(corrector, node, if_branch)
+          correct_node(corrector, if_branch)
+
+          corrector.insert_before(if_branch.condition, "#{chainable_condition(node)} && ")
+
+          range = range_between(node.loc.keyword.begin_pos, node.condition.source_range.end_pos)
+          corrector.remove(range_with_surrounding_space(range, newlines: false))
         end
 
         def correct_for_comment(corrector, node, if_branch)
-          return if config.for_cop('Style/IfUnlessModifier')['Enabled']
-
-          comments = processed_source.ast_with_comments[if_branch]
+          comments = processed_source.ast_with_comments[if_branch].select do |comment|
+            comment.loc.line < if_branch.condition.first_line
+          end
           comment_text = comments.map(&:text).join("\n") << "\n"
 
           corrector.insert_before(node.loc.keyword, comment_text) unless comments.empty?
         end
 
-        def correct_outer_condition(corrector, condition)
-          return unless requrie_parentheses?(condition)
+        def chainable_condition(node)
+          wrapped_condition = add_parentheses_if_needed(node.condition)
 
-          end_pos = condition.loc.selector.end_pos
-          begin_pos = condition.first_argument.source_range.begin_pos
-          return if end_pos > begin_pos
+          return wrapped_condition if node.if?
 
-          corrector.replace(range_between(end_pos, begin_pos), '(')
-          corrector.insert_after(condition.last_argument.source_range, ')')
+          node.condition.and_type? ? "!(#{wrapped_condition})" : "!#{wrapped_condition}"
         end
 
-        def requrie_parentheses?(condition)
-          condition.send_type? && !condition.arguments.empty? && !condition.parenthesized? &&
-            !condition.comparison_method?
-        end
+        def add_parentheses_if_needed(condition)
+          # Handle `send` and `block` nodes that need to be wrapped in parens
+          # FIXME: autocorrection prevents syntax errors by wrapping the entire node in parens,
+          #        but wrapping the argument list would be a more ergonomic correction.
+          node_to_check = condition&.any_block_type? ? condition.send_node : condition
+          return condition.source unless add_parentheses?(node_to_check)
 
-        def arguments_range(node)
-          range_between(
-            node.first_argument.source_range.begin_pos, node.last_argument.source_range.end_pos
-          )
-        end
-
-        def wrap_condition?(node)
-          node.and_type? || node.or_type? ||
-            (node.send_type? && node.arguments.any? && !node.parenthesized?)
-        end
-
-        def replacement_condition(and_operator, condition)
-          if wrap_condition?(condition)
-            "#{and_operator}(#{condition.source})"
+          if parenthesize_method?(condition)
+            parenthesized_method_arguments(condition)
+          elsif condition.and_type?
+            parenthesized_and(condition)
           else
-            "#{and_operator}#{condition.source}"
+            "(#{condition.source})"
+          end
+        end
+
+        def parenthesize_method?(node)
+          node.call_type? && node.arguments.any? && !node.parenthesized? &&
+            !node.comparison_method? && !node.operator_method?
+        end
+
+        def add_parentheses?(node)
+          return true if node.assignment? || node.or_type?
+          return true if assignment_in_and?(node)
+          return false unless node.call_type?
+
+          (node.arguments.any? && !node.parenthesized?) || node.prefix_not?
+        end
+
+        def assignment_in_and?(node)
+          return false unless node.and_type?
+
+          node.each_descendant.any?(&:assignment?)
+        end
+
+        def parenthesized_method_arguments(node)
+          method_call = node.source_range.begin.join(node.loc.selector.end).source
+          arguments = node.first_argument.source_range.begin.join(node.source_range.end).source
+
+          "#{method_call}(#{arguments})"
+        end
+
+        def parenthesized_and(node)
+          # We only need to add parentheses around the last clause if it's an assignment,
+          # because other clauses will be unchanged by merging conditionals.
+          lhs = node.lhs.source
+          rhs = parenthesized_and_clause(node.rhs)
+          operator = range_with_surrounding_space(node.loc.operator, whitespace: true).source
+
+          "#{lhs}#{operator}#{rhs}"
+        end
+
+        def parenthesized_and_clause(node)
+          if node.and_type?
+            parenthesized_and(node)
+          elsif node.assignment?
+            "(#{node.source})"
+          else
+            node.source
           end
         end
 

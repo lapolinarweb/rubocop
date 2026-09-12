@@ -5,6 +5,7 @@ RSpec.describe RuboCop::Cop::Layout::LineEndStringConcatenationIndentation, :con
     merged = RuboCop::ConfigLoader
              .default_configuration['Layout/LineEndStringConcatenationIndentation']
              .merge(cop_config)
+             .merge('Enabled' => true)
              .merge('IndentationWidth' => cop_indent)
     RuboCop::Config
       .new('Layout/LineEndStringConcatenationIndentation' => merged,
@@ -30,7 +31,7 @@ RSpec.describe RuboCop::Cop::Layout::LineEndStringConcatenationIndentation, :con
     end
 
     it 'accepts a multiline string literal' do
-      expect_no_offenses(<<~'RUBY')
+      expect_no_offenses(<<~RUBY)
         puts %(
           foo
           bar
@@ -58,13 +59,13 @@ RSpec.describe RuboCop::Cop::Layout::LineEndStringConcatenationIndentation, :con
       RUBY
     end
 
-    it 'registers an offense for aligned strings in an if/elif/else statement' do
+    it 'registers an offense for aligned strings in an if/elsif/else statement' do
       expect_offense(<<~'RUBY')
         if cond1
           'a' \
           'b'
           ^^^ Indent the first part of a string concatenated with backslash.
-        elif cond2
+        elsif cond2
           'c' \
           'd'
           ^^^ Indent the first part of a string concatenated with backslash.
@@ -79,7 +80,7 @@ RSpec.describe RuboCop::Cop::Layout::LineEndStringConcatenationIndentation, :con
         if cond1
           'a' \
             'b'
-        elif cond2
+        elsif cond2
           'c' \
             'd'
         else
@@ -127,7 +128,7 @@ RSpec.describe RuboCop::Cop::Layout::LineEndStringConcatenationIndentation, :con
     end
 
     it 'accepts a heredoc string ...' do
-      expect_no_offenses(<<~'RUBY')
+      expect_no_offenses(<<~RUBY)
         let(:source) do
           <<~CODE
             func({
@@ -151,17 +152,21 @@ RSpec.describe RuboCop::Cop::Layout::LineEndStringConcatenationIndentation, :con
     end
 
     it 'accepts an empty heredoc string with interpolation' do
-      expect_no_offenses(<<~'RUBY')
+      expect_no_offenses(<<~RUBY)
         puts(<<~TEXT)
         TEXT
       RUBY
+    end
+
+    it 'accepts the `%` form string `"%\n\n"`' do
+      expect_no_offenses("%\n\n")
     end
   end
 
   context 'when EnforcedStyle is aligned' do
     let(:cop_config) { { 'EnforcedStyle' => 'aligned' } }
 
-    include_examples 'common'
+    it_behaves_like 'common'
 
     it 'accepts aligned strings in method call' do
       expect_no_offenses(<<~'RUBY')
@@ -173,9 +178,7 @@ RSpec.describe RuboCop::Cop::Layout::LineEndStringConcatenationIndentation, :con
     ['X =', '$x =', '@x =', 'x =', 'x +=', 'x ||='].each do |lhs_and_operator|
       context "for assignment with #{lhs_and_operator}" do
         let(:aligned_strings) do
-          [%(#{lhs_and_operator} "a" \\),
-           "#{' ' * lhs_and_operator.length} 'b'",
-           ''].join("\n")
+          [%(#{lhs_and_operator} "a" \\), "#{' ' * lhs_and_operator.length} 'b'", ''].join("\n")
         end
 
         it 'accepts aligned strings' do
@@ -251,7 +254,7 @@ RSpec.describe RuboCop::Cop::Layout::LineEndStringConcatenationIndentation, :con
   context 'when EnforcedStyle is indented' do
     let(:cop_config) { { 'EnforcedStyle' => 'indented' } }
 
-    include_examples 'common'
+    it_behaves_like 'common'
 
     it 'accepts indented strings' do
       expect_no_offenses(<<~'RUBY')
@@ -263,9 +266,7 @@ RSpec.describe RuboCop::Cop::Layout::LineEndStringConcatenationIndentation, :con
     ['X =', '$x =', '@x =', 'x =', 'x +=', 'x ||='].each do |lhs_and_operator|
       context "for assignment with #{lhs_and_operator}" do
         let(:indented_strings) do
-          [%(#{lhs_and_operator} "a" \\),
-           "  'b'",
-           ''].join("\n")
+          [%(#{lhs_and_operator} "a" \\), "  'b'", ''].join("\n")
         end
 
         it 'accepts indented strings' do

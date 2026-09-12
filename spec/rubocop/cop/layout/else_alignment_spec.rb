@@ -167,6 +167,16 @@ RSpec.describe RuboCop::Cop::Layout::ElseAlignment, :config do
                           derp3
                         end
             RUBY
+
+            expect_correction(<<~RUBY)
+              foo.bar = if baz
+                          derp1
+              elsif meh
+                          derp2
+              else
+                          derp3
+                        end
+            RUBY
           end
 
           it 'registers an offense for an if with element assignment' do
@@ -175,6 +185,14 @@ RSpec.describe RuboCop::Cop::Layout::ElseAlignment, :config do
                            derp1
                          else
                          ^^^^ Align `else` with `foo[bar]`.
+                           derp2
+                         end
+            RUBY
+
+            expect_correction(<<~RUBY)
+              foo[bar] = if baz
+                           derp1
+              else
                            derp2
                          end
             RUBY
@@ -189,13 +207,40 @@ RSpec.describe RuboCop::Cop::Layout::ElseAlignment, :config do
                       1
                     end
             RUBY
+
+            expect_correction(<<~RUBY)
+              var = if a
+                      0
+              else
+                      1
+                    end
+            RUBY
           end
         end
       end
 
       shared_examples 'assignment and if with keyword alignment' do
         context 'and end is aligned with variable' do
-          it 'registers an offense for an if' do
+          it 'registers an offense for an `if`' do
+            expect_offense(<<~RUBY)
+              var = if a
+                0
+              else b
+              ^^^^ Align `else` with `if`.
+                1
+              end
+            RUBY
+
+            expect_correction(<<~RUBY)
+              var = if a
+                0
+                    else b
+                1
+              end
+            RUBY
+          end
+
+          it 'registers an offense for an `elsif`' do
             expect_offense(<<~RUBY)
               var = if a
                 0
@@ -209,6 +254,48 @@ RSpec.describe RuboCop::Cop::Layout::ElseAlignment, :config do
               var = if a
                 0
                     elsif b
+                1
+              end
+            RUBY
+          end
+
+          it 'registers an offense for an `case`...`when`' do
+            expect_offense(<<~RUBY)
+              var = case condition
+                    when a
+                      0
+              else
+              ^^^^ Align `else` with `when`.
+                1
+              end
+            RUBY
+
+            expect_correction(<<~RUBY)
+              var = case condition
+                    when a
+                      0
+                    else
+                1
+              end
+            RUBY
+          end
+
+          it 'registers an offense for an `case`...`in`' do
+            expect_offense(<<~RUBY)
+              var = case expr
+                    in a
+                      0
+              else
+              ^^^^ Align `else` with `in`.
+                1
+              end
+            RUBY
+
+            expect_correction(<<~RUBY)
+              var = case expr
+                    in a
+                      0
+                    else
                 1
               end
             RUBY
@@ -268,7 +355,7 @@ RSpec.describe RuboCop::Cop::Layout::ElseAlignment, :config do
           { 'Enabled' => true, 'EnforcedStyleAlignWith' => 'keyword' }
         end
 
-        include_examples 'assignment and if with keyword alignment'
+        it_behaves_like 'assignment and if with keyword alignment'
       end
     end
 
@@ -292,6 +379,14 @@ RSpec.describe RuboCop::Cop::Layout::ElseAlignment, :config do
            func1
          else
          ^^^^ Align `else` with `unless`.
+           func2
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        unless cond
+           func1
+        else
            func2
         end
       RUBY
@@ -323,6 +418,17 @@ RSpec.describe RuboCop::Cop::Layout::ElseAlignment, :config do
           e
          else
          ^^^^ Align `else` with `when`.
+          f
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        case a
+        when b
+          c
+        when d
+          e
+        else
           f
         end
       RUBY
@@ -368,6 +474,19 @@ RSpec.describe RuboCop::Cop::Layout::ElseAlignment, :config do
               qux
             end
           RUBY
+
+          expect_correction(<<~RUBY)
+            case 0
+            in 0
+              foo
+            in -1..1
+              bar
+            in Integer
+              baz
+            else
+              qux
+            end
+          RUBY
         end
 
         it 'accepts correctly aligned case/when/else' do
@@ -400,7 +519,7 @@ RSpec.describe RuboCop::Cop::Layout::ElseAlignment, :config do
         end
 
         it 'accepts case match without else' do
-          expect_no_offenses(<<~'RUBY')
+          expect_no_offenses(<<~RUBY)
             case 0
             in a
               p a
@@ -467,6 +586,16 @@ RSpec.describe RuboCop::Cop::Layout::ElseAlignment, :config do
                     something_else
                   end
         RUBY
+
+        expect_correction(<<~RUBY)
+          private def test
+                    something
+                  rescue
+                    handling
+          else
+                    something_else
+                  end
+        RUBY
       end
     end
   end
@@ -484,6 +613,23 @@ RSpec.describe RuboCop::Cop::Layout::ElseAlignment, :config do
             puts 'wrongly intended error handling'
         else
         ^^^^ Align `else` with `begin`.
+            puts 'wrongly intended normal case handling'
+          ensure
+            puts 'wrongly intended common handling'
+          end
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        def my_func
+          puts 'do something outside block'
+          begin
+            puts 'do something error prone'
+          rescue SomeException, SomeOther => e
+            puts 'wrongly intended error handling'
+          rescue
+            puts 'wrongly intended error handling'
+          else
             puts 'wrongly intended normal case handling'
           ensure
             puts 'wrongly intended common handling'
@@ -533,6 +679,18 @@ RSpec.describe RuboCop::Cop::Layout::ElseAlignment, :config do
           puts 'I love methods that print'
         end
       RUBY
+
+      expect_correction(<<~RUBY)
+        def my_func(string)
+          puts string
+        rescue => e
+          puts e
+        else
+          puts e
+        ensure
+          puts 'I love methods that print'
+        end
+      RUBY
     end
   end
 
@@ -564,6 +722,135 @@ RSpec.describe RuboCop::Cop::Layout::ElseAlignment, :config do
           puts 'normal handling'
         end
       RUBY
+
+      expect_correction(<<~RUBY)
+        def my_func
+          puts 'do something error prone'
+        rescue SomeException
+          puts 'error handling'
+        rescue
+          puts 'error handling'
+        else
+          puts 'normal handling'
+        end
+      RUBY
+    end
+  end
+
+  context 'with class/rescue/else/end' do
+    it 'accepts a correctly aligned else' do
+      expect_no_offenses(<<~RUBY)
+        class MyClass
+          puts 'do something error prone'
+        rescue SomeException
+          puts 'error handling'
+        else
+          puts 'normal handling'
+        end
+      RUBY
+    end
+
+    it 'registers an offense for misaligned else' do
+      expect_offense(<<~RUBY)
+        class MyClass
+          puts 'do something error prone'
+        rescue SomeException
+          puts 'error handling'
+          else
+          ^^^^ Align `else` with `class`.
+          puts 'normal handling'
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        class MyClass
+          puts 'do something error prone'
+        rescue SomeException
+          puts 'error handling'
+        else
+          puts 'normal handling'
+        end
+      RUBY
+    end
+  end
+
+  context 'with module/rescue/else/end' do
+    it 'accepts a correctly aligned else' do
+      expect_no_offenses(<<~RUBY)
+        module MyModule
+          puts 'do something error prone'
+        rescue SomeException
+          puts 'error handling'
+        else
+          puts 'normal handling'
+        end
+      RUBY
+    end
+
+    it 'registers an offense for misaligned else' do
+      expect_offense(<<~RUBY)
+        module MyModule
+          puts 'do something error prone'
+        rescue SomeException
+          puts 'error handling'
+          else
+          ^^^^ Align `else` with `module`.
+          puts 'normal handling'
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        module MyModule
+          puts 'do something error prone'
+        rescue SomeException
+          puts 'error handling'
+        else
+          puts 'normal handling'
+        end
+      RUBY
+    end
+  end
+
+  context 'with sclass/rescue/else/ensure/end' do
+    it 'accepts a correctly aligned else' do
+      expect_no_offenses(<<~RUBY)
+        class << self
+          puts 'do something error prone'
+        rescue SomeException
+          puts 'error handling'
+        else
+          puts 'normal handling'
+        ensure
+          puts 'cleanup'
+        end
+      RUBY
+    end
+
+    it 'registers an offense for misaligned else' do
+      expect_offense(<<~RUBY)
+        class << self
+          puts 'do something error prone'
+        rescue SomeException
+          puts 'error handling'
+          else
+          ^^^^ Align `else` with `class`.
+          puts 'normal handling'
+        ensure
+          puts 'cleanup'
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        class << self
+          puts 'do something error prone'
+        rescue SomeException
+          puts 'error handling'
+        else
+          puts 'normal handling'
+        ensure
+          puts 'cleanup'
+        end
+      RUBY
     end
   end
 
@@ -571,6 +858,36 @@ RSpec.describe RuboCop::Cop::Layout::ElseAlignment, :config do
     it 'accepts a correctly aligned else' do
       expect_no_offenses(<<~RUBY)
         array_like.each do |n|
+          puts 'do something error prone'
+        rescue SomeException
+          puts 'error handling'
+        rescue
+          puts 'error handling'
+        else
+          puts 'normal handling'
+        end
+      RUBY
+    end
+
+    it 'accepts a correctly aligned else from numblock' do
+      expect_no_offenses(<<~RUBY)
+        array_like.each do
+          _1
+          puts 'do something error prone'
+        rescue SomeException
+          puts 'error handling'
+        rescue
+          puts 'error handling'
+        else
+          puts 'normal handling'
+        end
+      RUBY
+    end
+
+    it 'accepts a correctly aligned else from itblock', :ruby34 do
+      expect_no_offenses(<<~RUBY)
+        array_like.each do
+          it
           puts 'do something error prone'
         rescue SomeException
           puts 'error handling'
@@ -596,6 +913,65 @@ RSpec.describe RuboCop::Cop::Layout::ElseAlignment, :config do
       RUBY
     end
 
+    it 'accepts a correctly aligned else when the block is within an operator method call' do
+      expect_no_offenses(<<~RUBY)
+        foo << array_like.map do |n|
+          puts 'do something error prone'
+        rescue SomeException
+          puts 'error handling'
+        else
+          puts 'normal handling'
+        end
+      RUBY
+    end
+
+    it 'accepts a correctly aligned else when the block is a method argument' do
+      expect_no_offenses(<<~RUBY)
+        foo(array_like.map do |n|
+          puts 'do something error prone'
+        rescue SomeException
+          puts 'error handling'
+        else
+          puts 'normal handling'
+        end)
+      RUBY
+    end
+
+    it 'accepts a correctly aligned else with an assignment and an operator method call' do
+      expect_no_offenses(<<~RUBY)
+        result = foo << array_like.map do |n|
+          puts 'do something error prone'
+        rescue SomeException
+          puts 'error handling'
+        else
+          puts 'normal handling'
+        end
+      RUBY
+    end
+
+    it 'registers an offense for misaligned else when the block is within an operator method call' do
+      expect_offense(<<~RUBY)
+        foo << array_like.map do |n|
+          puts 'do something error prone'
+        rescue SomeException
+          puts 'error handling'
+          else
+          ^^^^ Align `else` with `foo`.
+          puts 'normal handling'
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        foo << array_like.map do |n|
+          puts 'do something error prone'
+        rescue SomeException
+          puts 'error handling'
+        else
+          puts 'normal handling'
+        end
+      RUBY
+    end
+
     it 'registers an offense for misaligned else' do
       expect_offense(<<~RUBY)
         array_like.each do |n|
@@ -606,6 +982,18 @@ RSpec.describe RuboCop::Cop::Layout::ElseAlignment, :config do
           puts 'error handling'
           else
           ^^^^ Align `else` with `array_like.each`.
+          puts 'normal handling'
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        array_like.each do |n|
+          puts 'do something error prone'
+        rescue SomeException
+          puts 'error handling'
+        rescue
+          puts 'error handling'
+        else
           puts 'normal handling'
         end
       RUBY

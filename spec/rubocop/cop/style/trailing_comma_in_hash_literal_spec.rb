@@ -30,19 +30,25 @@ RSpec.describe RuboCop::Cop::Style::TrailingCommaInHashLiteral, :config do
     context 'when EnforcedStyleForMultiline is no_comma' do
       let(:cop_config) { { 'EnforcedStyleForMultiline' => 'no_comma' } }
 
-      include_examples 'single line lists', ''
+      it_behaves_like 'single line lists', ''
     end
 
     context 'when EnforcedStyleForMultiline is comma' do
       let(:cop_config) { { 'EnforcedStyleForMultiline' => 'comma' } }
 
-      include_examples 'single line lists', ', unless each item is on its own line'
+      it_behaves_like 'single line lists', ', unless each item is on its own line'
+    end
+
+    context 'when EnforcedStyleForMultiline is diff_comma' do
+      let(:cop_config) { { 'EnforcedStyleForMultiline' => 'diff_comma' } }
+
+      it_behaves_like 'single line lists', ', unless that item immediately precedes a newline'
     end
 
     context 'when EnforcedStyleForMultiline is consistent_comma' do
       let(:cop_config) { { 'EnforcedStyleForMultiline' => 'consistent_comma' } }
 
-      include_examples 'single line lists', ', unless items are split onto multiple lines'
+      it_behaves_like 'single line lists', ', unless items are split onto multiple lines'
     end
   end
 
@@ -174,6 +180,99 @@ RSpec.describe RuboCop::Cop::Style::TrailingCommaInHashLiteral, :config do
       end
     end
 
+    context 'when EnforcedStyleForMultiline is diff_comma' do
+      let(:cop_config) { { 'EnforcedStyleForMultiline' => 'diff_comma' } }
+
+      context 'when closing bracket is on same line as last value' do
+        it 'accepts a literal with no trailing comma' do
+          expect_no_offenses(<<~RUBY)
+            VALUES = {
+                       a: "b",
+                       b: "c",
+                       d: "e"}
+          RUBY
+        end
+      end
+
+      it 'registers an offense for no trailing comma' do
+        expect_offense(<<~RUBY)
+          MAP = { a: 1001,
+                  b: 2020,
+                  c: 3333
+                  ^^^^^^^ Put a comma after the last item of a multiline hash.
+          }
+        RUBY
+
+        expect_correction(<<~RUBY)
+          MAP = { a: 1001,
+                  b: 2020,
+                  c: 3333,
+          }
+        RUBY
+      end
+
+      it 'accepts trailing comma' do
+        expect_no_offenses(<<~RUBY)
+          MAP = {
+                  a: 1001,
+                  b: 2020,
+                  c: 3333,
+                }
+        RUBY
+      end
+
+      it 'accepts trailing comma with comment' do
+        expect_no_offenses(<<~RUBY)
+          MAP = {
+                  a: 1001,
+                  b: 2020,
+                  c: 3333, # comment
+                }
+        RUBY
+      end
+
+      it 'registers an offense for a trailing comma on same line as closing brace' do
+        expect_offense(<<~RUBY)
+          MAP = { a: 1001,
+                  b: 2020,
+                  c: 3333, }
+                         ^ Avoid comma after the last item of a hash, unless that item immediately precedes a newline.
+        RUBY
+
+        expect_correction(<<~RUBY)
+          MAP = { a: 1001,
+                  b: 2020,
+                  c: 3333 }
+        RUBY
+      end
+
+      it 'accepts trailing comma after a heredoc' do
+        expect_no_offenses(<<~RUBY)
+          route(help: {
+            'auth' => <<-HELP.chomp,
+          ...
+          HELP
+          })
+        RUBY
+      end
+
+      it 'accepts a multiline hash with a single pair and trailing comma' do
+        expect_no_offenses(<<~RUBY)
+          bar = {
+            a: 123,
+          }
+        RUBY
+      end
+
+      it 'accepts a multiline hash with pairs on a single line and trailing comma' do
+        expect_no_offenses(<<~RUBY)
+          bar = {
+            a: 1001, b: 2020,
+          }
+        RUBY
+      end
+    end
+
     context 'when EnforcedStyleForMultiline is consistent_comma' do
       let(:cop_config) { { 'EnforcedStyleForMultiline' => 'consistent_comma' } }
 
@@ -223,6 +322,21 @@ RSpec.describe RuboCop::Cop::Style::TrailingCommaInHashLiteral, :config do
         RUBY
       end
 
+      it 'registers an offense for no trailing comma on same line as closing brace' do
+        expect_offense(<<~RUBY)
+          MAP = { a: 1001,
+                  b: 2020,
+                  c: 3333 }
+                  ^^^^^^^ Put a comma after the last item of a multiline hash.
+        RUBY
+
+        expect_correction(<<~RUBY)
+          MAP = { a: 1001,
+                  b: 2020,
+                  c: 3333, }
+        RUBY
+      end
+
       it 'accepts trailing comma after a heredoc' do
         expect_no_offenses(<<~RUBY)
           route(help: {
@@ -241,7 +355,7 @@ RSpec.describe RuboCop::Cop::Style::TrailingCommaInHashLiteral, :config do
         RUBY
       end
 
-      it 'accepts a multiline hash with pairs on a single line andtrailing comma' do
+      it 'accepts a multiline hash with pairs on a single line and trailing comma' do
         expect_no_offenses(<<~RUBY)
           bar = {
             a: 1001, b: 2020,

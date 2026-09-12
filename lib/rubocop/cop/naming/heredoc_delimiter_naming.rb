@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Naming
-      # This cop checks that your heredocs are using meaningful delimiters.
+      # Checks that your heredocs are using meaningful delimiters.
       # By default it disallows `END` and `EO*`, and can be configured through
       # forbidden listing additional delimiters.
       #
@@ -31,7 +31,9 @@ module RuboCop
         def on_heredoc(node)
           return if meaningful_delimiters?(node)
 
-          add_offense(node.loc.heredoc_end)
+          range = node.children.empty? ? node : node.loc.heredoc_end
+
+          add_offense(range)
         end
 
         private

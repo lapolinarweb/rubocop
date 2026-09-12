@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Lint
-      # This cop checks for unneeded usages of splat expansion
+      # Checks for unneeded usages of splat expansion.
       #
       # @example
       #
@@ -77,7 +77,7 @@ module RuboCop
         PERCENT_CAPITAL_W = '%W'
         PERCENT_I = '%i'
         PERCENT_CAPITAL_I = '%I'
-        ASSIGNMENT_TYPES = %i[lvasgn ivasgn cvasgn gvasgn].freeze
+        ASSIGNMENT_TYPES = %i[lvasgn ivasgn cvasgn gvasgn casgn].freeze
 
         # @!method array_new?(node)
         def_node_matcher :array_new?, <<~PATTERN
@@ -122,6 +122,10 @@ module RuboCop
 
               grandparent = node.parent.parent
               return if grandparent && !ASSIGNMENT_TYPES.include?(grandparent.type)
+            # An empty array/percent literal (`*[]`, `*%w()`, ...) expands to nothing, so
+            # removing the splat would produce invalid or semantically different code.
+            elsif expanded_item.array_type? && expanded_item.children.empty?
+              return
             end
 
             yield
@@ -135,20 +139,22 @@ module RuboCop
           grandparent.array_type? && grandparent.children.size > 1
         end
 
+        # rubocop:disable-next Metrics/AbcSize
         def replacement_range_and_content(node)
-          variable, = *node
-          loc = node.loc
-          expression = loc.expression
+          variable = node.children.first
+          expression = node.source_range
 
           if array_new?(variable)
-            expression = node.parent.loc.expression if node.parent.array_type?
+            expression = node.parent.source_range if node.parent.array_type?
             [expression, variable.source]
           elsif !variable.array_type?
-            [expression, "[#{variable.source}]"]
+            replacement = variable.source
+            replacement = "[#{replacement}]" if wrap_in_brackets?(node)
+            [expression, replacement]
           elsif redundant_brackets?(node)
             [expression, remove_brackets(variable)]
           else
-            [loc.operator, '']
+            [node.loc.operator, '']
           end
         end
 
@@ -157,7 +163,7 @@ module RuboCop
         end
 
         def method_argument?(node)
-          node.parent.send_type?
+          node.parent.call_type?
         end
 
         def part_of_an_array?(node)
@@ -171,8 +177,12 @@ module RuboCop
           parent = node.parent
           grandparent = node.parent.parent
 
-          parent.when_type? || parent.send_type? || part_of_an_array?(node) ||
+          parent.when_type? || method_argument?(node) || part_of_an_array?(node) ||
             grandparent&.resbody_type?
+        end
+
+        def wrap_in_brackets?(node)
+          node.parent.array_type? && !node.parent.bracketed?
         end
 
         def remove_brackets(array)
@@ -196,7 +206,7 @@ module RuboCop
         def use_percent_literal_array_argument?(node)
           argument = node.children.first
 
-          node.parent.send_type? &&
+          method_argument?(node) &&
             (argument.percent_literal?(:string) || argument.percent_literal?(:symbol))
         end
 

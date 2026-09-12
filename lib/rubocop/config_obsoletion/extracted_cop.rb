@@ -15,7 +15,7 @@ module RuboCop
       end
 
       def violated?
-        return false if feature_loaded?
+        return false if plugin_loaded?
 
         affected_cops.any?
       end
@@ -33,11 +33,16 @@ module RuboCop
         return old_name unless old_name.end_with?('*')
 
         # Handle whole departments (expressed as `Department/*`)
-        config.keys.grep(Regexp.new("^#{department}"))
+        config.keys.select do |key|
+          key == department || key.start_with?("#{department}/")
+        end
       end
 
-      def feature_loaded?
-        config.loaded_features.include?(gem)
+      def plugin_loaded?
+        # Plugins loaded via `plugins` are Plugin objects with an `about.name` attribute.
+        # Plugins loaded via `require` are included in `loaded_features` as strings.
+        config.loaded_plugins.any? { |plugin| plugin.about.name == gem } ||
+          config.loaded_features.include?(gem)
       end
     end
   end

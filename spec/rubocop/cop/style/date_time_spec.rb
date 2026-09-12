@@ -6,7 +6,7 @@ RSpec.describe RuboCop::Cop::Style::DateTime, :config do
   it 'registers an offense when using DateTime for current time' do
     expect_offense(<<~RUBY)
       DateTime.now
-      ^^^^^^^^^^^^ Prefer Time over DateTime.
+      ^^^^^^^^^^^^ Prefer `Time` over `DateTime`.
     RUBY
 
     expect_correction(<<~RUBY)
@@ -14,10 +14,21 @@ RSpec.describe RuboCop::Cop::Style::DateTime, :config do
     RUBY
   end
 
+  it 'registers an offense when using DateTime for current time with safe navigation operator' do
+    expect_offense(<<~RUBY)
+      DateTime&.now
+      ^^^^^^^^^^^^^ Prefer `Time` over `DateTime`.
+    RUBY
+
+    expect_correction(<<~RUBY)
+      Time&.now
+    RUBY
+  end
+
   it 'registers an offense when using ::DateTime for current time' do
     expect_offense(<<~RUBY)
       ::DateTime.now
-      ^^^^^^^^^^^^^^ Prefer Time over DateTime.
+      ^^^^^^^^^^^^^^ Prefer `Time` over `DateTime`.
     RUBY
 
     expect_correction(<<~RUBY)
@@ -28,7 +39,7 @@ RSpec.describe RuboCop::Cop::Style::DateTime, :config do
   it 'registers an offense when using DateTime for modern date' do
     expect_offense(<<~RUBY)
       DateTime.iso8601('2016-06-29')
-      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Prefer Time over DateTime.
+      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Prefer `Time` over `DateTime`.
     RUBY
 
     expect_correction(<<~RUBY)
@@ -52,6 +63,10 @@ RSpec.describe RuboCop::Cop::Style::DateTime, :config do
     expect_no_offenses("::DateTime.iso8601('2016-06-29', ::Date::ITALY)")
   end
 
+  it 'does not register an offense when using DateTime with safe navigation for historic date' do
+    expect_no_offenses("DateTime&.iso8601('1751-04-23', Date::ENGLAND)")
+  end
+
   it 'does not register an offense when using DateTime in another namespace' do
     expect_no_offenses('Icalendar::Values::DateTime.new(start_at)')
   end
@@ -62,7 +77,22 @@ RSpec.describe RuboCop::Cop::Style::DateTime, :config do
     it 'registers an offense' do
       expect_offense(<<~RUBY)
         thing.to_datetime
-        ^^^^^^^^^^^^^^^^^ Do not use #to_datetime.
+        ^^^^^^^^^^^^^^^^^ Do not use `#to_datetime`.
+      RUBY
+    end
+
+    it 'registers an offense when using safe navigation operator' do
+      expect_offense(<<~RUBY)
+        thing&.to_datetime
+        ^^^^^^^^^^^^^^^^^^ Do not use `#to_datetime`.
+      RUBY
+    end
+
+    it 'does not register an offense for a bare `to_datetime` call on implicit self' do
+      expect_no_offenses(<<~RUBY)
+        def to_time
+          to_datetime
+        end
       RUBY
     end
   end

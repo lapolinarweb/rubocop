@@ -3,30 +3,30 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for extra underscores in variable assignment.
+      # Checks for extra underscores in variable assignment.
       #
       # @example
       #   # bad
-      #   a, b, _ = foo()
-      #   a, b, _, = foo()
-      #   a, _, _ = foo()
-      #   a, _, _, = foo()
+      #   a, b, _ = foo
+      #   a, b, _, = foo
+      #   a, _, _ = foo
+      #   a, _, _, = foo
       #
       #   # good
-      #   a, b, = foo()
-      #   a, = foo()
-      #   *a, b, _ = foo()
+      #   a, b, = foo
+      #   a, = foo
+      #   *a, b, _ = foo
       #   # => We need to know to not include 2 variables in a
-      #   a, *b, _ = foo()
-      #   # => The correction `a, *b, = foo()` is a syntax error
+      #   a, *b, _ = foo
+      #   # => The correction `a, *b, = foo` is a syntax error
       #
       # @example AllowNamedUnderscoreVariables: true (default)
       #   # good
-      #   a, b, _something = foo()
+      #   a, b, _something = foo
       #
       # @example AllowNamedUnderscoreVariables: false
       #   # bad
-      #   a, b, _something = foo()
+      #   a, b, _something = foo
       #
       class TrailingUnderscoreVariable < Base
         include SurroundingSpace
@@ -94,7 +94,7 @@ module RuboCop
         end
 
         def unneeded_ranges(node)
-          node.masgn_type? ? (mlhs_node, = *node) : mlhs_node = node
+          mlhs_node = node.masgn_type? ? node.lhs : node
           variables = *mlhs_node
 
           main_offense = main_node_offense(node)
@@ -106,16 +106,14 @@ module RuboCop
         end
 
         def main_node_offense(node)
-          node.masgn_type? ? (mlhs_node, right = *node) : mlhs_node = node
-
+          mlhs_node = node.masgn_type? ? node.lhs : node
           variables = *mlhs_node
+
           first_offense = find_first_offense(variables)
 
           return unless first_offense
 
-          if unused_variables_only?(first_offense, variables)
-            return unused_range(node.type, mlhs_node, right)
-          end
+          return unused_range(node, mlhs_node) if unused_variables_only?(first_offense, variables)
 
           return range_for_parentheses(first_offense, mlhs_node) if Util.parentheses?(mlhs_node)
 
@@ -130,13 +128,14 @@ module RuboCop
           offense.source_range == variables.first.source_range
         end
 
-        def unused_range(node_type, mlhs_node, right)
+        def unused_range(node, mlhs_node)
           start_range = mlhs_node.source_range.begin_pos
 
-          end_range = case node_type
-                      when :masgn
-                        right.source_range.begin_pos
-                      when :mlhs
+          # `node` can be an `mlhs` when recursing into a nested destructuring
+          # group; only a `masgn` has a right-hand side to anchor against.
+          end_range = if node.masgn_type?
+                        node.rhs.source_range.begin_pos
+                      else
                         mlhs_node.source_range.end_pos
                       end
 
@@ -144,7 +143,7 @@ module RuboCop
         end
 
         def range_for_parentheses(offense, left)
-          range_between(offense.source_range.begin_pos - 1, left.loc.expression.end_pos - 1)
+          range_between(offense.source_range.begin_pos - 1, left.source_range.end_pos - 1)
         end
       end
     end

@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Style
-      # This cop can check for array literals made up of word-like
+      # Checks for array literals made up of word-like
       # strings, that are not using the %w() syntax.
       #
       # Alternatively, it can check for uses of the %w() syntax, in projects
@@ -27,6 +27,25 @@ module RuboCop
       #   # bad (contains spaces)
       #   %w[foo\ bar baz\ quux]
       #
+      #   # bad
+      #   [
+      #     ['one', 'One'],
+      #     ['two', 'Two']
+      #   ]
+      #
+      #   # good
+      #   [
+      #     %w[one One],
+      #     %w[two Two]
+      #   ]
+      #
+      #   # good (2d array containing spaces)
+      #   [
+      #     ['one', 'One'],
+      #     ['two', 'Two'],
+      #     ['forty two', 'Forty Two']
+      #   ]
+      #
       # @example EnforcedStyle: brackets
       #   # good
       #   ['foo', 'bar', 'baz']
@@ -36,6 +55,19 @@ module RuboCop
       #
       #   # good (contains spaces)
       #   ['foo bar', 'baz quux']
+      #
+      #   # good
+      #   [
+      #     ['one', 'One'],
+      #     ['two', 'Two']
+      #   ]
+      #
+      #   # bad
+      #   [
+      #     %w[one One],
+      #     %w[two Two]
+      #   ]
+      #
       class WordArray < Base
         include ArrayMinSize
         include ArraySyntax
@@ -44,15 +76,26 @@ module RuboCop
         extend AutoCorrector
 
         PERCENT_MSG = 'Use `%w` or `%W` for an array of words.'
-        ARRAY_MSG = 'Use `%<prefer>s` for an array of words.'
+        ARRAY_MSG = 'Use %<prefer>s for an array of words.'
 
         class << self
           attr_accessor :largest_brackets
         end
 
+        def on_new_investigation
+          super
+
+          # Prevent O(n2) checks (checking the entire matrix once for each child array) by caching
+          @matrix_of_complex_content_cache = Hash.new do |cache, node|
+            cache[node] = matrix_of_complex_content?(node)
+          end
+        end
+
         def on_array(node)
           if bracketed_array_of?(:str, node)
+            return if node.values.any?(&:heredoc?)
             return if complex_content?(node.values)
+            return if within_matrix_of_complex_content?(node)
 
             check_bracketed_array(node, 'w')
           elsif node.percent_literal?(:string)
@@ -62,6 +105,17 @@ module RuboCop
 
         private
 
+        def within_matrix_of_complex_content?(node)
+          return false unless (parent = node.parent)
+
+          parent.array_type? && @matrix_of_complex_content_cache[parent]
+        end
+
+        def matrix_of_complex_content?(array)
+          array.values.all?(&:array_type?) &&
+            array.values.any? { |subarray| complex_content?(subarray.values) }
+        end
+
         def complex_content?(strings, complex_regex: word_regex)
           strings.any? do |s|
             next unless s.str_content
@@ -69,7 +123,7 @@ module RuboCop
             string = s.str_content.dup.force_encoding(::Encoding::UTF_8)
             !string.valid_encoding? ||
               (complex_regex && !complex_regex.match?(string)) ||
-              / /.match?(string)
+              string.include?(' ')
           end
         end
 
@@ -83,17 +137,18 @@ module RuboCop
         end
 
         def build_bracketed_array(node)
+          return '[]' if node.children.empty?
+
           words = node.children.map do |word|
             if word.dstr_type?
               string_literal = to_string_literal(word.source)
 
-              trim_string_interporation_escape_character(string_literal)
+              trim_string_interpolation_escape_character(string_literal)
             else
               to_string_literal(word.children[0])
             end
           end
-
-          "[#{words.join(', ')}]"
+          build_bracketed_array_with_appropriate_whitespace(elements: words, node: node)
         end
       end
     end

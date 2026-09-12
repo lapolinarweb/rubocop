@@ -88,6 +88,72 @@ RSpec.describe RuboCop::Cop::Lint::NestedMethodDefinition, :config do
     RUBY
   end
 
+  it 'does not register offense for definition of method on instance var' do
+    expect_no_offenses(<<~RUBY)
+      class Foo
+        def x
+          def @obj.y
+          end
+        end
+      end
+    RUBY
+  end
+
+  it 'does not register offense for definition of method on class var' do
+    expect_no_offenses(<<~RUBY)
+      class Foo
+        def x
+          def @@obj.y
+          end
+        end
+      end
+    RUBY
+  end
+
+  it 'does not register offense for definition of method on global var' do
+    expect_no_offenses(<<~RUBY)
+      class Foo
+        def x
+          def $obj.y
+          end
+        end
+      end
+    RUBY
+  end
+
+  it 'does not register offense for definition of method on constant' do
+    expect_no_offenses(<<~RUBY)
+      class Foo
+        def x
+          def Const.y
+          end
+        end
+      end
+    RUBY
+  end
+
+  it 'does not register offense for definition of method on method call' do
+    expect_no_offenses(<<~RUBY)
+      class Foo
+        def x
+          def do_something.y
+          end
+        end
+      end
+    RUBY
+  end
+
+  it 'does not register offense for definition of method on safe navigation method call' do
+    expect_no_offenses(<<~RUBY)
+      class Foo
+        def x
+          def (do_something&.y).z
+          end
+        end
+      end
+    RUBY
+  end
+
   it 'does not register offense for nested definition inside class_eval' do
     expect_no_offenses(<<~RUBY)
       class Foo
@@ -265,5 +331,214 @@ RSpec.describe RuboCop::Cop::Lint::NestedMethodDefinition, :config do
         end
       end
     RUBY
+  end
+
+  it 'does not register offense for nested definition inside `Module.new` with block' do
+    expect_no_offenses(<<~RUBY)
+      class Foo
+        def self.define
+          Module.new do |m|
+            def y
+            end
+
+            do_something(m)
+          end
+        end
+      end
+    RUBY
+  end
+
+  context 'when Ruby >= 2.7', :ruby27 do
+    it 'does not register offense for nested definition inside `Module.new` with numblock' do
+      expect_no_offenses(<<~RUBY)
+        class Foo
+          def self.define
+            Module.new do
+              def y
+              end
+
+              do_something(_1)
+            end
+          end
+        end
+      RUBY
+    end
+
+    it 'does not register offense for nested definition inside instance_eval with a numblock' do
+      expect_no_offenses(<<~RUBY)
+        class Foo
+          def x(obj)
+            obj.instance_eval do
+              @bar = _1
+              def y
+              end
+            end
+          end
+        end
+      RUBY
+    end
+
+    it 'does not register offense for nested definition inside instance_exec with a numblock' do
+      expect_no_offenses(<<~RUBY)
+        class Foo
+          def x(obj)
+            obj.instance_exec(3) do
+              @bar = _1
+              def y
+              end
+            end
+          end
+        end
+      RUBY
+    end
+  end
+
+  context 'Ruby >= 3.4', :ruby34 do
+    it 'does not register offense for nested definition inside `Module.new` with itblock' do
+      expect_no_offenses(<<~RUBY)
+        class Foo
+          def self.define
+            Module.new do
+              def y
+              end
+
+              do_something(it)
+            end
+          end
+        end
+      RUBY
+    end
+
+    it 'does not register offense for nested definition inside instance_eval with itblock' do
+      expect_no_offenses(<<~RUBY)
+        class Foo
+          def x(obj)
+            obj.instance_eval do
+              @bar = it
+              def y
+              end
+            end
+          end
+        end
+      RUBY
+    end
+
+    it 'does not register offense for nested definition inside instance_exec with itblock' do
+      expect_no_offenses(<<~RUBY)
+        class Foo
+          def x(obj)
+            obj.instance_exec(3) do
+              @bar = it
+              def y
+              end
+            end
+          end
+        end
+      RUBY
+    end
+  end
+
+  context 'when Ruby >= 3.2', :ruby32 do
+    it 'does not register offense for nested definition inside `Data.define`' do
+      expect_no_offenses(<<~RUBY)
+        class Foo
+          def self.define
+            Data.define(:name) do
+              def y
+              end
+            end
+          end
+        end
+
+        class Foo
+          def self.define
+            Data.define do
+              def y
+              end
+            end
+          end
+        end
+      RUBY
+    end
+
+    it 'does not register offense for nested definition inside `::Data.define`' do
+      expect_no_offenses(<<~RUBY)
+        class Foo
+          def self.define
+            ::Data.define(:name) do
+              def y
+              end
+            end
+          end
+        end
+
+        class Foo
+          def self.define
+            ::Data.define do
+              def y
+              end
+            end
+          end
+        end
+      RUBY
+    end
+  end
+
+  context 'when `AllowedMethods: [has_many]`' do
+    let(:cop_config) do
+      { 'AllowedMethods' => ['has_many'] }
+    end
+
+    it 'does not register offense for nested definition inside `has_many`' do
+      expect_no_offenses(<<~RUBY)
+        def do_something
+          has_many :articles do
+            def find_or_create_by_name(name)
+            end
+          end
+        end
+      RUBY
+    end
+
+    it 'registers an offense for nested definition inside `denied_method`' do
+      expect_offense(<<~RUBY)
+        def do_something
+          denied_method :articles do
+            def find_or_create_by_name(name)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Method definitions must not be nested. Use `lambda` instead.
+            end
+          end
+        end
+      RUBY
+    end
+  end
+
+  context 'when `AllowedPatterns: [baz]`' do
+    let(:cop_config) do
+      { 'AllowedPatterns' => ['baz'] }
+    end
+
+    it 'does not register offense for nested definition inside `do_baz`' do
+      expect_no_offenses(<<~RUBY)
+        def foo(obj)
+          obj.do_baz do
+            def bar
+            end
+          end
+        end
+      RUBY
+    end
+
+    it 'registers an offense for nested definition inside `do_qux`' do
+      expect_offense(<<~RUBY)
+        def foo(obj)
+          obj.do_qux do
+            def bar
+            ^^^^^^^ Method definitions must not be nested. Use `lambda` instead.
+            end
+          end
+        end
+      RUBY
+    end
   end
 end

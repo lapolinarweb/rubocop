@@ -7,8 +7,6 @@ RSpec.describe RuboCop::Cop::Lint::RedundantCopDisableDirective, :config do
     let(:offenses) { [] }
     let(:cop) { cop_class.new(config, cop_options, offenses) }
 
-    before { $stderr = StringIO.new } # rubocop:disable RSpec/ExpectOutput
-
     context 'when there are no disabled lines' do
       let(:source) { '' }
 
@@ -20,6 +18,134 @@ RSpec.describe RuboCop::Cop::Lint::RedundantCopDisableDirective, :config do
     context 'when there are disabled lines' do
       context 'and there are no offenses' do
         context 'and a comment disables' do
+          context 'a cop that is disabled in the config' do
+            let(:other_cops) { { 'Metrics/MethodLength' => { 'Enabled' => false } } }
+
+            let(:offenses) do
+              [
+                RuboCop::Cop::Offense.new(:convention,
+                                          FakeLocation.new(line: 7, column: 0),
+                                          'Method has too many lines.',
+                                          'Metrics/MethodLength')
+              ]
+            end
+
+            it 'returns an offense when disabling same cop' do
+              expect_offense(<<~RUBY)
+                # rubocop:disable Metrics/MethodLength
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Unnecessary disabling of `Metrics/MethodLength`.
+              RUBY
+
+              expect_correction('')
+            end
+
+            it 'removes a standalone directive together with its `--` reason' do
+              expect_offense(<<~RUBY)
+                # rubocop:disable Metrics/MethodLength -- kept for documentation purposes
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Unnecessary disabling of `Metrics/MethodLength`.
+              RUBY
+
+              expect_correction('')
+            end
+
+            describe 'when that cop was previously enabled' do
+              it 'returns no offense' do
+                expect_no_offenses(<<~RUBY)
+                  # rubocop:enable Metrics/MethodLength
+                  foo
+                  # rubocop:disable Metrics/MethodLength
+                RUBY
+              end
+            end
+
+            describe 'if that cop has offenses' do
+              it 'returns an offense' do
+                expect_offense(<<~RUBY)
+                  # rubocop:disable Metrics/MethodLength
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Unnecessary disabling of `Metrics/MethodLength`.
+                RUBY
+
+                expect_correction('')
+              end
+            end
+          end
+
+          context 'a cop that is disabled in the config, around `push`/`pop` blocks' do
+            let(:other_cops) { { 'Metrics/MethodLength' => { 'Enabled' => false } } }
+
+            it 'returns no offense for a single block' do
+              expect_no_offenses(<<~RUBY)
+                # rubocop:push -Style/For
+                foo
+                # rubocop:pop
+              RUBY
+            end
+
+            it 'returns no offense for repeated blocks' do
+              expect_no_offenses(<<~RUBY)
+                # rubocop:push -Style/For
+                foo
+                # rubocop:pop
+
+                # rubocop:push -Style/For
+                bar
+                # rubocop:pop
+              RUBY
+            end
+          end
+
+          context 'a cop that is pending in the config' do
+            let(:other_cops) { { 'Metrics/MethodLength' => { 'Enabled' => 'pending' } } }
+
+            it 'returns no offense when the pending cop does not run' do
+              expect_no_offenses(<<~RUBY)
+                # rubocop:disable Metrics/MethodLength
+                foo
+              RUBY
+            end
+
+            context 'when pending cops are enabled via `NewCops: enable`' do
+              let(:other_cops) do
+                {
+                  'AllCops' => { 'NewCops' => 'enable' },
+                  'Metrics/MethodLength' => { 'Enabled' => 'pending' }
+                }
+              end
+
+              it 'returns an offense' do
+                expect_offense(<<~RUBY)
+                  # rubocop:disable Metrics/MethodLength
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Unnecessary disabling of `Metrics/MethodLength`.
+                  foo
+                RUBY
+              end
+            end
+          end
+
+          context 'a department that is disabled in the config' do
+            let(:config) do
+              RuboCop::Config.new('Metrics' => { 'Enabled' => false })
+            end
+
+            it 'returns an offense when same department is disabled' do
+              expect_offense(<<~RUBY)
+                # rubocop:disable Metrics
+                ^^^^^^^^^^^^^^^^^^^^^^^^^ Unnecessary disabling of `Metrics` department.
+              RUBY
+
+              expect_correction('')
+            end
+
+            it 'returns an offense when cop from this department is disabled' do
+              expect_offense(<<~RUBY)
+                # rubocop:disable Metrics/MethodLength
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Unnecessary disabling of `Metrics/MethodLength`.
+              RUBY
+
+              expect_correction('')
+            end
+          end
+
           context 'one cop' do
             it 'returns an offense' do
               expect_offense(<<~RUBY)
@@ -32,13 +158,34 @@ RSpec.describe RuboCop::Cop::Lint::RedundantCopDisableDirective, :config do
           end
 
           context 'an unknown cop' do
-            it 'returns an offense' do
+            it 'returns an offense without removing the directive' do
               expect_offense(<<~RUBY)
                 # rubocop:disable UnknownCop
                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Unnecessary disabling of `UnknownCop` (unknown cop).
               RUBY
 
-              expect_correction('')
+              expect_no_corrections
+            end
+          end
+
+          context 'an unknown cop alongside a cop with offenses' do
+            let(:offenses) do
+              [
+                RuboCop::Cop::Offense.new(:convention,
+                                          FakeLocation.new(line: 2, column: 0),
+                                          'Method has too many lines.',
+                                          'Metrics/MethodLength')
+              ]
+            end
+
+            it 'returns an offense without removing the unknown cop from the directive' do
+              expect_offense(<<~RUBY)
+                # rubocop:disable UnknownCop, Metrics/MethodLength
+                                  ^^^^^^^^^^ Unnecessary disabling of `UnknownCop` (unknown cop).
+                def m; end
+              RUBY
+
+              expect_no_corrections
             end
           end
 
@@ -93,6 +240,8 @@ RSpec.describe RuboCop::Cop::Lint::RedundantCopDisableDirective, :config do
                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ <
                 Unnecessary disabling of `Metrics/ClassLength`, `Metrics/MethodLength`.
               RUBY
+
+              expect_correction('')
             end
           end
 
@@ -100,7 +249,7 @@ RSpec.describe RuboCop::Cop::Lint::RedundantCopDisableDirective, :config do
             let(:offenses) do
               [
                 RuboCop::Cop::Offense.new(:convention,
-                                          OpenStruct.new(line: 7, column: 0),
+                                          FakeLocation.new(line: 7, column: 0),
                                           'Class has too many lines.',
                                           'Metrics/ClassLength')
               ]
@@ -125,7 +274,7 @@ RSpec.describe RuboCop::Cop::Lint::RedundantCopDisableDirective, :config do
             let(:offenses) do
               [
                 RuboCop::Cop::Offense.new(:convention,
-                                          OpenStruct.new(line: 7, column: 0),
+                                          FakeLocation.new(line: 7, column: 0),
                                           'Method has too many lines.',
                                           'Metrics/MethodLength')
               ]
@@ -143,12 +292,37 @@ RSpec.describe RuboCop::Cop::Lint::RedundantCopDisableDirective, :config do
             end
           end
 
+          context 'multiple cops, where a redundant one shares a prefix with a non-redundant one' do
+            let(:offenses) do
+              [
+                RuboCop::Cop::Offense.new(:convention,
+                                          FakeLocation.new(line: 7, column: 0),
+                                          'Ambiguous operator precedence.',
+                                          'Lint/AmbiguousOperatorPrecedence')
+              ]
+            end
+
+            it 'locates and removes the right cop name' do
+              expect_offense(<<~RUBY.gsub("<\n", '')) # Wrap lines & avoid issue with JRuby
+                # rubocop:disable Lint/AmbiguousOperatorPrecedence, Lint/AmbiguousOperator
+                                                                    ^^^^^^^^^^^^^^^^^^^^^^ <
+                Unnecessary disabling of `Lint/AmbiguousOperator`.
+              RUBY
+
+              expect_correction(<<~RUBY)
+                # rubocop:disable Lint/AmbiguousOperatorPrecedence
+              RUBY
+            end
+          end
+
           context 'multiple cops, with abbreviated names' do
+            include_context 'mock console output'
+
             context 'one of them has offenses' do
               let(:offenses) do
                 [
                   RuboCop::Cop::Offense.new(:convention,
-                                            OpenStruct.new(line: 4, column: 0),
+                                            FakeLocation.new(line: 4, column: 0),
                                             'Method has too many lines.',
                                             'Metrics/MethodLength')
                 ]
@@ -164,10 +338,18 @@ RSpec.describe RuboCop::Cop::Lint::RedundantCopDisableDirective, :config do
                   # offense here
                 RUBY
 
+                expect_correction(<<~RUBY)
+                  puts 1
+                  # rubocop:disable MethodLength
+                  #
+                  # offense here
+                RUBY
+
                 expect($stderr.string).to eq(<<~OUTPUT)
                   (string): Warning: no department given for MethodLength.
                   (string): Warning: no department given for ClassLength.
                   (string): Warning: no department given for Debugger.
+                  (string): Warning: no department given for MethodLength.
                 OUTPUT
               end
             end
@@ -178,7 +360,7 @@ RSpec.describe RuboCop::Cop::Lint::RedundantCopDisableDirective, :config do
               let(:offenses) do
                 [
                   RuboCop::Cop::Offense.new(:convention,
-                                            OpenStruct.new(line: 4, column: 0),
+                                            FakeLocation.new(line: 4, column: 0),
                                             'Method has too many lines.',
                                             'Metrics/MethodLength')
                 ]
@@ -192,7 +374,130 @@ RSpec.describe RuboCop::Cop::Lint::RedundantCopDisableDirective, :config do
                   #
                   # offense here
                 RUBY
+
+                expect_correction(<<~RUBY)
+                  puts 1
+                  # rubocop:disable Metrics/MethodLength
+                  #
+                  # offense here
+                RUBY
               end
+            end
+          end
+
+          context 'a `disable-next` directive' do
+            it 'returns an offense and removes the whole comment' do
+              expect_offense(<<~RUBY)
+                # rubocop:disable-next Metrics/MethodLength
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Unnecessary disabling of `Metrics/MethodLength`.
+                def foo
+                  puts 1
+                end
+              RUBY
+
+              expect_correction(<<~RUBY)
+                def foo
+                  puts 1
+                end
+              RUBY
+            end
+
+            it 'returns an offense for a detached directive' do
+              expect_offense(<<~RUBY)
+                puts 1
+                # rubocop:disable-next Metrics/MethodLength
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Unnecessary disabling of `Metrics/MethodLength`.
+              RUBY
+
+              expect_correction(<<~RUBY)
+                puts 1
+              RUBY
+            end
+
+            it 'returns one offense per duplicate stacked directive' do
+              expect_offense(<<~RUBY)
+                # rubocop:disable-next Metrics/MethodLength
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Unnecessary disabling of `Metrics/MethodLength`.
+                # rubocop:disable-next Metrics/MethodLength
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Unnecessary disabling of `Metrics/MethodLength`.
+                def foo
+                  puts 1
+                end
+              RUBY
+            end
+
+            it 'returns an offense without correcting a misplaced EOL directive' do
+              expect_offense(<<~RUBY)
+                puts 1 # rubocop:disable-next Metrics/MethodLength
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Unnecessary disabling of `Metrics/MethodLength`.
+              RUBY
+
+              expect_no_corrections
+            end
+
+            it 'returns an offense for a detached `next` directive' do
+              expect_offense(<<~RUBY)
+                puts 1
+                # rubocop:next -Metrics/MethodLength
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Unnecessary disabling of `Metrics/MethodLength`.
+              RUBY
+
+              expect_correction(<<~RUBY)
+                puts 1
+              RUBY
+            end
+
+            it 'returns an offense without correcting a misplaced EOL `next` directive' do
+              expect_offense(<<~RUBY)
+                puts 1 # rubocop:next -Metrics/MethodLength
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Unnecessary disabling of `Metrics/MethodLength`.
+              RUBY
+
+              expect_no_corrections
+            end
+
+            it 'removes a detached `next` directive with several signed arguments entirely' do
+              expect_offense(<<~RUBY)
+                puts 1
+                # rubocop:next -Metrics/MethodLength +Metrics/AbcSize
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Unnecessary disabling of `Metrics/AbcSize`, `Metrics/MethodLength`.
+              RUBY
+
+              expect_correction(<<~RUBY)
+                puts 1
+              RUBY
+            end
+
+            it 'returns an offense with an enabling message for a detached `enable-next`' do
+              expect_offense(<<~RUBY)
+                puts 1
+                # rubocop:enable-next Metrics/MethodLength
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Unnecessary enabling of `Metrics/MethodLength`.
+              RUBY
+
+              expect_correction(<<~RUBY)
+                puts 1
+              RUBY
+            end
+
+            it 'does not analyze attached `next` arguments for redundancy, aligned with `push`' do
+              expect_no_offenses(<<~RUBY)
+                # rubocop:next -Metrics/MethodLength
+                def foo
+                  puts 1
+                end
+              RUBY
+            end
+          end
+
+          context 'a cop qualified with the wrong department' do
+            it 'returns an offense suggesting the correctly-namespaced cop' do
+              expect_offense(<<~RUBY)
+                # rubocop:disable Style/Void
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Unnecessary disabling of `Style/Void` (did you mean `Lint/Void`?).
+              RUBY
+
+              expect_no_corrections
             end
           end
 
@@ -206,6 +511,30 @@ RSpec.describe RuboCop::Cop::Lint::RedundantCopDisableDirective, :config do
                 # rubocop:disable Metrics/MethodLenght, KlassLength
                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ #{message}
               RUBY
+
+              expect_no_corrections
+            end
+
+            context 'when the department starts with a lowercase letter' do
+              it 'registers an offense' do
+                expect_offense(<<~RUBY)
+                  # rubocop:disable lint/SelfAssignment
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Unnecessary disabling of `lint/SelfAssignment` (did you mean `Lint/SelfAssignment`?).
+                RUBY
+
+                expect_no_corrections
+              end
+            end
+
+            context 'when the cop starts with a lowercase letter' do
+              it 'registers an offense' do
+                expect_offense(<<~RUBY)
+                  # rubocop:disable Lint/selfAssignment
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Unnecessary disabling of `Lint/selfAssignment` (did you mean `Lint/SelfAssignment`?).
+                RUBY
+
+                expect_no_corrections
+              end
             end
           end
 
@@ -215,6 +544,8 @@ RSpec.describe RuboCop::Cop::Lint::RedundantCopDisableDirective, :config do
                 # rubocop : disable all
                 ^^^^^^^^^^^^^^^^^^^^^^^ Unnecessary disabling of all cops.
               RUBY
+
+              expect_correction('')
             end
           end
 
@@ -233,13 +564,62 @@ RSpec.describe RuboCop::Cop::Lint::RedundantCopDisableDirective, :config do
         end
       end
 
+      context 'and there is a multi-line offense' do
+        let(:offenses) do
+          [
+            RuboCop::Cop::Offense.new(:convention,
+                                      FakeLocation.new(line: 1, column: 8, last_line: 2),
+                                      'Avoid parameter lists longer than 5 parameters.',
+                                      'Metrics/ParameterLists')
+          ]
+        end
+
+        it 'returns no offense for a directive on a later line of the offense' do
+          expect_no_offenses(<<~RUBY)
+            def foo(a:, b:, c:,
+                    d:, e:, f:) # rubocop:disable Metrics/ParameterLists
+            end
+          RUBY
+        end
+
+        it 'returns an offense for a directive on a line past the offense' do
+          expect_offense(<<~RUBY)
+            def foo(a:, b:, c:,
+                    d:, e:, f:)
+              do_something # rubocop:disable Metrics/ParameterLists
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Unnecessary disabling of `Metrics/ParameterLists`.
+            end
+          RUBY
+        end
+      end
+
+      context 'and a `disable-next` directive suppresses an offense in its statement' do
+        let(:offenses) do
+          [
+            RuboCop::Cop::Offense.new(:convention,
+                                      FakeLocation.new(line: 2, column: 0, last_line: 4),
+                                      'Method has too many lines.',
+                                      'Metrics/MethodLength')
+          ]
+        end
+
+        it 'returns no offense' do
+          expect_no_offenses(<<~RUBY)
+            # rubocop:disable-next Metrics/MethodLength
+            def foo
+              puts 1
+            end
+          RUBY
+        end
+      end
+
       context 'and there are two offenses' do
         let(:message) { 'Replace class var @@class_var with a class instance var.' }
         let(:cop_name) { 'Style/ClassVars' }
         let(:offenses) do
           offense_lines.map do |line|
             RuboCop::Cop::Offense.new(:convention,
-                                      OpenStruct.new(line: line, column: 3),
+                                      FakeLocation.new(line: line, column: 3),
                                       message,
                                       cop_name)
           end
@@ -263,6 +643,18 @@ RSpec.describe RuboCop::Cop::Lint::RedundantCopDisableDirective, :config do
                   # rubocop:enable Style/ClassVars
                 end
               RUBY
+
+              expect_correction(<<~RUBY)
+                class One
+                  # rubocop:disable Style/ClassVars
+                  @@class_var = 1  # offense here
+                end
+
+                class Two
+                  @@class_var = 2  # offense and here
+                  # rubocop:enable Style/ClassVars
+                end
+              RUBY
             end
           end
 
@@ -279,6 +671,14 @@ RSpec.describe RuboCop::Cop::Lint::RedundantCopDisableDirective, :config do
                   # offense here
                 end
               RUBY
+
+              expect_correction(<<~RUBY)
+                class One
+                  # rubocop:disable all
+                  @@class_var = 1
+                  # offense here
+                end
+              RUBY
             end
           end
         end
@@ -288,7 +688,7 @@ RSpec.describe RuboCop::Cop::Lint::RedundantCopDisableDirective, :config do
         let(:offenses) do
           [
             RuboCop::Cop::Offense.new(:convention,
-                                      OpenStruct.new(line: 3, column: 0),
+                                      FakeLocation.new(line: 3, column: 0),
                                       'Tab detected.',
                                       'Layout/IndentationStyle')
           ]
@@ -312,6 +712,15 @@ RSpec.describe RuboCop::Cop::Lint::RedundantCopDisableDirective, :config do
                 # 4
                 # rubocop:disable Layout/IndentationStyle
                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Unnecessary disabling of `Layout/IndentationStyle`.
+                #
+                # rubocop:enable Layout/IndentationStyle
+              RUBY
+
+              expect_correction(<<~RUBY)
+                # 1
+                # 2
+                # 3, offense here
+                # 4
                 #
                 # rubocop:enable Layout/IndentationStyle
               RUBY
@@ -508,7 +917,7 @@ RSpec.describe RuboCop::Cop::Lint::RedundantCopDisableDirective, :config do
       let(:offenses) do
         [
           RuboCop::Cop::Offense.new(:convention,
-                                    OpenStruct.new(line: 2, column: 0),
+                                    FakeLocation.new(line: 2, column: 0),
                                     'Class has too many lines.',
                                     'Metrics/ClassLength')
         ]
@@ -577,6 +986,94 @@ RSpec.describe RuboCop::Cop::Lint::RedundantCopDisableDirective, :config do
           # rubocop:disable Metrics
           def bar
             do_something
+          end
+        RUBY
+      end
+
+      it 'removes cop duplicated by department and the `--` reason with it' do
+        expect_offense(<<~RUBY)
+          # rubocop:disable Metrics
+          def bar
+            do_something # rubocop:disable Metrics/ClassLength -- the reason
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Unnecessary disabling of `Metrics/ClassLength`.
+          end
+        RUBY
+
+        expect_correction(<<~RUBY)
+          # rubocop:disable Metrics
+          def bar
+            do_something
+          end
+        RUBY
+      end
+
+      it 'removes cop duplicated by department and leaves free text as a comment' do
+        expect_offense(<<~RUBY)
+          # rubocop:disable Metrics
+          def bar
+            do_something # rubocop:disable Metrics/ClassLength - note
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Unnecessary disabling of `Metrics/ClassLength`.
+          end
+        RUBY
+
+        expect_correction(<<~RUBY)
+          # rubocop:disable Metrics
+          def bar
+            do_something # - note
+          end
+        RUBY
+      end
+
+      it 'removes department duplicated by department' do
+        expect_offense(<<~RUBY)
+          # rubocop:disable Metrics
+          class One
+            # rubocop:disable Metrics
+            ^^^^^^^^^^^^^^^^^^^^^^^^^ Unnecessary disabling of `Metrics` department.
+            @@class_var = 1  # offense here
+          end
+          # rubocop:enable Metrics
+        RUBY
+
+        expect_correction(<<~RUBY)
+          # rubocop:disable Metrics
+          class One
+            @@class_var = 1  # offense here
+          end
+          # rubocop:enable Metrics
+        RUBY
+      end
+
+      it 'removes department duplicated by department on previous line' do
+        expect_offense(<<~RUBY)
+          # rubocop:disable Metrics
+          class One
+          @@class_var = 1  # rubocop:disable Metrics
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^ Unnecessary disabling of `Metrics` department.
+          end
+        RUBY
+
+        expect_correction(<<~RUBY)
+          # rubocop:disable Metrics
+          class One
+          @@class_var = 1
+          end
+        RUBY
+      end
+
+      it 'removes department duplicated by department and leaves free text as a comment' do
+        expect_offense(<<~RUBY)
+          # rubocop:disable Metrics
+          def bar
+            do_something # rubocop:disable Metrics - note
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^ Unnecessary disabling of `Metrics` department.
+          end
+        RUBY
+
+        expect_correction(<<~RUBY)
+          # rubocop:disable Metrics
+          def bar
+            do_something # - note
           end
         RUBY
       end

@@ -3,12 +3,12 @@
 module RuboCop
   module Cop
     module Style
-      # This cop enforces consistency when using exponential notation
+      # Enforces consistency when using exponential notation
       # for numbers in the code (eg 1.2e4). Different styles are supported:
       #
       # * `scientific` which enforces a mantissa between 1 (inclusive) and 10 (exclusive).
       # * `engineering` which enforces the exponent to be a multiple of 3 and the mantissa
-      #   to be between 0.1 (inclusive) and 10 (exclusive).
+      #   to be between 0.1 (inclusive) and 1000 (exclusive).
       # * `integral` which enforces the mantissa to always be a whole number without
       #   trailing zeroes.
       #
@@ -59,9 +59,10 @@ module RuboCop
       #
       class ExponentialNotation < Base
         include ConfigurableEnforcedStyle
+
         MESSAGES = {
-          scientific: 'Use a mantissa in [1, 10[.',
-          engineering: 'Use an exponent divisible by 3 and a mantissa in [0.1, 1000[.',
+          scientific: 'Use a mantissa >= 1 and < 10.',
+          engineering: 'Use an exponent divisible by 3 and a mantissa >= 0.1 and < 1000.',
           integral: 'Use an integer as mantissa, without trailing zero.'
         }.freeze
 
@@ -87,7 +88,7 @@ module RuboCop
           true
         end
 
-        def integral(node)
+        def integral?(node)
           mantissa, = node.source.split('e')
           /^-?[1-9](\d*[1-9])?$/.match?(mantissa)
         end
@@ -101,7 +102,7 @@ module RuboCop
           when :engineering
             !engineering?(node)
           when :integral
-            !integral(node)
+            !integral?(node)
           else
             false
           end

@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for uses of methods `Hash#has_key?` and
+      # Checks for uses of methods `Hash#has_key?` and
       # `Hash#has_value?`, and suggests using `Hash#key?` and `Hash#value?` instead.
       #
       # It is configurable to enforce the verbose method names, by using the
@@ -14,22 +14,22 @@ module RuboCop
       #   is a `Hash` or responds to the replacement methods.
       #
       # @example EnforcedStyle: short (default)
-      #  # bad
-      #  Hash#has_key?
-      #  Hash#has_value?
+      #   # bad
+      #   Hash#has_key?
+      #   Hash#has_value?
       #
-      #  # good
-      #  Hash#key?
-      #  Hash#value?
+      #   # good
+      #   Hash#key?
+      #   Hash#value?
       #
       # @example EnforcedStyle: verbose
-      #  # bad
-      #  Hash#key?
-      #  Hash#value?
+      #   # bad
+      #   Hash#key?
+      #   Hash#value?
       #
-      #  # good
-      #  Hash#has_key?
-      #  Hash#has_value?
+      #   # good
+      #   Hash#has_key?
+      #   Hash#has_value?
       class PreferredHashMethods < Base
         include ConfigurableEnforcedStyle
         extend AutoCorrector
@@ -61,7 +61,7 @@ module RuboCop
           if style == :verbose
             "has_#{method_name}"
           else
-            method_name.to_s.sub(/has_/, '')
+            method_name.to_s.delete_prefix('has_')
           end
         end
 

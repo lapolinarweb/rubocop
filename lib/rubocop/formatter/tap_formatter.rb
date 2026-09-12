@@ -29,7 +29,7 @@ module RuboCop
       def report_line(location)
         source_line = location.source_line
 
-        if location.first_line == location.last_line
+        if location.single_line?
           output.puts("# #{source_line}")
         else
           output.puts("# #{source_line} #{yellow(ELLIPSES)}")
@@ -39,8 +39,11 @@ module RuboCop
       def report_highlighted_area(highlighted_area)
         space_area  = highlighted_area.source_buffer.slice(0...highlighted_area.begin_pos)
         source_area = highlighted_area.source
-        output.puts("# #{' ' * Unicode::DisplayWidth.of(space_area)}" \
-                    "#{'^' * Unicode::DisplayWidth.of(source_area)}")
+        output.puts("# #{to_whitespace(space_area)}#{'^' * Unicode::DisplayWidth.of(source_area)}")
+      end
+
+      def to_whitespace(string)
+        "#{string.delete("^\t")}#{' ' * Unicode::DisplayWidth.of(string.delete("\t"))}"
       end
 
       def report_offense(file, offense)
@@ -53,14 +56,10 @@ module RuboCop
           message: message(offense)
         )
 
-        begin
-          return unless valid_line?(offense)
+        return unless valid_line?(offense)
 
-          report_line(offense.location)
-          report_highlighted_area(offense.highlighted_area)
-        rescue IndexError
-          # range is not on a valid line; perhaps the source file is empty
-        end
+        report_line(offense.location)
+        report_highlighted_area(offense.highlighted_area)
       end
 
       def annotate_message(msg)
@@ -69,7 +68,9 @@ module RuboCop
 
       def message(offense)
         message =
-          if offense.corrected_with_todo?
+          if offense.disabled?
+            '[Suppressed] '
+          elsif offense.corrected_with_todo?
             '[Todo] '
           elsif offense.corrected?
             '[Corrected] '

@@ -32,7 +32,7 @@ RSpec.describe RuboCop::Cop::Style::IfInsideElse, :config do
         if b
         ^^ Convert `if` nested inside `else` to `elsif`.
           foo
-        else # This is expected to be auto-corrected by `Layout/IndentationWidth`.
+        else # This is expected to be autocorrected by `Layout/IndentationWidth`.
           bar
         end
       end
@@ -43,7 +43,7 @@ RSpec.describe RuboCop::Cop::Style::IfInsideElse, :config do
         blah
       elsif b
         foo
-        else # This is expected to be auto-corrected by `Layout/IndentationWidth`.
+        else # This is expected to be autocorrected by `Layout/IndentationWidth`.
           bar
       end
     RUBY
@@ -74,6 +74,35 @@ RSpec.describe RuboCop::Cop::Style::IfInsideElse, :config do
     RUBY
   end
 
+  it 'catches an `if..else` nested inside an `else` with comments in both branches' do
+    expect_offense(<<~RUBY)
+      if a
+        foo
+      else
+        if b
+        ^^ Convert `if` nested inside `else` to `elsif`.
+          # this is very important
+          bar # this too
+        else
+          # this three
+          baz # this four
+        end
+      end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      if a
+        foo
+      elsif b
+        # this is very important
+          bar # this too
+        else
+          # this three
+          baz # this four
+      end
+    RUBY
+  end
+
   it 'catches an if..elsif..else nested inside an else' do
     expect_offense(<<~RUBY)
       if a
@@ -82,7 +111,7 @@ RSpec.describe RuboCop::Cop::Style::IfInsideElse, :config do
         if b
         ^^ Convert `if` nested inside `else` to `elsif`.
           foo
-        elsif c # This is expected to be auto-corrected by `Layout/IndentationWidth`.
+        elsif c # This is expected to be autocorrected by `Layout/IndentationWidth`.
             bar
         elsif d
           baz
@@ -97,7 +126,7 @@ RSpec.describe RuboCop::Cop::Style::IfInsideElse, :config do
         blah
       elsif b
         foo
-        elsif c # This is expected to be auto-corrected by `Layout/IndentationWidth`.
+        elsif c # This is expected to be autocorrected by `Layout/IndentationWidth`.
             bar
         elsif d
           baz
@@ -114,7 +143,8 @@ RSpec.describe RuboCop::Cop::Style::IfInsideElse, :config do
       elsif b
         foo
       else
-        bar if condition
+        # important info
+        bar if condition # blabla
             ^^ Convert `if` nested inside `else` to `elsif`.
       end
     RUBY
@@ -125,7 +155,158 @@ RSpec.describe RuboCop::Cop::Style::IfInsideElse, :config do
       elsif b
         foo
       elsif condition
-        bar
+        # important info
+        bar # blabla
+      end
+    RUBY
+  end
+
+  it 'handles a nested `if...then...end`' do
+    expect_offense(<<~RUBY)
+      if x
+        'x'
+      else
+        if y then 'y' end
+        ^^ Convert `if` nested inside `else` to `elsif`.
+      end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      if x
+        'x'
+      else
+        if y
+        'y'
+      end
+      end
+    RUBY
+  end
+
+  it 'handles a nested `if...then...else...end`' do
+    expect_offense(<<~RUBY)
+      if x
+        'x'
+      else
+        if y then 'y' else 'z' end
+        ^^ Convert `if` nested inside `else` to `elsif`.
+      end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      if x
+        'x'
+      elsif y
+        'y'
+        else
+        'z'
+      end
+    RUBY
+  end
+
+  it 'handles a nested `if...then...elsif...end`' do
+    expect_offense(<<~RUBY)
+      if x
+        'x'
+      else
+        if y then 'y' elsif z then 'z' end
+        ^^ Convert `if` nested inside `else` to `elsif`.
+      end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      if x
+        'x'
+      else
+        if y
+        'y'
+        elsif z
+        'z'
+      end
+      end
+    RUBY
+  end
+
+  it 'handles a nested `if...then...elsif...else...end`' do
+    expect_offense(<<~RUBY)
+      if x
+        'x'
+      else
+        if y then 'y' elsif z then 'z' else 'a' end
+        ^^ Convert `if` nested inside `else` to `elsif`.
+      end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      if x
+        'x'
+      elsif y
+        'y'
+        elsif z
+        'z'
+        else
+        'a'
+      end
+    RUBY
+  end
+
+  it 'handles a nested multiline `if...then...elsif...else...end`' do
+    expect_offense(<<~RUBY)
+      if x
+        'x'
+      else
+        if y then 'y'
+        ^^ Convert `if` nested inside `else` to `elsif`.
+        elsif z then 'z'
+        else 'a' end
+      end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      if x
+        'x'
+      else
+        if y
+        'y'
+        elsif z
+        'z'
+        else
+        'a'
+        end
+      end
+    RUBY
+  end
+
+  it 'handles a deep nested multiline `if...then...elsif...else...end`' do
+    expect_offense(<<~RUBY)
+      if cond
+      else
+        if nested_one
+        ^^ Convert `if` nested inside `else` to `elsif`.
+        else
+          if c
+          ^^ Convert `if` nested inside `else` to `elsif`.
+            if d
+            else
+              if e
+              ^^ Convert `if` nested inside `else` to `elsif`.
+              end
+            end
+          end
+        end
+      end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      if cond
+      elsif nested_one
+        else
+          if c
+            if d
+            else
+              if e
+              end
+            end
+          end
       end
     RUBY
   end
@@ -184,6 +365,35 @@ RSpec.describe RuboCop::Cop::Style::IfInsideElse, :config do
         blah
       else
         bar
+        if b
+          foo
+        end
+      end
+    RUBY
+  end
+
+  it "isn't offended if there is a comment before the nested if" do
+    expect_no_offenses(<<~RUBY)
+      if a
+        blah
+      else
+        # Not A!
+
+        if b
+          foo
+        else
+          bar
+        end
+      end
+    RUBY
+  end
+
+  it "isn't offended if there is a comment directly before the nested if" do
+    expect_no_offenses(<<~RUBY)
+      if a
+        blah
+      else
+        # comment
         if b
           foo
         end

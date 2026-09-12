@@ -3,15 +3,17 @@
 module RuboCop
   module Cop
     module Style
-      # This cop looks for uses of `_.each_with_object({}) {...}`,
-      # `_.map {...}.to_h`, and `Hash[_.map {...}]` that are actually just
+      # Looks for uses of `+_.each_with_object({}) {...}+`,
+      # `+_.map {...}.to_h+`, and `+Hash[_.map {...}]+` that are actually just
       # transforming the values of a hash, and tries to use a simpler & faster
       # call to `transform_values` instead.
       #
       # @safety
-      #   This cop is unsafe, as it can produce false positives if we are
-      #   transforming an enumerable of key-value-like pairs that isn't actually
-      #   a hash, e.g.: `[[k1, v1], [k2, v2], ...]`
+      #   This cop identifies the receiver as a hash by checking for literal hash
+      #   syntax and common methods that are known to return hashes (e.g. `to_h`,
+      #   `merge`, `invert`, `group_by`, etc.). However, it is unsafe because it
+      #   is possible for a custom class to define one of these methods and return
+      #   something other than a hash.
       #
       # @example
       #   # bad
@@ -19,24 +21,35 @@ module RuboCop
       #   Hash[{a: 1, b: 2}.collect { |k, v| [k, foo(v)] }]
       #   {a: 1, b: 2}.map { |k, v| [k, v * v] }.to_h
       #   {a: 1, b: 2}.to_h { |k, v| [k, v * v] }
+      #   foo.to_h.each_with_object({}) { |(k, v), h| h[k] = foo(v) }
+      #   foo.merge(bar).map { |k, v| [k, v.to_s] }.to_h
       #
       #   # good
       #   {a: 1, b: 2}.transform_values { |v| foo(v) }
       #   {a: 1, b: 2}.transform_values { |v| v * v }
+      #   foo.to_h.transform_values { |v| foo(v) }
+      #   foo.merge(bar).transform_values { |v| v.to_s }
+      #
+      #   # Won't register an offense - receiver is not known to be a hash
+      #   foo.bar.each_with_object({}) { |(k, v), h| h[k] = v.to_s }
+      #   baz.map { |k, v| [k, v.to_s] }.to_h
       class HashTransformValues < Base
         include HashTransformMethod
         extend AutoCorrector
+        extend TargetRubyVersion
+
+        minimum_target_ruby_version 2.4
 
         # @!method on_bad_each_with_object(node)
         def_node_matcher :on_bad_each_with_object, <<~PATTERN
           (block
-            ({send csend} !#array_receiver? :each_with_object (hash))
+            (call #hash_receiver? :each_with_object (hash))
             (args
               (mlhs
                 (arg _key)
                 (arg $_))
               (arg _memo))
-            ({send csend} (lvar _memo) :[]= $(lvar _key) $!`_memo))
+            (call (lvar _memo) :[]= $(lvar _key) $!`_memo))
         PATTERN
 
         # @!method on_bad_hash_brackets_map(node)
@@ -45,7 +58,7 @@ module RuboCop
             (const _ :Hash)
             :[]
             (block
-              ({send csend} !#array_receiver? {:map :collect})
+              (call #hash_receiver? {:map :collect})
               (args
                 (arg _key)
                 (arg $_))
@@ -54,9 +67,9 @@ module RuboCop
 
         # @!method on_bad_map_to_h(node)
         def_node_matcher :on_bad_map_to_h, <<~PATTERN
-          ({send csend}
+          (call
             (block
-              ({send csend} !#array_receiver? {:map :collect})
+              (call #hash_receiver? {:map :collect})
               (args
                 (arg _key)
                 (arg $_))
@@ -67,7 +80,7 @@ module RuboCop
         # @!method on_bad_to_h(node)
         def_node_matcher :on_bad_to_h, <<~PATTERN
           (block
-            ({send csend} !#array_receiver? :to_h)
+            (call #hash_receiver? :to_h)
             (args
               (arg _key)
               (arg $_))

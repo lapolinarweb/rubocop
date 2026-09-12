@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 RSpec.describe RuboCop::Cop::Style::NumericLiterals, :config do
+  include_context 'with exclude limit tracking'
+
   let(:cop_config) { { 'MinDigits' => 5 } }
 
   it 'registers an offense for a long undelimited integer' do
@@ -167,7 +169,7 @@ RSpec.describe RuboCop::Cop::Style::NumericLiterals, :config do
 
   context 'for --auto-gen-config' do
     let(:enabled) { cop.config_to_allow_offenses['Enabled'] }
-    let(:min_digits) { cop.config_to_allow_offenses.dig(:exclude_limit, 'MinDigits') }
+    let(:min_digits) { read_exclude_limit(cop, 'MinDigits') }
 
     context 'when the number is only digits' do
       it 'detects right value of MinDigits based on the longest number' do
@@ -181,7 +183,7 @@ RSpec.describe RuboCop::Cop::Style::NumericLiterals, :config do
         RUBY
 
         expect(min_digits).to eq(21)
-        expect(enabled.nil?).to be(true)
+        expect(enabled).to be_nil
       end
 
       it 'sets the right value if one is disabled inline' do
@@ -194,7 +196,7 @@ RSpec.describe RuboCop::Cop::Style::NumericLiterals, :config do
         RUBY
 
         expect(min_digits).to eq(13)
-        expect(enabled.nil?).to be(true)
+        expect(enabled).to be_nil
       end
     end
 
@@ -205,8 +207,8 @@ RSpec.describe RuboCop::Cop::Style::NumericLiterals, :config do
           ^^^^^^^^^^^^ [...]
         RUBY
 
-        expect(enabled).to eq(false)
-        expect(min_digits.nil?).to be(true)
+        expect(enabled).to be(false)
+        expect(min_digits).to be_nil
       end
 
       it 'does not disable the cop if the line is disabled' do
@@ -214,8 +216,92 @@ RSpec.describe RuboCop::Cop::Style::NumericLiterals, :config do
           1234_5678_90 # rubocop:disable Style/NumericLiterals
         RUBY
 
-        expect(enabled.nil?).to be(true)
-        expect(min_digits.nil?).to be(true)
+        expect(enabled).to be_nil
+        expect(min_digits).to be_nil
+      end
+    end
+  end
+
+  context 'when `3000` is specified for `AllowedNumbers`' do
+    let(:cop_config) { { 'MinDigits' => 4, 'AllowedNumbers' => [3000] } }
+
+    it 'does not register an offense' do
+      expect_no_offenses(<<~RUBY)
+        3000
+      RUBY
+    end
+
+    it 'registers an offense' do
+      expect_offense(<<~RUBY)
+        1234
+        ^^^^ Use underscores(_) as thousands separator and separate every 3 digits with them.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        1_234
+      RUBY
+    end
+  end
+
+  context "when `'3000'` is specified for `AllowedNumbers`" do
+    let(:cop_config) { { 'MinDigits' => 4, 'AllowedNumbers' => ['3000'] } }
+
+    it 'does not register an offense' do
+      expect_no_offenses(<<~RUBY)
+        3000
+      RUBY
+    end
+
+    it 'registers an offense' do
+      expect_offense(<<~RUBY)
+        1234
+        ^^^^ Use underscores(_) as thousands separator and separate every 3 digits with them.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        1_234
+      RUBY
+    end
+  end
+
+  context 'AllowedPatterns' do
+    let(:cop_config) { { 'AllowedPatterns' => ['\d{2}_\d{2}_\d{4}'] } }
+
+    it 'does not register an offense for numbers that exactly match the pattern' do
+      expect_no_offenses(<<~RUBY)
+        12_34_5678
+      RUBY
+    end
+
+    it 'registers an offense for numbers that do not exactly match the pattern' do
+      expect_offense(<<~RUBY)
+        1234_56_78_9012
+        ^^^^^^^^^^^^^^^ Use underscores(_) as thousands separator and separate every 3 digits with them.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        123_456_789_012
+      RUBY
+    end
+
+    it 'corrects by inserting underscores every 3 digits' do
+      expect_offense(<<~RUBY)
+        12345678
+        ^^^^^^^^ Use underscores(_) as thousands separator and separate every 3 digits with them.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        12_345_678
+      RUBY
+    end
+
+    context 'AllowedPatterns with repetition' do
+      let(:cop_config) { { 'AllowedPatterns' => ['\d{4}(_\d{4})+'] } }
+
+      it 'does not register an offense for numbers that match the pattern' do
+        expect_no_offenses(<<~RUBY)
+          1234_5678_9012_3456
+        RUBY
       end
     end
   end

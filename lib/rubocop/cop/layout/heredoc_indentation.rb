@@ -3,12 +3,12 @@
 module RuboCop
   module Cop
     module Layout
-      # This cop checks the indentation of the here document bodies. The bodies
+      # Checks the indentation of the here document bodies. The bodies
       # are indented one step.
       #
-      # Note: When ``Layout/LineLength``'s `AllowHeredoc` is false (not default),
+      # NOTE: When ``Layout/LineLength``'s `AllowHeredoc` is false (not default),
       #       this cop does not add any offenses for long here documents to
-      #       avoid `Layout/LineLength`'s offenses.
+      #       avoid ``Layout/LineLength``'s offenses.
       #
       # @example
       #   # bad
@@ -21,13 +21,39 @@ module RuboCop
       #     something
       #   RUBY
       #
+      # @example AllCops:ActiveSupportExtensionsEnabled: false (default)
+      #   # good
+      #   <<-RUBY.squish
+      #       something
+      #   RUBY
+      #
+      # @example AllCops:ActiveSupportExtensionsEnabled: true
+      #   # bad
+      #   <<-RUBY.squish
+      #       something
+      #   RUBY
+      #
+      #   # good
+      #   <<~RUBY.squish
+      #     something
+      #   RUBY
+      #
       class HeredocIndentation < Base
+        include Alignment
         include Heredoc
         extend AutoCorrector
+        extend TargetRubyVersion
+
+        minimum_target_ruby_version 2.3
 
         TYPE_MSG = 'Use %<indentation_width>d spaces for indentation in a ' \
                    'heredoc by using `<<~` instead of `%<current_indent_type>s`.'
         WIDTH_MSG = 'Use %<indentation_width>d spaces for indentation in a heredoc.'
+
+        # @!method squish_method?(node)
+        def_node_matcher :squish_method?, <<~PATTERN
+          (send _ {:squish :squish!})
+        PATTERN
 
         def on_heredoc(node)
           body = heredoc_body(node)
@@ -37,10 +63,10 @@ module RuboCop
           heredoc_indent_type = heredoc_indent_type(node)
 
           if heredoc_indent_type == '~'
-            expected_indent_level = base_indent_level(node) + indentation_width
+            expected_indent_level = base_indent_level(node) + configured_indentation_width
             return if expected_indent_level == body_indent_level
           else
-            return unless body_indent_level.zero?
+            return unless body_indent_level.zero? || heredoc_squish?(node)
           end
 
           return if line_too_long?(node)
@@ -56,6 +82,8 @@ module RuboCop
           add_offense(node.loc.heredoc_body, message: message) do |corrector|
             if heredoc_indent_type == '~'
               adjust_squiggly(corrector, node)
+            elsif heredoc_squish?(node)
+              adjust_heredoc_squish(corrector, node)
             else
               adjust_minus(corrector, node)
             end
@@ -66,9 +94,9 @@ module RuboCop
           current_indent_type = "<<#{heredoc_indent_type}"
 
           if current_indent_type == '<<~'
-            width_message(indentation_width)
+            width_message(configured_indentation_width)
           else
-            type_message(indentation_width, current_indent_type)
+            type_message(configured_indentation_width, current_indent_type)
           end
         end
 
@@ -85,11 +113,12 @@ module RuboCop
         end
 
         def line_too_long?(node)
+          return false unless max_line_length
           return false if unlimited_heredoc_length?
 
           body = heredoc_body(node)
 
-          expected_indent = base_indent_level(node) + indentation_width
+          expected_indent = base_indent_level(node) + configured_indentation_width
           actual_indent = indent_level(body)
           increase_indent_level = expected_indent - actual_indent
 
@@ -104,8 +133,9 @@ module RuboCop
           config.for_cop('Layout/LineLength')['AllowHeredoc']
         end
 
-        def max_line_length
-          config.for_cop('Layout/LineLength')['Max']
+        def adjust_heredoc_squish(corrector, node)
+          adjust_squiggly(corrector, node)
+          adjust_minus(corrector, node)
         end
 
         def adjust_squiggly(corrector, node)
@@ -114,7 +144,7 @@ module RuboCop
         end
 
         def adjust_minus(corrector, node)
-          heredoc_beginning = node.loc.expression.source
+          heredoc_beginning = node.source
           corrected = heredoc_beginning.sub(/<<-?/, '<<~')
           corrector.replace(node, corrected)
         end
@@ -122,7 +152,7 @@ module RuboCop
         def indented_body(node)
           body = heredoc_body(node)
           body_indent_level = indent_level(body)
-          correct_indent_level = base_indent_level(node) + indentation_width
+          correct_indent_level = base_indent_level(node) + configured_indentation_width
           body.gsub(/^[^\S\r\n]{#{body_indent_level}}/, ' ' * correct_indent_level)
         end
 
@@ -138,7 +168,7 @@ module RuboCop
         end
 
         def base_indent_level(node)
-          base_line_num = node.loc.expression.line
+          base_line_num = node.source_range.line
           base_line = processed_source.lines[base_line_num - 1]
           indent_level(base_line)
         end
@@ -148,16 +178,16 @@ module RuboCop
           node.source[/^<<([~-])/, 1]
         end
 
-        def indentation_width
-          @config.for_cop('Layout/IndentationWidth')['Width'] || 2
-        end
-
         def heredoc_body(node)
           node.loc.heredoc_body.source
         end
 
         def heredoc_end(node)
           node.loc.heredoc_end.source
+        end
+
+        def heredoc_squish?(node)
+          active_support_extensions_enabled? && squish_method?(node.parent)
         end
       end
     end

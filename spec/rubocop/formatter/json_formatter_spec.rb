@@ -11,15 +11,14 @@ RSpec.describe RuboCop::Formatter::JSONFormatter do
     Parser::Source::Range.new(source_buffer, 2, 10)
   end
   let(:offense) do
-    RuboCop::Cop::Offense.new(:convention, location,
-                              'This is message', 'CopName', :corrected)
+    RuboCop::Cop::Offense.new(:convention, location, 'This is message', 'CopName', :corrected)
   end
 
   describe '#started' do
     let(:summary) { formatter.output_hash[:summary] }
 
     it 'sets target file count in summary' do
-      expect(summary[:target_file_count].nil?).to be(true)
+      expect(summary[:target_file_count]).to be_nil
       formatter.started(%w[/path/to/file1 /path/to/file2])
       expect(summary[:target_file_count]).to eq(2)
     end
@@ -48,10 +47,10 @@ RSpec.describe RuboCop::Formatter::JSONFormatter do
     end
 
     it 'adds value of #hash_for_file to #output_hash[:files]' do
-      expect(formatter.output_hash[:files].empty?).to be(true)
+      expect(formatter.output_hash[:files]).to be_empty
 
       formatter.file_started(files[0], {})
-      expect(formatter.output_hash[:files].empty?).to be(true)
+      expect(formatter.output_hash[:files]).to be_empty
       formatter.file_finished(files[0], [])
       expect(formatter.output_hash[:files]).to eq([1])
 
@@ -66,7 +65,7 @@ RSpec.describe RuboCop::Formatter::JSONFormatter do
     let(:summary) { formatter.output_hash[:summary] }
 
     it 'sets inspected file count in summary' do
-      expect(summary[:inspected_file_count].nil?).to be(true)
+      expect(summary[:inspected_file_count]).to be_nil
       formatter.finished(%w[/path/to/file1 /path/to/file2])
       expect(summary[:inspected_file_count]).to eq(2)
     end
@@ -122,11 +121,28 @@ RSpec.describe RuboCop::Formatter::JSONFormatter do
     end
 
     it 'sets Offense#correctable? value for :correctable key' do
-      expect(hash[:correctable]).to be_truthy
+      expect(hash[:correctable]).to be(true)
     end
 
     it 'sets Offense#corrected? value for :corrected key' do
-      expect(hash[:corrected]).to be_truthy
+      expect(hash[:corrected]).to be(true)
+    end
+
+    it 'does not include suppression keys for a regular offense' do
+      expect(hash).not_to have_key(:suppressed)
+      expect(hash).not_to have_key(:justification)
+    end
+
+    context 'for an offense suppressed by a directive' do
+      let(:offense) do
+        RuboCop::Cop::Offense.new(:convention, location, 'This is message', 'CopName', :disabled,
+                                  nil, justification: 'a fine reason')
+      end
+
+      it 'includes the suppression keys' do
+        expect(hash[:suppressed]).to be(true)
+        expect(hash[:justification]).to eq('a fine reason')
+      end
     end
 
     it 'sets value of #hash_for_location for :location key' do
@@ -166,7 +182,7 @@ RSpec.describe RuboCop::Formatter::JSONFormatter do
                              start_line: 1,
                              start_column: 1,
                              last_line: 1,
-                             last_column: 0,
+                             last_column: 1,
                              length: 0,
                              line: 1,
                              column: 1

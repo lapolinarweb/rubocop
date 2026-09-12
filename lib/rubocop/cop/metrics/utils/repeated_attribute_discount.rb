@@ -26,6 +26,13 @@ module RuboCop
           extend NodePattern::Macros
           include RuboCop::AST::Sexp
 
+          VAR_SETTER_TO_GETTER = {
+            lvasgn: :lvar,
+            ivasgn: :ivar,
+            cvasgn: :cvar,
+            gvasgn: :gvar
+          }.freeze
+
           # Plug into the calculator
           def initialize(node, discount_repeated_attributes: false)
             super(node)
@@ -59,7 +66,7 @@ module RuboCop
 
           # @!method attribute_call?(node)
           def_node_matcher :attribute_call?, <<~PATTERN
-            ( {csend send} _receiver _method # and no parameters
+            (call _receiver _method # and no parameters
             )
           PATTERN
 
@@ -113,13 +120,6 @@ module RuboCop
 
             calls.fetch(value) { yield [calls, value] }
           end
-
-          VAR_SETTER_TO_GETTER = {
-            lvasgn: :lvar,
-            ivasgn: :ivar,
-            cvasgn: :cvar,
-            gvasgn: :gvar
-          }.freeze
 
           # @returns `[receiver, method | nil]` for the given setter `node`
           # or `nil` if it is not a setter.

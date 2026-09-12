@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Lint
-      # This cop checks for debug calls (such as `debugger` or `binding.pry`) that should
+      # Checks for debug calls (such as `debugger` or `binding.pry`) that should
       # not be kept for production code.
       #
       # The cop can be configured using `DebuggerMethods`. By default, a number of gems
@@ -15,9 +15,24 @@ module RuboCop
       # [source,yaml]
       # ----
       # Lint/Debugger:
-      #   WebConsole: ~
+      #   DebuggerMethods:
+      #     WebConsole: ~
       # ----
       #
+      # You can also add your own methods by adding a new category:
+      #
+      # [source,yaml]
+      # ----
+      # Lint/Debugger:
+      #   DebuggerMethods:
+      #     MyDebugger:
+      #       MyDebugger.debug_this
+      # ----
+      #
+      # Some gems also ship files that will start a debugging session when required,
+      # for example `require 'debug/start'` from `ruby/debug`. These requires can
+      # be configured through `DebuggerRequires`. It has the same structure as
+      # `DebuggerMethods`, which you can read about above.
       #
       # @example
       #
@@ -29,8 +44,6 @@ module RuboCop
       #     do_something
       #   end
       #
-      # @example
-      #
       #   # bad (ok during development)
       #
       #   # using byebug
@@ -38,8 +51,6 @@ module RuboCop
       #     byebug
       #     do_something
       #   end
-      #
-      # @example
       #
       #   # good
       #
@@ -54,24 +65,18 @@ module RuboCop
       #   def some_method
       #     my_debugger
       #   end
+      #
+      # @example DebuggerRequires: [my_debugger/start]
+      #
+      #   # bad (ok during development)
+      #
+      #   require 'my_debugger/start'
       class Debugger < Base
         MSG = 'Remove debugger entry point `%<source>s`.'
 
-        # @!method kernel?(node)
-        def_node_matcher :kernel?, <<~PATTERN
-          (const {nil? cbase} :Kernel)
-        PATTERN
-
-        # @!method valid_receiver?(node, arg1)
-        def_node_matcher :valid_receiver?, <<~PATTERN
-          {
-            (const {nil? cbase} %1)
-            (send {nil? #kernel?} %1)
-          }
-        PATTERN
-
         def on_send(node)
-          return unless debugger_method?(node)
+          return unless debugger_method?(node) || debugger_require?(node)
+          return if assumed_usage_context?(node)
 
           add_offense(node)
         end
@@ -85,29 +90,64 @@ module RuboCop
         def debugger_methods
           @debugger_methods ||= begin
             config = cop_config.fetch('DebuggerMethods', [])
-            values = config.is_a?(Array) ? config : config.values.flatten
-            values.map do |v|
-              next unless v
+            config.is_a?(Array) ? config : config.values.flatten
+          end
+        end
 
-              *receiver, method_name = v.split('.')
-              {
-                receiver: receiver.empty? ? nil : receiver.join.to_sym,
-                method_name: method_name.to_sym
-              }
-            end.compact
+        def debugger_requires
+          @debugger_requires ||= begin
+            config = cop_config.fetch('DebuggerRequires', [])
+            config.is_a?(Array) ? config : config.values.flatten
           end
         end
 
         def debugger_method?(send_node)
-          debugger_methods.any? do |method|
-            next unless method[:method_name] == send_node.method_name
+          return false unless debugger_method_names.include?(send_node.method_name)
 
-            if method[:receiver].nil?
-              send_node.receiver.nil?
-            else
-              valid_receiver?(send_node.receiver, method[:receiver])
-            end
+          debugger_methods.include?(chained_method_name(send_node))
+        end
+
+        # The last segment of each configured debugger method, used to cheaply
+        # rule out the vast majority of `send` nodes before building the
+        # chained method name.
+        def debugger_method_names
+          @debugger_method_names ||= debugger_methods.to_set do |method|
+            method.to_s.split('.').last&.to_sym
           end
+        end
+
+        def debugger_require?(send_node)
+          return false unless send_node.method?(:require) && send_node.arguments.one?
+          return false unless (argument = send_node.first_argument).str_type?
+
+          debugger_requires.include?(argument.value)
+        end
+
+        def assumed_usage_context?(node)
+          # Basically, debugger methods are not used as a method argument without arguments.
+          return false unless node.arguments.empty? && node.each_ancestor(:call).any?
+          return true if assumed_argument?(node)
+
+          node.each_ancestor.none? do |ancestor|
+            ancestor.type?(:any_block, :kwbegin) || ancestor.lambda_or_proc?
+          end
+        end
+
+        def chained_method_name(send_node)
+          chained_method_name = send_node.method_name.to_s
+          receiver = send_node.receiver
+          while receiver
+            name = receiver.send_type? ? receiver.method_name : receiver.const_name
+            chained_method_name = "#{name}.#{chained_method_name}"
+            receiver = receiver.receiver
+          end
+          chained_method_name
+        end
+
+        def assumed_argument?(node)
+          parent = node.parent
+
+          parent.call_type? || parent.literal? || parent.pair_type?
         end
       end
     end

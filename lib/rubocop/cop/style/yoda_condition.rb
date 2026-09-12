@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Style
-      # This cop can either enforce or forbid Yoda conditions,
+      # Enforces or forbids Yoda conditions,
       # i.e. comparison operations where the order of expression is reversed.
       # eg. `5 == x`
       #
@@ -33,12 +33,14 @@ module RuboCop
       #   "bar" != foo
       #   42 >= foo
       #   10 < bar
+      #   99 == CONST
       #
       #   # good
       #   foo == 99
       #   foo == "bar"
       #   foo <= 42
       #   bar > 10
+      #   CONST == 99
       #   "#{interpolation}" == foo
       #   /#{interpolation}/ == foo
       #
@@ -83,6 +85,12 @@ module RuboCop
         NONCOMMUTATIVE_OPERATORS = %i[===].freeze
         PROGRAM_NAMES = %i[$0 $PROGRAM_NAME].freeze
         RESTRICT_ON_SEND = RuboCop::AST::Node::COMPARISON_OPERATORS
+        ENFORCE_YODA_STYLES = %i[
+          require_for_all_comparison_operators require_for_equality_operators_only
+        ].freeze
+        EQUALITY_ONLY_STYLES = %i[
+          forbid_for_equality_operators_only require_for_equality_operators_only
+        ].freeze
 
         # @!method file_constant_equal_program_name?(node)
         def_node_matcher :file_constant_equal_program_name?, <<~PATTERN
@@ -92,9 +100,10 @@ module RuboCop
         def on_send(node)
           return unless yoda_compatible_condition?(node)
           return if (equality_only? && non_equality_operator?(node)) ||
-                    file_constant_equal_program_name?(node)
+                    file_constant_equal_program_name?(node) ||
+                    valid_yoda?(node)
 
-          valid_yoda?(node) || add_offense(node) do |corrector|
+          add_offense(node) do |corrector|
             corrector.replace(actual_code_range(node), corrected_code(node))
           end
         end
@@ -102,28 +111,27 @@ module RuboCop
         private
 
         def enforce_yoda?
-          style == :require_for_all_comparison_operators ||
-            style == :require_for_equality_operators_only
+          ENFORCE_YODA_STYLES.include?(style)
         end
 
         def equality_only?
-          style == :forbid_for_equality_operators_only ||
-            style == :require_for_equality_operators_only
+          EQUALITY_ONLY_STYLES.include?(style)
         end
 
         def yoda_compatible_condition?(node)
           node.comparison_method? && !noncommutative_operator?(node)
         end
 
+        # rubocop:disable-next Metrics/CyclomaticComplexity
         def valid_yoda?(node)
-          lhs = node.receiver
-          rhs = node.first_argument
+          return true unless (rhs = node.first_argument)
 
-          return true if (lhs.literal? && rhs.literal?) ||
-                         (!lhs.literal? && !rhs.literal?) ||
+          lhs = node.receiver
+          return true if (constant_portion?(lhs) && constant_portion?(rhs)) ||
+                         (!constant_portion?(lhs) && !constant_portion?(rhs)) ||
                          interpolation?(lhs)
 
-          enforce_yoda? ? lhs.literal? : rhs.literal?
+          enforce_yoda? ? constant_portion?(lhs) : constant_portion?(rhs)
         end
 
         def message(node)
@@ -137,8 +145,12 @@ module RuboCop
           "#{rhs.source} #{reverse_comparison(node.method_name)} #{lhs.source}"
         end
 
+        def constant_portion?(node)
+          node.recursive_literal? || node.const_type?
+        end
+
         def actual_code_range(node)
-          range_between(node.loc.expression.begin_pos, node.loc.expression.end_pos)
+          range_between(node.source_range.begin_pos, node.source_range.end_pos)
         end
 
         def reverse_comparison(operator)

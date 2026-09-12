@@ -211,7 +211,7 @@ RSpec.describe RuboCop::Cop::Layout::EmptyLinesAroundAccessModifier, :config do
         RUBY
       end
 
-      it 'accepts missing blank line when at the beginning of fileand preceded by a comment' do
+      it 'accepts missing blank line when at the beginning of file and preceded by a comment' do
         expect_no_offenses(<<~RUBY)
           # comment
           #{access_modifier}
@@ -248,6 +248,15 @@ RSpec.describe RuboCop::Cop::Layout::EmptyLinesAroundAccessModifier, :config do
               included do
                 #{access_modifier}
                 #{'^' * access_modifier.size} Keep a blank line after `#{access_modifier}`.
+                def test
+                end
+              end
+            RUBY
+
+            expect_correction(<<~RUBY)
+              included do
+                #{access_modifier}
+
                 def test
                 end
               end
@@ -316,6 +325,14 @@ RSpec.describe RuboCop::Cop::Layout::EmptyLinesAroundAccessModifier, :config do
             end_this!
           end
         RUBY
+
+        expect_correction(<<~RUBY)
+          class Test
+            #{access_modifier}
+
+            end_this!
+          end
+        RUBY
       end
 
       it 'recognizes blank lines with DOS style line endings' do
@@ -333,6 +350,156 @@ RSpec.describe RuboCop::Cop::Layout::EmptyLinesAroundAccessModifier, :config do
         expect_no_offenses(<<~RUBY)
           #{access_modifier}
         RUBY
+      end
+
+      it 'accepts when an access modifier and an expression are on the same line' do
+        expect_no_offenses(<<~RUBY)
+          #{access_modifier}; foo
+          .bar
+        RUBY
+      end
+
+      context 'inside an implicit `begin` node' do
+        it 'registers an offense and corrects' do
+          expect_offense(<<~RUBY, access_modifier: access_modifier)
+            foo
+            %{access_modifier}
+            ^{access_modifier} Keep a blank line before and after `%{access_modifier}`.
+            bar
+          RUBY
+
+          expect_correction(<<~RUBY)
+            foo
+
+            #{access_modifier}
+
+            bar
+          RUBY
+        end
+      end
+
+      context 'when `Layout/EmptyLinesAroundBlockBody` is configured with `EnforcedStyle: no_empty_lines`' do
+        let(:other_cops) do
+          { 'Layout/EmptyLinesAroundBlockBody' => { 'EnforcedStyle' => 'no_empty_lines' } }
+        end
+
+        context 'access modifier is the only child of the block' do
+          it 'registers an offense but does not correct' do
+            expect_offense(<<~RUBY, access_modifier: access_modifier)
+              Module.new do
+                %{access_modifier}
+                ^{access_modifier} Keep a blank line after `%{access_modifier}`.
+              end
+            RUBY
+
+            expect_no_corrections
+          end
+        end
+
+        context 'access modifier is the first child of the block' do
+          it 'registers an offense and corrects' do
+            expect_offense(<<~RUBY, access_modifier: access_modifier)
+              Module.new do
+                %{access_modifier}
+                ^{access_modifier} Keep a blank line after `%{access_modifier}`.
+                foo
+              end
+            RUBY
+
+            expect_correction(<<~RUBY)
+              Module.new do
+                #{access_modifier}
+
+                foo
+              end
+            RUBY
+          end
+        end
+
+        context 'access modifier is the last child of the block' do
+          it 'registers an offense and partially corrects' do
+            expect_offense(<<~RUBY, access_modifier: access_modifier)
+              Module.new do
+                foo
+                %{access_modifier}
+                ^{access_modifier} Keep a blank line before and after `%{access_modifier}`.
+              end
+            RUBY
+
+            expect_correction(<<~RUBY)
+              Module.new do
+                foo
+
+                #{access_modifier}
+              end
+            RUBY
+          end
+        end
+      end
+
+      context 'when `Layout/EmptyLinesAroundBlockBody` is configured with `EnforcedStyle: empty_lines`' do
+        let(:other_cops) do
+          { 'Layout/EmptyLinesAroundBlockBody' => { 'EnforcedStyle' => 'empty_lines' } }
+        end
+
+        context 'access modifier is the only child of the block' do
+          it 'registers an offense and corrects' do
+            expect_offense(<<~RUBY, access_modifier: access_modifier)
+              Module.new do
+                %{access_modifier}
+                ^{access_modifier} Keep a blank line after `%{access_modifier}`.
+              end
+            RUBY
+
+            expect_correction(<<~RUBY)
+              Module.new do
+                #{access_modifier}
+
+              end
+            RUBY
+          end
+        end
+
+        context 'access modifier is the first child of the block' do
+          it 'registers an offense and corrects' do
+            expect_offense(<<~RUBY, access_modifier: access_modifier)
+              Module.new do
+                %{access_modifier}
+                ^{access_modifier} Keep a blank line after `%{access_modifier}`.
+                foo
+              end
+            RUBY
+
+            expect_correction(<<~RUBY)
+              Module.new do
+                #{access_modifier}
+
+                foo
+              end
+            RUBY
+          end
+        end
+
+        context 'access modifier is the last child of the block' do
+          it 'registers an offense and corrects' do
+            expect_offense(<<~RUBY, access_modifier: access_modifier)
+              Module.new do
+                foo
+                %{access_modifier}
+                ^{access_modifier} Keep a blank line before and after `%{access_modifier}`.
+              end
+            RUBY
+
+            expect_correction(<<~RUBY)
+              Module.new do
+                foo
+
+                #{access_modifier}
+
+              end
+            RUBY
+          end
+        end
       end
     end
   end
@@ -413,6 +580,78 @@ RSpec.describe RuboCop::Cop::Layout::EmptyLinesAroundAccessModifier, :config do
 
             #{access_modifier}
             def test; end
+          end
+        RUBY
+      end
+
+      it 'does not register an offense when modifier is on the last line' do
+        expect_no_offenses(<<~RUBY)
+          #{access_modifier}
+        RUBY
+      end
+    end
+  end
+
+  context 'Ruby 2.7', :ruby27 do
+    %w[private protected public module_function].each do |access_modifier|
+      it "registers an offense for missing around line before #{access_modifier}" do
+        expect_offense(<<~RUBY)
+          included do
+            _1
+            #{access_modifier}
+            #{'^' * access_modifier.size} Keep a blank line before and after `#{access_modifier}`.
+            def test; end
+          end
+        RUBY
+
+        expect_correction(<<~RUBY)
+          included do
+            _1
+
+            #{access_modifier}
+
+            def test; end
+          end
+        RUBY
+      end
+
+      it "ignores #{access_modifier} with numblock argument" do
+        expect_no_offenses(<<~RUBY)
+          def foo
+            #{access_modifier} { _1 }
+          end
+        RUBY
+      end
+    end
+  end
+
+  context 'Ruby 3.4', :ruby34 do
+    %w[private protected public module_function].each do |access_modifier|
+      it "registers an offense for missing around line before #{access_modifier}" do
+        expect_offense(<<~RUBY)
+          included do
+            it
+            #{access_modifier}
+            #{'^' * access_modifier.size} Keep a blank line before and after `#{access_modifier}`.
+            def test; end
+          end
+        RUBY
+
+        expect_correction(<<~RUBY)
+          included do
+            it
+
+            #{access_modifier}
+
+            def test; end
+          end
+        RUBY
+      end
+
+      it "ignores #{access_modifier} with itblock argument" do
+        expect_no_offenses(<<~RUBY)
+          def foo
+            #{access_modifier} { it }
           end
         RUBY
       end

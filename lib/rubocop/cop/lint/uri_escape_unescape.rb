@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Lint
-      # This cop identifies places where `URI.escape` can be replaced by
+      # Identifies places where `URI.escape` can be replaced by
       # `CGI.escape`, `URI.encode_www_form`, or `URI.encode_www_form_component`
       # depending on your specific use case.
       # Also this cop identifies places where `URI.unescape` can be replaced by
@@ -17,6 +17,7 @@ module RuboCop
       #
       #   # good
       #   CGI.escape('http://example.com')
+      #   URI.encode_uri_component(uri) # Since Ruby 3.1
       #   URI.encode_www_form([['example', 'param'], ['lang', 'en']])
       #   URI.encode_www_form(page: 10, locale: 'en')
       #   URI.encode_www_form_component('http://example.com')
@@ -27,6 +28,7 @@ module RuboCop
       #
       #   # good
       #   CGI.unescape(enc_uri)
+      #   URI.decode_uri_component(uri) # Since Ruby 3.1
       #   URI.decode_www_form(enc_uri)
       #   URI.decode_www_form_component(enc_uri)
       class UriEscapeUnescape < Base

@@ -2,8 +2,9 @@
 
 module RuboCop
   module Cop
-    # Common methods shared by Style/TrailingCommaInArguments and
-    # Style/TrailingCommaInLiteral
+    # Common methods shared by Style/TrailingCommaInArguments,
+    # Style/TrailingCommaInArrayLiteral and Style/TrailingCommaInHashLiteral
+    # rubocop:disable-next Metrics/ModuleLength
     module TrailingComma
       include ConfigurableEnforcedStyle
       include RangeHelp
@@ -57,6 +58,8 @@ module RuboCop
           ', unless each item is on its own line'
         when :consistent_comma
           ', unless items are split onto multiple lines'
+        when :diff_comma
+          ', unless that item immediately precedes a newline'
         else
           ''
         end
@@ -68,6 +71,8 @@ module RuboCop
           multiline?(node) && no_elements_on_same_line?(node)
         when :consistent_comma
           multiline?(node) && !method_name_and_arguments_on_same_line?(node)
+        when :diff_comma
+          multiline?(node) && last_item_precedes_newline?(node)
         else
           false
         end
@@ -75,7 +80,7 @@ module RuboCop
 
       def inside_comment?(range, comma_offset)
         comment = processed_source.comment_at_line(range.line)
-        comment && comment.loc.expression.begin_pos < range.begin_pos + comma_offset
+        comment && comment.source_range.begin_pos < range.begin_pos + comma_offset
       end
 
       # Returns true if the node has round/square/curly brackets.
@@ -90,23 +95,25 @@ module RuboCop
         node.multiline? && !allowed_multiline_argument?(node)
       end
 
+      # rubocop:disable-next Metrics/AbcSize
       def method_name_and_arguments_on_same_line?(node)
-        return false unless node.call_type?
+        return false if !node.call_type? || node.last_line != node.last_argument.last_line
+        return true if node.last_argument.hash_type? && node.last_argument.braces?
 
-        line = node.loc.selector.nil? ? node.loc.line : node.loc.selector.line
+        line = node.loc.selector&.line || node.loc.line
 
-        line == node.last_argument.last_line && node.last_line == node.last_argument.last_line
+        line == node.last_argument.last_line
       end
 
       # A single argument with the closing bracket on the same line as the end
       # of the argument is not considered multiline, even if the argument
       # itself might span multiple lines.
       def allowed_multiline_argument?(node)
-        elements(node).one? && !Util.begins_its_line?(node.loc.end)
+        elements(node).one? && !Util.begins_its_line?(node_end_location(node))
       end
 
       def elements(node)
-        return node.children unless %i[csend send].include?(node.type)
+        return node.children unless node.call_type?
 
         node.arguments.flat_map do |argument|
           # For each argument, if it is a multi-line hash without braces,
@@ -122,17 +129,27 @@ module RuboCop
 
       def no_elements_on_same_line?(node)
         items = elements(node).map(&:source_range)
-        items << node.loc.end
+        items << node_end_location(node)
         items.each_cons(2).none? { |a, b| on_same_line?(a, b) }
+      end
+
+      def node_end_location(node)
+        node.loc.end || node.source_range.end.adjust(begin_pos: -1)
       end
 
       def on_same_line?(range1, range2)
         range1.last_line == range2.line
       end
 
+      def last_item_precedes_newline?(node)
+        after_last_item = node.children.last.source_range.end.join(node.source_range.end)
+
+        after_last_item.source.start_with?(/,?\s*(#.*)?\n/)
+      end
+
       def avoid_comma(kind, comma_begin_pos, extra_info)
         range = range_between(comma_begin_pos, comma_begin_pos + 1)
-        article = /array/.match?(kind) ? 'an' : 'a'
+        article = kind.include?('array') ? 'an' : 'a'
         msg = format(
           MSG,
           command: 'Avoid',
@@ -159,7 +176,7 @@ module RuboCop
       def autocorrect_range(item)
         expr = item.source_range
         ix = expr.source.rindex("\n") || 0
-        ix += expr.source[ix..-1] =~ /\S/
+        ix += expr.source[ix..] =~ /\S/
 
         range_between(expr.begin_pos + ix, expr.end_pos)
       end
@@ -170,7 +187,7 @@ module RuboCop
 
       def heredoc?(node)
         return false unless node.is_a?(RuboCop::AST::Node)
-        return true if node.loc.respond_to?(:heredoc_body)
+        return true if node.loc?(:heredoc_body)
 
         return heredoc_send?(node) if node.send_type?
 
@@ -181,7 +198,7 @@ module RuboCop
         #       ...
         #     SOURCE
         #   })
-        return heredoc?(node.children.last) if node.pair_type? || node.hash_type?
+        return heredoc?(node.children.last) if node.type?(:pair, :hash)
 
         false
       end

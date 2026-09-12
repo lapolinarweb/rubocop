@@ -19,12 +19,24 @@ RSpec.describe RuboCop::Cop::Lint::SymbolConversion, :config do
   it_behaves_like 'offense', '"foo".to_sym', ':foo'
   it_behaves_like 'offense', '"foo_bar".to_sym', ':foo_bar'
   it_behaves_like 'offense', '"foo-bar".to_sym', ':"foo-bar"'
+  it_behaves_like 'offense', '"foo-#{bar}".to_sym', ':"foo-#{bar}"'
+  # Interpolated string with an embedded (escaped) double quote.
+  it_behaves_like 'offense', '"foo#{bar}\"qux".to_sym', ':"foo#{bar}\"qux"'
+  # Percent-literal strings have multi-character delimiters, so the source can't just be
+  # sliced; the inner value must be used instead.
+  it_behaves_like 'offense', '%{foo#{bar}}.to_sym', ':"foo#{bar}"'
+  it_behaves_like 'offense', '%Q{foo#{bar}}.to_sym', ':"foo#{bar}"'
+  it_behaves_like 'offense', '%(foo#{bar}).to_sym', ':"foo#{bar}"'
+  it_behaves_like 'offense', '%<foo#{bar}>.to_sym', ':"foo#{bar}"'
+  # Adjacent string concatenation parses as a `dstr` with no `begin` delimiter.
+  it_behaves_like 'offense', '"x" "y#{z}".to_sym', ':"xy#{z}"'
 
   # Unnecessary `intern`
   it_behaves_like 'offense', ':foo.intern', ':foo'
   it_behaves_like 'offense', '"foo".intern', ':foo'
   it_behaves_like 'offense', '"foo_bar".intern', ':foo_bar'
   it_behaves_like 'offense', '"foo-bar".intern', ':"foo-bar"'
+  it_behaves_like 'offense', '"foo-#{bar}".intern', ':"foo-#{bar}"'
 
   # Unnecessary quoted symbol
   it_behaves_like 'offense', ':"foo"', ':foo'
@@ -36,15 +48,29 @@ RSpec.describe RuboCop::Cop::Lint::SymbolConversion, :config do
     RUBY
   end
 
-  it 'does not register an offense for a dstr' do
+  it 'does not register an offense for `to_sym` on an interpolated heredoc' do
     expect_no_offenses(<<~'RUBY')
-      "#{foo}".to_sym
+      <<~TEXT.to_sym
+        foo#{bar}
+      TEXT
     RUBY
   end
 
-  it 'does not register an offense for a symbol that requires quotes' do
+  it 'does not register an offense for a symbol that requires double quotes' do
     expect_no_offenses(<<~RUBY)
       :"foo-bar"
+    RUBY
+  end
+
+  it 'does not register an offense for a symbol that requires single quotes' do
+    expect_no_offenses(<<~RUBY)
+      :'foo-bar'
+    RUBY
+  end
+
+  it 'does not register an offense for a symbol that requires single quotes, when it includes double quotes' do
+    expect_no_offenses(<<~RUBY)
+      :'foo-bar""'
     RUBY
   end
 
@@ -112,6 +138,12 @@ RSpec.describe RuboCop::Cop::Lint::SymbolConversion, :config do
           { '==': 'bar' }
         RUBY
       end
+
+      it 'does not register an offense for dstr' do
+        expect_no_offenses(<<~'RUBY')
+          { "foo-#{'bar'}": 'baz' }
+        RUBY
+      end
     end
 
     context 'values' do
@@ -121,7 +153,18 @@ RSpec.describe RuboCop::Cop::Lint::SymbolConversion, :config do
         RUBY
       end
 
-      it 'registers an offense for a quoted symbol' do
+      it 'registers an offense for a quoted symbol key' do
+        expect_offense(<<~RUBY)
+          { :'foo' => :bar }
+            ^^^^^^ Unnecessary symbol conversion; use `:foo` instead.
+        RUBY
+
+        expect_correction(<<~RUBY)
+          { :foo => :bar }
+        RUBY
+      end
+
+      it 'registers an offense for a quoted symbol value' do
         expect_offense(<<~RUBY)
           { foo: :'bar' }
                  ^^^^^^ Unnecessary symbol conversion; use `:bar` instead.
@@ -129,6 +172,17 @@ RSpec.describe RuboCop::Cop::Lint::SymbolConversion, :config do
 
         expect_correction(<<~RUBY)
           { foo: :bar }
+        RUBY
+      end
+
+      it 'registers an offense for dstr' do
+        expect_offense(<<~'RUBY')
+          { foo: "bar-#{'baz'}".to_sym }
+                 ^^^^^^^^^^^^^^^^^^^^^ Unnecessary symbol conversion; use `:"bar-#{'baz'}"` instead.
+        RUBY
+
+        expect_correction(<<~'RUBY')
+          { foo: :"bar-#{'baz'}" }
         RUBY
       end
     end

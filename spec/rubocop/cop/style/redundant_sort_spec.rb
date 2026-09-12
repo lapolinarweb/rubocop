@@ -12,6 +12,28 @@ RSpec.describe RuboCop::Cop::Style::RedundantSort, :config do
     RUBY
   end
 
+  it 'registers an offense when `first` is called with safe navigation `sort`' do
+    expect_offense(<<~RUBY)
+      [1, 2, 3]&.sort.first
+                 ^^^^^^^^^^ Use `min` instead of `sort...first`.
+    RUBY
+
+    expect_correction(<<~RUBY)
+      [1, 2, 3]&.min
+    RUBY
+  end
+
+  it 'registers an offense when `first` is safe navigation called with safe navigation `sort`' do
+    expect_offense(<<~RUBY)
+      [1, 2, 3]&.sort&.first
+                 ^^^^^^^^^^^ Use `min` instead of `sort...first`.
+    RUBY
+
+    expect_correction(<<~RUBY)
+      [1, 2, 3]&.min
+    RUBY
+  end
+
   it 'registers an offense when last is called with sort' do
     expect_offense(<<~RUBY)
       [1, 2].sort.last
@@ -20,6 +42,28 @@ RSpec.describe RuboCop::Cop::Style::RedundantSort, :config do
 
     expect_correction(<<~RUBY)
       [1, 2].max
+    RUBY
+  end
+
+  it 'registers an offense when `last` is called with safe navigation `sort`' do
+    expect_offense(<<~RUBY)
+      [1, 2]&.sort.last
+              ^^^^^^^^^ Use `max` instead of `sort...last`.
+    RUBY
+
+    expect_correction(<<~RUBY)
+      [1, 2]&.max
+    RUBY
+  end
+
+  it 'registers an offense when `last` is safe navigation called with safe navigation `sort`' do
+    expect_offense(<<~RUBY)
+      [1, 2]&.sort&.last
+              ^^^^^^^^^^ Use `max` instead of `sort...last`.
+    RUBY
+
+    expect_correction(<<~RUBY)
+      [1, 2]&.max
     RUBY
   end
 
@@ -34,6 +78,28 @@ RSpec.describe RuboCop::Cop::Style::RedundantSort, :config do
     RUBY
   end
 
+  it 'registers an offense when `last` is called on safe navigation `sort` with comparator' do
+    expect_offense(<<~RUBY)
+      foo&.sort { |a, b| b <=> a }.last
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Use `max` instead of `sort...last`.
+    RUBY
+
+    expect_correction(<<~RUBY)
+      foo&.max { |a, b| b <=> a }
+    RUBY
+  end
+
+  it 'registers an offense when `last` is safe navigation called on safe navigation `sort` with comparator' do
+    expect_offense(<<~RUBY)
+      foo&.sort { |a, b| b <=> a }&.last
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Use `max` instead of `sort...last`.
+    RUBY
+
+    expect_correction(<<~RUBY)
+      foo&.max { |a, b| b <=> a }
+    RUBY
+  end
+
   it 'registers an offense when first is called on sort_by' do
     expect_offense(<<~RUBY)
       [1, 2, 3].sort_by { |x| x.length }.first
@@ -45,6 +111,28 @@ RSpec.describe RuboCop::Cop::Style::RedundantSort, :config do
     RUBY
   end
 
+  it 'registers an offense when `first` is called on safe navigation `sort_by`' do
+    expect_offense(<<~RUBY)
+      [1, 2, 3]&.sort_by { |x| x.length }.first
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Use `min_by` instead of `sort_by...first`.
+    RUBY
+
+    expect_correction(<<~RUBY)
+      [1, 2, 3]&.min_by { |x| x.length }
+    RUBY
+  end
+
+  it 'registers an offense when `first` is safe navigation called on safe navigation `sort_by`' do
+    expect_offense(<<~RUBY)
+      [1, 2, 3]&.sort_by { |x| x.length }&.first
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Use `min_by` instead of `sort_by...first`.
+    RUBY
+
+    expect_correction(<<~RUBY)
+      [1, 2, 3]&.min_by { |x| x.length }
+    RUBY
+  end
+
   it 'registers an offense when last is called on sort_by' do
     expect_offense(<<~RUBY)
       foo.sort_by { |x| x.something }.last
@@ -53,6 +141,81 @@ RSpec.describe RuboCop::Cop::Style::RedundantSort, :config do
 
     expect_correction(<<~RUBY)
       foo.max_by { |x| x.something }
+    RUBY
+  end
+
+  it 'registers an offense when first is called on sort_by with line breaks' do
+    expect_offense(<<~RUBY)
+      [1, 2, 3]
+        .sort_by { |x| x.length }
+         ^^^^^^^^^^^^^^^^^^^^^^^^ Use `min_by` instead of `sort_by...first`.
+        .first
+    RUBY
+
+    expect_correction(<<~RUBY)
+      [1, 2, 3]
+        .min_by { |x| x.length }
+      #{'  '}
+    RUBY
+  end
+
+  it 'registers an offense when first is called on sort_by with line breaks and `||` operator' do
+    expect_offense(<<~RUBY)
+      [1, 2, 3]
+        .sort_by { |x| x.length }
+         ^^^^^^^^^^^^^^^^^^^^^^^^ Use `min_by` instead of `sort_by...first`.
+        .first || []
+    RUBY
+
+    expect_correction(<<~RUBY)
+      [1, 2, 3]
+        .min_by { |x| x.length } ||
+          []
+    RUBY
+  end
+
+  it 'registers an offense when first is called on sort_by with line breaks and `&&` operator' do
+    expect_offense(<<~RUBY)
+      [1, 2, 3]
+        .sort_by { |x| x.length }
+         ^^^^^^^^^^^^^^^^^^^^^^^^ Use `min_by` instead of `sort_by...first`.
+        .first && []
+    RUBY
+
+    expect_correction(<<~RUBY)
+      [1, 2, 3]
+        .min_by { |x| x.length } &&
+          []
+    RUBY
+  end
+
+  it 'registers an offense when first is called on sort_by with line breaks and `or` operator' do
+    expect_offense(<<~RUBY)
+      [1, 2, 3]
+        .sort_by { |x| x.length }
+         ^^^^^^^^^^^^^^^^^^^^^^^^ Use `min_by` instead of `sort_by...first`.
+        .first or []
+    RUBY
+
+    expect_correction(<<~RUBY)
+      [1, 2, 3]
+        .min_by { |x| x.length } or
+          []
+    RUBY
+  end
+
+  it 'registers an offense when first is called on sort_by with line breaks and `and` operator' do
+    expect_offense(<<~RUBY)
+      [1, 2, 3]
+        .sort_by { |x| x.length }
+         ^^^^^^^^^^^^^^^^^^^^^^^^ Use `min_by` instead of `sort_by...first`.
+        .first and []
+    RUBY
+
+    expect_correction(<<~RUBY)
+      [1, 2, 3]
+        .min_by { |x| x.length } and
+          []
     RUBY
   end
 
@@ -86,6 +249,28 @@ RSpec.describe RuboCop::Cop::Style::RedundantSort, :config do
 
     expect_correction(<<~RUBY)
       [1, 2].max
+    RUBY
+  end
+
+  it 'registers an offense when `at(-1)` is with safe navigation `sort`' do
+    expect_offense(<<~RUBY)
+      [1, 2]&.sort.at(-1)
+              ^^^^^^^^^^^ Use `max` instead of `sort...at(-1)`.
+    RUBY
+
+    expect_correction(<<~RUBY)
+      [1, 2]&.max
+    RUBY
+  end
+
+  it 'registers an offense when `at(-1)` is safe navigation called with safe navigation `sort`' do
+    expect_offense(<<~RUBY)
+      [1, 2]&.sort&.at(-1)
+              ^^^^^^^^^^^^ Use `max` instead of `sort...at(-1)`.
+    RUBY
+
+    expect_correction(<<~RUBY)
+      [1, 2]&.max
     RUBY
   end
 
@@ -294,6 +479,28 @@ RSpec.describe RuboCop::Cop::Style::RedundantSort, :config do
 
         expect_correction(<<~RUBY)
           [1, 2, 3].min_by { _1.foo }
+        RUBY
+      end
+
+      it 'registers an offense and corrects when `at(0)` is called on safe navigation `sort_by`' do
+        expect_offense(<<~RUBY)
+          [1, 2, 3]&.sort_by { _1.foo }.at(0)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^ Use `min_by` instead of `sort_by...at(0)`.
+        RUBY
+
+        expect_correction(<<~RUBY)
+          [1, 2, 3]&.min_by { _1.foo }
+        RUBY
+      end
+
+      it 'registers an offense and corrects when `at(0)` is safe navigation called on safe navigation `sort_by`' do
+        expect_offense(<<~RUBY)
+          [1, 2, 3]&.sort_by { _1.foo }&.at(0)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^ Use `min_by` instead of `sort_by...at(0)`.
+        RUBY
+
+        expect_correction(<<~RUBY)
+          [1, 2, 3]&.min_by { _1.foo }
         RUBY
       end
     end

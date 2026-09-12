@@ -3,8 +3,7 @@
 module RuboCop
   module Cop
     module Lint
-      #
-      # This cop checks for `send`, `public_send`, and `__send__` methods
+      # Checks for `send`, `public_send`, and `__send__` methods
       # when using mix-in.
       #
       # `include` and `prepend` methods were private methods until Ruby 2.0,
@@ -46,18 +45,19 @@ module RuboCop
         # @!method send_with_mixin_argument?(node)
         def_node_matcher :send_with_mixin_argument?, <<~PATTERN
           (send
-            (const _ _) {:#{SEND_METHODS.join(' :')}}
+            {nil? self (const _ _)} {:#{SEND_METHODS.join(' :')}}
             ({sym str} $#mixin_method?)
-              $(const _ _))
+              $(const _ _)+)
         PATTERN
 
         def on_send(node)
-          send_with_mixin_argument?(node) do |method, module_name|
-            message = message(method, module_name.source, bad_location(node).source)
+          send_with_mixin_argument?(node) do |method, module_names|
+            module_names_source = module_names.map(&:source).join(', ')
+            message = message(method, module_names_source, bad_location(node).source)
 
             bad_location = bad_location(node)
             add_offense(bad_location, message: message) do |corrector|
-              corrector.replace(bad_location, "#{method} #{module_name.source}")
+              corrector.replace(bad_location, "#{method} #{module_names_source}")
             end
           end
         end

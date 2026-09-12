@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for the use of randomly generated numbers,
+      # Checks for the use of randomly generated numbers,
       # added/subtracted with integer literals, as well as those with
       # Integer#succ and Integer#pred methods. Prefer using ranges instead,
       # as it clearly states the intentions.
@@ -36,7 +36,7 @@ module RuboCop
             (send
               {nil? (const {nil? cbase} :Random) (const {nil? cbase} :Kernel)}
               :rand
-              {int (irange int int) (erange int int)}))
+              {int (range int int)}))
         PATTERN
 
         # @!method rand_op_integer?(node)
@@ -45,7 +45,7 @@ module RuboCop
             (send
               {nil? (const {nil? cbase} :Random) (const {nil? cbase} :Kernel)}
               :rand
-              {int (irange int int) (erange int int)})
+              {int (range int int)})
             {:+ :-}
             int)
         PATTERN
@@ -56,7 +56,7 @@ module RuboCop
             (send
               {nil? (const {nil? cbase} :Random) (const {nil? cbase} :Kernel)}
               :rand
-              {int (irange int int) (erange int int)})
+              {int (range int int)})
             {:succ :pred :next})
         PATTERN
 

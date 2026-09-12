@@ -10,6 +10,35 @@ module RuboCop
       #
       # Supported styles are: if, case, both.
       #
+      # @example EnforcedStyle: both (default)
+      #   # warn when an `if` or `case` expression is missing an `else` branch.
+      #
+      #   # bad
+      #   if condition
+      #     statement
+      #   end
+      #
+      #   # bad
+      #   case var
+      #   when condition
+      #     statement
+      #   end
+      #
+      #   # good
+      #   if condition
+      #     statement
+      #   else
+      #     # the content of `else` branch will be determined by Style/EmptyElse
+      #   end
+      #
+      #   # good
+      #   case var
+      #   when condition
+      #     statement
+      #   else
+      #     # the content of `else` branch will be determined by Style/EmptyElse
+      #   end
+      #
       # @example EnforcedStyle: if
       #   # warn when an `if` expression is missing an `else` branch.
       #
@@ -67,38 +96,10 @@ module RuboCop
       #   else
       #     # the content of `else` branch will be determined by Style/EmptyElse
       #   end
-      #
-      # @example EnforcedStyle: both (default)
-      #   # warn when an `if` or `case` expression is missing an `else` branch.
-      #
-      #   # bad
-      #   if condition
-      #     statement
-      #   end
-      #
-      #   # bad
-      #   case var
-      #   when condition
-      #     statement
-      #   end
-      #
-      #   # good
-      #   if condition
-      #     statement
-      #   else
-      #     # the content of `else` branch will be determined by Style/EmptyElse
-      #   end
-      #
-      #   # good
-      #   case var
-      #   when condition
-      #     statement
-      #   else
-      #     # the content of `else` branch will be determined by Style/EmptyElse
-      #   end
       class MissingElse < Base
         include OnNormalIfUnless
         include ConfigurableEnforcedStyle
+        extend AutoCorrector
 
         MSG = '`%<type>s` condition requires an `else`-clause.'
         MSG_NIL = '`%<type>s` condition requires an `else`-clause with `nil` in it.'
@@ -126,7 +127,9 @@ module RuboCop
         def check(node)
           return if node.else?
 
-          add_offense(node, message: format(message_template, type: node.type))
+          add_offense(node, message: format(message_template, type: node.type)) do |corrector|
+            autocorrect(corrector, node)
+          end
         end
 
         def message_template
@@ -137,6 +140,17 @@ module RuboCop
             MSG_EMPTY
           else
             MSG
+          end
+        end
+
+        def autocorrect(corrector, node)
+          node = node.ancestors.find { |ancestor| ancestor.loc.end } unless node.loc.end
+
+          case empty_else_style
+          when :empty
+            corrector.insert_before(node.loc.end, 'else; nil; ')
+          when :nil
+            corrector.insert_before(node.loc.end, 'else; ')
           end
         end
 
@@ -154,10 +168,6 @@ module RuboCop
 
         def unless_else_config
           config.for_cop('Style/UnlessElse')
-        end
-
-        def empty_else_cop_enabled?
-          empty_else_config.fetch('Enabled')
         end
 
         def empty_else_style

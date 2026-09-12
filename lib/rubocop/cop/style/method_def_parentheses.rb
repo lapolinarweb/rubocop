@@ -3,11 +3,18 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for parentheses around the arguments in method
+      # Checks for parentheses around the arguments in method
       # definitions. Both instance and class/singleton methods are checked.
       #
-      # This cop does not consider endless methods, since parentheses are
-      # always required for them.
+      # Regardless of style, parentheses are necessary for:
+      #
+      # 1. Endless methods
+      # 2. Argument lists containing a `forward-arg` (`...`)
+      # 3. Argument lists containing an anonymous rest arguments forwarding (`*`)
+      # 4. Argument lists containing an anonymous keyword rest arguments forwarding (`**`)
+      # 5. Argument lists containing an anonymous block forwarding (`&`)
+      #
+      # Removing the parens would be a syntax error here.
       #
       # @example EnforcedStyle: require_parentheses (default)
       #   # The `require_parentheses` style requires method definitions
@@ -95,9 +102,11 @@ module RuboCop
         MSG_PRESENT = 'Use def without parentheses.'
         MSG_MISSING = 'Use def with parentheses when there are parameters.'
 
-        def on_def(node)
-          return if forced_parentheses?(node)
+        def self.autocorrect_incompatible_with
+          [Style::ArgumentsForwarding]
+        end
 
+        def on_def(node)
           args = node.arguments
 
           if require_parentheses?(args)
@@ -106,10 +115,10 @@ module RuboCop
             else
               correct_style_detected
             end
+          elsif forced_parentheses?(node)
+            correct_style_detected
           elsif parentheses?(args)
             unwanted_parentheses(args)
-          else
-            correct_style_detected
           end
         end
         alias on_defs on_def
@@ -121,21 +130,16 @@ module RuboCop
           corrector.remove(arg_node.loc.end)
         end
 
-        def correct_definition(def_node, corrector)
-          arguments_range = def_node.arguments.source_range
-          args_with_space = range_with_surrounding_space(range: arguments_range, side: :left)
-          leading_space = range_between(args_with_space.begin_pos, arguments_range.begin_pos)
-          corrector.replace(leading_space, '(')
-          corrector.insert_after(arguments_range, ')')
-        end
-
         def forced_parentheses?(node)
           # Regardless of style, parentheses are necessary for:
           # 1. Endless methods
           # 2. Argument lists containing a `forward-arg` (`...`)
+          # 3. Argument lists containing an anonymous rest arguments forwarding (`*`)
+          # 4. Argument lists containing an anonymous keyword rest arguments forwarding (`**`)
+          # 5. Argument lists containing an anonymous block forwarding (`&`)
+          # 6. Argument lists that begin on a line below the method name
           # Removing the parens would be a syntax error here.
-
-          node.endless? || node.arguments.any?(&:forward_arg_type?)
+          node.endless? || anonymous_arguments?(node) || arguments_on_own_line?(node)
         end
 
         def require_parentheses?(args)
@@ -151,7 +155,8 @@ module RuboCop
           location = node.arguments.source_range
 
           add_offense(location, message: MSG_MISSING) do |corrector|
-            correct_definition(node, corrector)
+            add_parentheses(node.arguments, corrector)
+
             unexpected_style_detected 'require_no_parentheses'
           end
         end
@@ -162,6 +167,22 @@ module RuboCop
             correct_arguments(args, corrector)
             unexpected_style_detected 'require_parentheses'
           end
+        end
+
+        def anonymous_arguments?(node)
+          return true if node.arguments.any? do |arg|
+            arg.forward_arg_type? || (arg.type?(:restarg, :kwrestarg) && arg.name.nil?)
+          end
+          return false unless (last_argument = node.last_argument)
+
+          last_argument.blockarg_type? && last_argument.name.nil?
+        end
+
+        def arguments_on_own_line?(node)
+          return false unless (first_argument = node.first_argument)
+          return false unless parentheses?(node.arguments)
+
+          node.arguments.loc.begin.line != first_argument.first_line
         end
       end
     end

@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for places where redundant assignments are made for in place
+      # Checks for places where redundant assignments are made for in place
       # modification methods.
       #
       # @safety
@@ -21,18 +21,14 @@ module RuboCop
       #   args += foo
       #   hash.merge!(other)
       #
-      #   # bad
-      #   self.foo = foo.concat(ary)
-      #
       #   # good
       #   foo.concat(ary)
-      #   self.foo += ary
       #
       class RedundantSelfAssignment < Base
         include RangeHelp
         extend AutoCorrector
 
-        MSG = 'Redundant self assignment detected. '\
+        MSG = 'Redundant self assignment detected. ' \
               'Method `%<method_name>s` modifies its receiver in place.'
 
         METHODS_RETURNING_SELF = %i[
@@ -49,15 +45,26 @@ module RuboCop
           gvasgn: :gvar
         }.freeze
 
+        # @!method redundant_self_assignment?
+        def_node_matcher :redundant_self_assignment?, <<~PATTERN
+          (call
+            %1 _
+            (call
+              (call
+                %1 %2) #method_returning_self?
+              ...))
+        PATTERN
+
+        # rubocop:disable-next Metrics/AbcSize
         def on_lvasgn(node)
-          lhs, rhs = *node
-          receiver, method_name, = *rhs
-          return unless receiver && method_returning_self?(method_name)
+          return unless (rhs = node.rhs)
+          return unless rhs.type?(:any_block, :call) && method_returning_self?(rhs.method_name)
+          return unless (receiver = rhs.receiver)
 
           receiver_type = ASSIGNMENT_TYPE_TO_RECEIVER_TYPE[node.type]
-          return unless receiver.type == receiver_type && receiver.children.first == lhs
+          return unless receiver.type == receiver_type && receiver.children.first == node.lhs
 
-          message = format(MSG, method_name: method_name)
+          message = format(MSG, method_name: rhs.method_name)
           add_offense(node.loc.operator, message: message) do |corrector|
             corrector.replace(node, rhs.source)
           end
@@ -67,8 +74,7 @@ module RuboCop
         alias on_gvasgn on_lvasgn
 
         def on_send(node)
-          # TODO: Remove `Symbol#to_s` after supporting only Ruby >= 2.7.
-          return unless node.method_name.to_s.end_with?('=')
+          return unless node.assignment_method?
           return unless redundant_assignment?(node)
 
           message = format(MSG, method_name: node.first_argument.method_name)
@@ -76,6 +82,7 @@ module RuboCop
             corrector.remove(correction_range(node))
           end
         end
+        alias on_csend on_send
 
         private
 
@@ -83,31 +90,10 @@ module RuboCop
           METHODS_RETURNING_SELF.include?(method_name)
         end
 
-        # @!method redundant_self_assignment?(node, method_name)
-        def_node_matcher :redundant_self_assignment?, <<~PATTERN
-          (send
-            (self) _
-            (send
-              (send
-                {(self) nil?} %1) #method_returning_self?
-              ...))
-        PATTERN
-
-        # @!method redundant_nonself_assignment?(node, receiver, method_name)
-        def_node_matcher :redundant_nonself_assignment?, <<~PATTERN
-          (send
-            %1 _
-            (send
-              (send
-                %1 %2) #method_returning_self?
-              ...))
-        PATTERN
-
         def redundant_assignment?(node)
-          receiver_name = node.method_name.to_s[0...-1].to_sym
+          receiver_name = node.method_name.to_s.delete_suffix('=').to_sym
 
-          redundant_self_assignment?(node, receiver_name) ||
-            redundant_nonself_assignment?(node, node.receiver, receiver_name)
+          redundant_self_assignment?(node, node.receiver, receiver_name)
         end
 
         def correction_range(node)

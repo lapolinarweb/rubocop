@@ -9,9 +9,9 @@ RSpec.describe RuboCop::Cop::Style::NestedTernaryOperator, :config do
 
     expect_correction(<<~RUBY)
       if a
-        b ? b1 : b2
+      b ? b1 : b2
       else
-        a2
+      a2
       end
     RUBY
   end
@@ -25,9 +25,9 @@ RSpec.describe RuboCop::Cop::Style::NestedTernaryOperator, :config do
 
     expect_correction(<<~RUBY)
       if cond
-        foo
+      foo
       else
-        bar(foo.a ? foo.b : foo) { |e, k| e.nil? ? nil : e[k] }
+      bar(foo.a ? foo.b : foo) { |e, k| e.nil? ? nil : e[k] }
       end
     RUBY
   end
@@ -40,9 +40,32 @@ RSpec.describe RuboCop::Cop::Style::NestedTernaryOperator, :config do
 
     expect_correction(<<~RUBY)
       if x
-        y + (z ? 1 : 0)
+      y + (z ? 1 : 0)
       else
-        nil
+      nil
+      end
+    RUBY
+  end
+
+  it 'registers an offense when a ternary operator has a nested ternary operator within an `if`' do
+    expect_offense(<<~RUBY)
+      a ? (
+        if b
+          c ? 1 : 2
+          ^^^^^^^^^ Ternary operators must not be nested. Prefer `if` or `else` constructs instead.
+        end
+      ) : 3
+    RUBY
+
+    expect_correction(<<~RUBY)
+      if a
+
+        if b
+          c ? 1 : 2
+        end
+
+      else
+      3
       end
     RUBY
   end
@@ -53,6 +76,41 @@ RSpec.describe RuboCop::Cop::Style::NestedTernaryOperator, :config do
         cond ? b : c
       else
         d
+      end
+    RUBY
+  end
+
+  it 'can handle multiple nested ternaries' do
+    expect_offense(<<~RUBY)
+      a ? b : c ? d : e ? f : g
+                      ^^^^^^^^^ Ternary operators must not be nested. Prefer `if` or `else` constructs instead.
+              ^^^^^^^^^^^^^^^^^ Ternary operators must not be nested. Prefer `if` or `else` constructs instead.
+    RUBY
+
+    expect_correction(<<~RUBY)
+      if a
+      b
+      else
+      if c
+      d
+      else
+      e ? f : g
+      end
+      end
+    RUBY
+  end
+
+  it 'registers an offense and corrects when ternary operators are nested and the inner condition is parenthesized' do
+    expect_offense(<<~RUBY)
+      foo ? (bar && baz) ? qux : quux : corge
+            ^^^^^^^^^^^^^^^^^^^^^^^^^ Ternary operators must not be nested. Prefer `if` or `else` constructs instead.
+    RUBY
+
+    expect_correction(<<~RUBY)
+      if foo
+      (bar && baz) ? qux : quux
+      else
+      corge
       end
     RUBY
   end

@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Lint
-      # This cop checks if each_with_object is called with an immutable
+      # Checks if each_with_object is called with an immutable
       # argument. Since the argument is the object that the given block shall
       # make calls on to build something based on the enumerable that
       # each_with_object iterates over, an immutable argument makes no sense.
@@ -12,13 +12,9 @@ module RuboCop
       # @example
       #
       #   # bad
-      #
       #   sum = numbers.each_with_object(0) { |e, a| a += e }
       #
-      # @example
-      #
       #   # good
-      #
       #   num = 0
       #   sum = numbers.each_with_object(num) { |e, a| a += e }
       class EachWithObjectArgument < Base
@@ -27,7 +23,7 @@ module RuboCop
 
         # @!method each_with_object?(node)
         def_node_matcher :each_with_object?, <<~PATTERN
-          ({send csend} _ :each_with_object $_)
+          (call _ :each_with_object $_)
         PATTERN
 
         def on_send(node)

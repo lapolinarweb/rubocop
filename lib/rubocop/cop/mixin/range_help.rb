@@ -4,9 +4,10 @@ module RuboCop
   module Cop
     # Methods that calculate and return Parser::Source::Ranges
     module RangeHelp
-      private
-
       BYTE_ORDER_MARK = 0xfeff # The Unicode codepoint
+      NOT_GIVEN = Module.new
+
+      private
 
       def source_range(source_buffer, line_number, column, length = 1)
         if column.is_a?(Range)
@@ -33,6 +34,18 @@ module RuboCop
         range_between(node.loc.begin.end_pos, node.loc.end.begin_pos)
       end
 
+      # A range containing the first to the last argument
+      # of a method call or method definition.
+      # def foo(a, b:)
+      #         ^^^^^
+      # bar(1, 2, 3, &blk)
+      #     ^^^^^^^^^^^^^
+      # baz { |x, y:, z:| }
+      #        ^^^^^^^^^
+      def arguments_range(node)
+        node.first_argument.source_range.join(node.last_argument.source_range)
+      end
+
       def range_between(start_pos, end_pos)
         Parser::Source::Range.new(processed_source.buffer, start_pos, end_pos)
       end
@@ -51,10 +64,12 @@ module RuboCop
         Parser::Source::Range.new(buffer, begin_pos, end_pos)
       end
 
-      def range_with_surrounding_space(range:, side: :both,
-                                       newlines: true, whitespace: false,
-                                       continuations: false)
-        buffer = @processed_source.buffer
+      def range_with_surrounding_space(range_positional = NOT_GIVEN, # rubocop:disable Metrics/ParameterLists
+                                       range: NOT_GIVEN, side: :both, newlines: true,
+                                       whitespace: false, continuations: false,
+                                       buffer: @processed_source.buffer)
+        range = range_positional unless range_positional == NOT_GIVEN
+
         src = buffer.source
 
         go_left, go_right = directions(side)
@@ -66,9 +81,8 @@ module RuboCop
         Parser::Source::Range.new(buffer, begin_pos, end_pos)
       end
 
-      def range_by_whole_lines(range, include_final_newline: false)
-        buffer = @processed_source.buffer
-
+      def range_by_whole_lines(range, include_final_newline: false,
+                               buffer: @processed_source.buffer)
         last_line = buffer.source_line(range.last_line)
         end_offset = last_line.length - range.last_column
         end_offset += 1 if include_final_newline
@@ -102,14 +116,13 @@ module RuboCop
         end
       end
 
-      # rubocop:disable Metrics/ParameterLists
+      # rubocop:disable-next Metrics/ParameterLists
       def final_pos(src, pos, increment, continuations, newlines, whitespace)
         pos = move_pos(src, pos, increment, true, /[ \t]/)
         pos = move_pos_str(src, pos, increment, continuations, "\\\n")
         pos = move_pos(src, pos, increment, newlines, /\n/)
         move_pos(src, pos, increment, whitespace, /\s/)
       end
-      # rubocop:enable Metrics/ParameterLists
 
       def move_pos(src, pos, step, condition, regexp)
         offset = step == -1 ? -1 : 0
@@ -122,6 +135,24 @@ module RuboCop
         offset = step == -1 ? -size : 0
         pos += size * step while condition && src[pos + offset, size] == needle
         pos.negative? ? 0 : pos
+      end
+
+      def range_with_comments_and_lines(node)
+        range_by_whole_lines(range_with_comments(node), include_final_newline: true)
+      end
+
+      def range_with_comments(node)
+        ranges = [node, *@processed_source.ast_with_comments[node]].map(&:source_range)
+        ranges.reduce do |result, range|
+          add_range(result, range)
+        end
+      end
+
+      def add_range(range1, range2)
+        range1.with(
+          begin_pos: [range1.begin_pos, range2.begin_pos].min,
+          end_pos: [range1.end_pos, range2.end_pos].max
+        )
       end
     end
   end

@@ -28,7 +28,10 @@ module RuboCop
           # put the comment.
           return if new_line_needed_before_closing_brace?(node)
 
-          correct_next_line_brace(corrector)
+          end_range = last_element_range_with_trailing_comma(node).end
+
+          correct_next_line_brace(corrector, end_range)
+          correct_heredoc_argument_method_chain(corrector, end_range)
         end
       end
 
@@ -40,31 +43,40 @@ module RuboCop
         corrector.insert_before(node.loc.end, "\n")
       end
 
-      def correct_next_line_brace(corrector)
-        corrector.remove(range_with_surrounding_space(range: node.loc.end, side: :left))
+      def correct_next_line_brace(corrector, end_range)
+        corrector.remove(range_with_surrounding_space(node.loc.end, side: :left))
+        corrector.insert_before(end_range, content_if_comment_present(corrector, node))
+      end
 
-        corrector.insert_before(
-          last_element_range_with_trailing_comma(node).end,
-          content_if_comment_present(corrector, node)
-        )
+      def correct_heredoc_argument_method_chain(corrector, end_range)
+        return unless (parent = node.parent)
+        return unless use_heredoc_argument_method_chain?(parent)
+
+        chained_method = range_between(parent.loc.dot.begin_pos, parent.source_range.end_pos)
+
+        corrector.remove(chained_method)
+        corrector.insert_after(end_range, chained_method.source)
       end
 
       def content_if_comment_present(corrector, node)
-        range = range_with_surrounding_space(
-          range: children(node).last.source_range,
-          side: :right
-        ).end.resize(1)
-        if range.source == '#'
+        if processed_source.comment_at_line(children(node).last.last_line)
           select_content_to_be_inserted_after_last_element(corrector, node)
         else
           node.loc.end.source
         end
       end
 
+      def use_heredoc_argument_method_chain?(parent)
+        return false unless node.respond_to?(:first_argument)
+        return false unless (first_argument = node.first_argument)
+
+        parent.call_type? && first_argument.str_type? && first_argument.heredoc?
+      end
+
       def select_content_to_be_inserted_after_last_element(corrector, node)
         range = range_between(
           node.loc.end.begin_pos,
-          range_by_whole_lines(node.loc.expression).end.end_pos
+          range_by_whole_lines(node.source_range).end.end_pos
         )
 
         remove_trailing_content_of_comment(corrector, range)
@@ -86,7 +98,7 @@ module RuboCop
 
       def last_element_trailing_comma_range(node)
         range = range_with_surrounding_space(
-          range: children(node).last.source_range,
+          children(node).last.source_range,
           side: :right
         ).end.resize(1)
 

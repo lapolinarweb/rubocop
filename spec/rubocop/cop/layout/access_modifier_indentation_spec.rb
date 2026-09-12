@@ -341,6 +341,12 @@ RSpec.describe RuboCop::Cop::Layout::AccessModifierIndentation, :config do
       RUBY
     end
 
+    it 'does not register an offense when the access modifier is on the same line as the class definition' do
+      expect_no_offenses(<<~RUBY)
+        class A; private; def foo; end; end
+      RUBY
+    end
+
     context 'when 4 spaces per indent level are used' do
       let(:indentation_width) { 4 }
 
@@ -375,7 +381,7 @@ RSpec.describe RuboCop::Cop::Layout::AccessModifierIndentation, :config do
   context 'when EnforcedStyle is set to outdent' do
     let(:cop_config) { { 'EnforcedStyle' => 'outdent' } }
 
-    it 'registers offense and corrects private indented to method depth in a class' do
+    it 'registers an offense and corrects private indented to method depth in a class' do
       expect_offense(<<~RUBY)
         class Test
 

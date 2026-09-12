@@ -25,14 +25,11 @@ module RuboCop
           # > http://c2.com/cgi/wiki?AbcMetric
           CONDITION_NODES = CyclomaticComplexity::COUNTED_NODES.freeze
 
+          private_constant :BRANCH_NODES, :CONDITION_NODES
+
           def self.calculate(node, discount_repeated_attributes: false)
             new(node, discount_repeated_attributes: discount_repeated_attributes).calculate
           end
-
-          # TODO: move to rubocop-ast
-          ARGUMENT_TYPES = %i[arg optarg restarg kwarg kwoptarg kwrestarg blockarg].freeze
-
-          private_constant :BRANCH_NODES, :CONDITION_NODES, :ARGUMENT_TYPES
 
           def initialize(node)
             @assignment = 0
@@ -87,7 +84,10 @@ module RuboCop
           end
 
           def assignment?(node)
-            return compound_assignment(node) if node.masgn_type? || node.shorthand_asgn?
+            if node.masgn_type? || node.shorthand_asgn?
+              compound_assignment(node)
+              return false
+            end
 
             node.for_type? ||
               (node.respond_to?(:setter_method?) && node.setter_method?) ||
@@ -96,17 +96,14 @@ module RuboCop
           end
 
           def compound_assignment(node)
-            # Methods setter can not be detected for multiple assignments
+            # Methods setter cannot be detected for multiple assignments
             # and shorthand assigns, so we'll count them here instead
-            children = node.masgn_type? ? node.children[0].children : node.children
+            children = node.masgn_type? ? node.assignments : node.children
 
             will_be_miscounted = children.count do |child|
-              child.respond_to?(:setter_method?) &&
-                !child.setter_method?
+              child.respond_to?(:setter_method?) && !child.setter_method?
             end
             @assignment += will_be_miscounted
-
-            false
           end
 
           def simple_assignment?(node)
@@ -121,8 +118,7 @@ module RuboCop
           end
 
           def capturing_variable?(name)
-            # TODO: Remove `Symbol#to_s` after supporting only Ruby >= 2.7.
-            name && !name.to_s.start_with?('_')
+            name && !name.start_with?('_')
           end
 
           def branch?(node)
@@ -130,7 +126,7 @@ module RuboCop
           end
 
           def argument?(node)
-            ARGUMENT_TYPES.include?(node.type) && capturing_variable?(node.children.first)
+            node.argument_type? && capturing_variable?(node.children.first)
           end
 
           def condition?(node)

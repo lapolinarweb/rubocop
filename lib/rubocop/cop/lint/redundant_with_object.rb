@@ -3,7 +3,12 @@
 module RuboCop
   module Cop
     module Lint
-      # This cop checks for redundant `with_object`.
+      # Checks for redundant `with_object`.
+      #
+      # @safety
+      #   This cop's autocorrection is unsafe because the return value changes:
+      #   `each_with_object` returns the memo object, while the corrected `each` returns
+      #   the receiver. This matters when the result of the expression is used.
       #
       # @example
       #   # bad
@@ -31,18 +36,7 @@ module RuboCop
         extend AutoCorrector
 
         MSG_EACH_WITH_OBJECT = 'Use `each` instead of `each_with_object`.'
-
         MSG_WITH_OBJECT = 'Remove redundant `with_object`.'
-
-        # @!method redundant_with_object?(node)
-        def_node_matcher :redundant_with_object?, <<~PATTERN
-          (block
-            $(send _ {:each_with_object :with_object}
-              _)
-            (args
-              (arg _))
-            ...)
-        PATTERN
 
         def on_block(node)
           return unless (send = redundant_with_object?(node))
@@ -59,7 +53,22 @@ module RuboCop
           end
         end
 
+        alias on_numblock on_block
+        alias on_itblock on_block
+
         private
+
+        # @!method redundant_with_object?(node)
+        def_node_matcher :redundant_with_object?, <<~PATTERN
+          {
+            (block
+              $(call _ {:each_with_object :with_object} _) (args (arg _)) ...)
+            (numblock
+              $(call _ {:each_with_object :with_object} _) 1 ...)
+            (itblock
+              $(call _ {:each_with_object :with_object} _) _ ...)
+          }
+        PATTERN
 
         def message(node)
           if node.method?(:each_with_object)
@@ -70,7 +79,7 @@ module RuboCop
         end
 
         def with_object_range(send)
-          range_between(send.loc.selector.begin_pos, send.loc.expression.end_pos)
+          range_between(send.loc.selector.begin_pos, send.source_range.end_pos)
         end
       end
     end

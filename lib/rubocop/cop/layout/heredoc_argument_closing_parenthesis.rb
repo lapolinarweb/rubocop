@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Layout
-      # This cop checks for the placement of the closing parenthesis
+      # Checks for the placement of the closing parenthesis
       # in a method call that passes a HEREDOC string as an argument.
       # It should be placed at the end of the line containing the
       # opening HEREDOC tag.
@@ -67,8 +67,7 @@ module RuboCop
 
           outermost_send = outermost_send_on_same_line(heredoc_arg)
           return unless outermost_send
-          return unless outermost_send.loc.end
-          return unless heredoc_arg.first_line != outermost_send.loc.end.line
+          return if end_keyword_before_closing_parenthesis?(node)
           return if subsequent_closing_parentheses_in_same_line?(outermost_send)
           return if exist_argument_between_heredoc_end_and_closing_parentheses?(node)
 
@@ -76,6 +75,7 @@ module RuboCop
             autocorrect(corrector, outermost_send)
           end
         end
+        alias on_csend on_send
 
         private
 
@@ -160,14 +160,20 @@ module RuboCop
 
         # Closing parenthesis helpers.
 
+        def end_keyword_before_closing_parenthesis?(parenthesized_send_node)
+          parenthesized_send_node.ancestors.any? do |ancestor|
+            ancestor.loc_is?(:end, 'end')
+          end
+        end
+
         def subsequent_closing_parentheses_in_same_line?(outermost_send)
           last_arg_of_outer_send = outermost_send.last_argument
-          return false unless last_arg_of_outer_send&.loc.respond_to?(:end) &&
+          return false unless last_arg_of_outer_send&.loc?(:end) &&
                               (end_of_last_arg_of_outer_send = last_arg_of_outer_send.loc.end)
 
           end_of_outer_send = outermost_send.loc.end
 
-          end_of_outer_send.line == end_of_last_arg_of_outer_send.line &&
+          same_line?(end_of_outer_send, end_of_last_arg_of_outer_send) &&
             end_of_outer_send.column == end_of_last_arg_of_outer_send.column + 1
         end
 
@@ -177,7 +183,7 @@ module RuboCop
         end
 
         def add_correct_closing_paren(node, corrector)
-          corrector.insert_after(node.arguments.last, ')')
+          corrector.insert_after(node.last_argument, ')')
         end
 
         def remove_incorrect_closing_paren(node, corrector)
@@ -215,6 +221,7 @@ module RuboCop
         end
 
         def exist_argument_between_heredoc_end_and_closing_parentheses?(node)
+          return true unless node.loc.end
           return false unless (heredoc_end = find_most_bottom_of_heredoc_end(node.arguments))
 
           heredoc_end < node.loc.end.begin_pos &&
@@ -222,9 +229,9 @@ module RuboCop
         end
 
         def find_most_bottom_of_heredoc_end(arguments)
-          arguments.map do |argument|
-            argument.loc.heredoc_end.end_pos if argument.loc.respond_to?(:heredoc_end)
-          end.compact.max
+          arguments.filter_map do |argument|
+            argument.loc.heredoc_end.end_pos if argument.loc?(:heredoc_end)
+          end.max
         end
 
         # Internal trailing comma helpers.
@@ -265,7 +272,7 @@ module RuboCop
         def add_correct_external_trailing_comma(node, corrector)
           return unless external_trailing_comma?(node)
 
-          corrector.insert_after(node.arguments.last, ',')
+          corrector.insert_after(node.last_argument, ',')
         end
 
         def remove_incorrect_external_trailing_comma(node, corrector)

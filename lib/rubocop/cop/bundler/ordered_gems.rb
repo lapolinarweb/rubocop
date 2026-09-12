@@ -19,7 +19,15 @@ module RuboCop
       #
       #   gem 'rspec'
       #
-      #   # good only if TreatCommentsAsGroupSeparators is true
+      # @example TreatCommentsAsGroupSeparators: true (default)
+      #   # good
+      #   # For code quality
+      #   gem 'rubocop'
+      #   # For tests
+      #   gem 'rspec'
+      #
+      # @example TreatCommentsAsGroupSeparators: false
+      #   # bad
       #   # For code quality
       #   gem 'rubocop'
       #   # For tests
@@ -28,16 +36,15 @@ module RuboCop
         extend AutoCorrector
         include OrderedGemNode
 
-        MSG = 'Gems should be sorted in an alphabetical order within their '\
-              'section of the Gemfile. '\
+        MSG = 'Gems should be sorted in an alphabetical order within their ' \
+              'section of the Gemfile. ' \
               'Gem `%<previous>s` should appear before `%<current>s`.'
 
         def on_new_investigation
           return if processed_source.blank?
 
-          gem_declarations(processed_source.ast)
-            .each_cons(2) do |previous, current|
-            next unless consecutive_lines(previous, current)
+          gem_declarations(processed_source.ast).each_cons(2) do |previous, current|
+            next unless consecutive_lines?(previous, current)
             next unless case_insensitive_out_of_order?(gem_name(current), gem_name(previous))
 
             register_offense(previous, current)

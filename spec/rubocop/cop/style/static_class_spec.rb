@@ -8,6 +8,14 @@ RSpec.describe RuboCop::Cop::Style::StaticClass, :config do
         def self.class_method; end
       end
     RUBY
+
+    expect_correction(<<~RUBY)
+      module C
+      module_function
+
+        def class_method; end
+      end
+    RUBY
   end
 
   it 'registers an offense when class has `class << self` with class methods' do
@@ -19,6 +27,18 @@ RSpec.describe RuboCop::Cop::Style::StaticClass, :config do
         class << self
           def other_class_method; end
         end
+      end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      module C
+      module_function
+
+        def class_method; end
+
+       #{trailing_whitespace}
+          def other_class_method; end
+       #{trailing_whitespace}
       end
     RUBY
   end
@@ -42,6 +62,16 @@ RSpec.describe RuboCop::Cop::Style::StaticClass, :config do
         CONST = 1
 
         def self.class_method; end
+      end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      module C
+      module_function
+
+        CONST = 1
+
+        def class_method; end
       end
     RUBY
   end
@@ -103,6 +133,15 @@ RSpec.describe RuboCop::Cop::Style::StaticClass, :config do
         def self.class_method; end
       end
     RUBY
+
+    expect_correction(<<~RUBY)
+      module C
+      module_function
+
+        extend M
+        def class_method; end
+      end
+    RUBY
   end
 
   it 'does not register an offense for modules' do
@@ -111,5 +150,61 @@ RSpec.describe RuboCop::Cop::Style::StaticClass, :config do
         def self.class_method; end
       end
     RUBY
+  end
+
+  context 'with a project index', :project_index do
+    def index_with_current(source, sources = {})
+      build_index(sources.merge('file:///current.rb' => source))
+    end
+
+    it 'does not register an offense when the class is subclassed in another file' do
+      source = <<~RUBY
+        class Tools
+          def self.hammer
+          end
+        end
+      RUBY
+      cop.project_index = index_with_current(
+        source, 'file:///sub.rb' => "class PowerTools < Tools\nend\n"
+      )
+
+      expect_no_offenses(source, 'current.rb')
+    end
+
+    it 'registers an offense when no subclass exists in the project' do
+      source = <<~RUBY
+        class Tools
+          def self.hammer
+          end
+        end
+      RUBY
+      cop.project_index = index_with_current(
+        source, 'file:///other.rb' => "class Unrelated\nend\n"
+      )
+
+      expect_offense(<<~RUBY, 'current.rb')
+        class Tools
+        ^^^^^^^^^^^ Prefer modules to classes with only class methods.
+          def self.hammer
+          end
+        end
+      RUBY
+    end
+
+    it 'does not register an offense when subclassed transitively' do
+      source = <<~RUBY
+        class Tools
+          def self.hammer
+          end
+        end
+      RUBY
+      cop.project_index = index_with_current(
+        source,
+        'file:///mid.rb' => "class GardenTools < Tools\nend\n",
+        'file:///sub.rb' => "class PowerTools < GardenTools\nend\n"
+      )
+
+      expect_no_offenses(source, 'current.rb')
+    end
   end
 end

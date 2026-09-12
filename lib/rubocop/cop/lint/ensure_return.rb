@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Lint
-      # This cop checks for `return` from an `ensure` block.
+      # Checks for `return` from an `ensure` block.
       # `return` from an ensure block is a dangerous code smell as it
       # will take precedence over any exception being raised,
       # and the exception will be silently thrown away as if it were rescued.
@@ -13,7 +13,6 @@ module RuboCop
       # @example
       #
       #   # bad
-      #
       #   def foo
       #     do_something
       #   ensure
@@ -21,10 +20,7 @@ module RuboCop
       #     return self
       #   end
       #
-      # @example
-      #
       #   # good
-      #
       #   def foo
       #     do_something
       #     self
@@ -32,8 +28,7 @@ module RuboCop
       #     cleanup
       #   end
       #
-      #   # also good
-      #
+      #   # good
       #   def foo
       #     begin
       #       do_something
@@ -45,13 +40,28 @@ module RuboCop
       #     cleanup
       #   end
       class EnsureReturn < Base
-        extend AutoCorrector
-        include RangeHelp
-
         MSG = 'Do not return from an `ensure` block.'
 
         def on_ensure(node)
-          node.body&.each_node(:return) { |return_node| add_offense(return_node) }
+          node.branch&.each_node(:return) do |return_node|
+            next if return_from_inner_scope?(return_node, node)
+
+            add_offense(return_node)
+          end
+        end
+
+        private
+
+        # A `return` inside a nested method definition or lambda within the
+        # `ensure` returns from that inner scope, not from the method whose
+        # `ensure` this is, so it is not an offense. A `return` inside a plain
+        # block (or `proc`) does propagate out, so it remains an offense.
+        def return_from_inner_scope?(return_node, ensure_node)
+          return_node.each_ancestor do |ancestor|
+            break if ancestor == ensure_node
+            return true if ancestor.any_def_type? || (ancestor.any_block_type? && ancestor.lambda?)
+          end
+          false
         end
       end
     end

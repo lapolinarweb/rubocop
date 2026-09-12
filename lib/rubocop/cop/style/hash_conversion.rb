@@ -3,12 +3,22 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks the usage of pre-2.1 `Hash[args]` method of converting enumerables and
+      # Checks the usage of pre-2.1 `Hash[args]` method of converting enumerables and
       # sequences of values to hashes.
       #
       # Correction code from splat argument (`Hash[*ary]`) is not simply determined. For example,
       # `Hash[*ary]` can be replaced with `ary.each_slice(2).to_h` but it will be complicated.
       # So, `AllowSplatArgument` option is true by default to allow splat argument for simple code.
+      #
+      # @safety
+      #   This cop's autocorrection is unsafe because `ArgumentError` occurs
+      #   if the number of elements is odd:
+      #
+      #   [source,ruby]
+      #   ----
+      #   Hash[[[1, 2], [3]]] #=> {1=>2, 3=>nil}
+      #   [[1, 2], [5]].to_h  #=> wrong array length at 1 (expected 2, was 1) (ArgumentError)
+      #   ----
       #
       # @example
       #   # bad
@@ -34,17 +44,17 @@ module RuboCop
       class HashConversion < Base
         extend AutoCorrector
 
-        MSG_TO_H = 'Prefer ary.to_h to Hash[ary].'
-        MSG_LITERAL_MULTI_ARG = 'Prefer literal hash to Hash[arg1, arg2, ...].'
-        MSG_LITERAL_HASH_ARG = 'Prefer literal hash to Hash[key: value, ...].'
-        MSG_SPLAT = 'Prefer array_of_pairs.to_h to Hash[*array].'
+        MSG_TO_H = 'Prefer `ary.to_h` to `Hash[ary]`.'
+        MSG_LITERAL_MULTI_ARG = 'Prefer literal hash to `Hash[arg1, arg2, ...]`.'
+        MSG_LITERAL_HASH_ARG = 'Prefer literal hash to `Hash[key: value, ...]`.'
+        MSG_SPLAT = 'Prefer `array_of_pairs.to_h` to `Hash[*array]`.'
         RESTRICT_ON_SEND = %i[[]].freeze
 
         # @!method hash_from_array?(node)
         def_node_matcher :hash_from_array?, '(send (const {nil? cbase} :Hash) :[] ...)'
 
         def on_send(node)
-          return unless hash_from_array?(node)
+          return if part_of_ignored_node?(node) || !hash_from_array?(node)
 
           # There are several cases:
           # If there is one argument:
@@ -53,7 +63,8 @@ module RuboCop
           # If there is 0 or 2+ arguments:
           #   Hash[a1, a2, a3, a4] => {a1 => a2, a3 => a4}
           #   ...but don't suggest correction if there is odd number of them (it is a bug)
-          node.arguments.count == 1 ? single_argument(node) : multi_argument(node)
+          node.arguments.one? ? single_argument(node) : multi_argument(node)
+          ignore_node(node)
         end
 
         private
@@ -62,7 +73,7 @@ module RuboCop
           first_argument = node.first_argument
           if first_argument.hash_type?
             register_offense_for_hash(node, first_argument)
-          elsif first_argument.splat_type?
+          elsif first_argument.type?(:splat, :forwarded_restarg)
             add_offense(node, message: MSG_SPLAT) unless allowed_splat_argument?
           elsif use_zip_method_without_argument?(first_argument)
             register_offense_for_zip_method(node, first_argument)
@@ -101,18 +112,33 @@ module RuboCop
         end
 
         def requires_parens?(node)
-          node.call_type? && node.arguments.any? && !node.parenthesized?
+          if node.call_type?
+            return false if node.method?(:[])
+            return true if node.arguments.any? && !node.parenthesized?
+          end
+
+          node.operator_keyword?
         end
 
         def multi_argument(node)
+          # A splat argument can expand to any number of elements, so the pairs
+          # can't be built statically and there is no literal hash to suggest.
+          return if node.arguments.any?(&:splat_type?)
+
           if node.arguments.count.odd?
             add_offense(node, message: MSG_LITERAL_MULTI_ARG)
           else
-            add_offense(node, message: MSG_LITERAL_MULTI_ARG) do |corrector|
-              corrector.replace(node, args_to_hash(node.arguments))
+            correct_multi_argument(node)
+          end
+        end
 
-              parent = node.parent
-              add_parentheses(parent, corrector) if parent&.send_type? && !parent.parenthesized?
+        def correct_multi_argument(node)
+          add_offense(node, message: MSG_LITERAL_MULTI_ARG) do |corrector|
+            corrector.replace(node, args_to_hash(node.arguments))
+
+            parent = node.parent
+            if parent&.send_type? && !parent.method?(:to_h) && !parent.parenthesized?
+              add_parentheses(parent, corrector)
             end
           end
         end

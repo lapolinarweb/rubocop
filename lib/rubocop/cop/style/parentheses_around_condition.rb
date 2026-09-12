@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for the presence of superfluous parentheses around the
+      # Checks for the presence of superfluous parentheses around the
       # condition of if/unless/while/until.
       #
       # `AllowSafeAssignment` option for safe assignment.
@@ -56,6 +56,7 @@ module RuboCop
       class ParenthesesAroundCondition < Base
         include SafeAssignment
         include Parentheses
+        include RangeHelp
         extend AutoCorrector
 
         def on_if(node)
@@ -73,13 +74,15 @@ module RuboCop
 
         # @!method control_op_condition(node)
         def_node_matcher :control_op_condition, <<~PATTERN
-          (begin $_ ...)
+          (begin $_ $...)
         PATTERN
 
         def process_control_op(node)
           cond = node.condition
 
-          control_op_condition(cond) do |first_child|
+          control_op_condition(cond) do |first_child, rest_children|
+            return if require_parentheses?(node, first_child)
+            return if semicolon_separated_expressions?(first_child, rest_children)
             return if modifier_op?(first_child)
             return if parens_allowed?(cond)
 
@@ -88,6 +91,21 @@ module RuboCop
               ParenthesesCorrector.correct(corrector, cond)
             end
           end
+        end
+
+        def require_parentheses?(node, condition_body)
+          return false unless node.type?(:while, :until)
+          return false unless condition_body.any_block_type?
+
+          condition_body.send_node.block_literal? && condition_body.keywords?
+        end
+
+        def semicolon_separated_expressions?(first_exp, rest_exps)
+          return false unless (second_exp = rest_exps.first)
+
+          range = range_between(first_exp.source_range.end_pos, second_exp.source_range.begin_pos)
+
+          range.source.include?(';')
         end
 
         def modifier_op?(node)
@@ -105,8 +123,13 @@ module RuboCop
 
         def parens_allowed?(node)
           parens_required?(node) ||
-            (safe_assignment?(node) && safe_assignment_allowed?) ||
+            (safe_assignment?(node) && safe_assignment_kept?) ||
             (node.multiline? && allow_multiline_conditions?)
+        end
+
+        def safe_assignment_kept?
+          safe_assignment_allowed? ||
+            config.for_enabled_cop('Lint/AssignmentInCondition')['AllowSafeAssignment']
         end
 
         def allow_multiline_conditions?

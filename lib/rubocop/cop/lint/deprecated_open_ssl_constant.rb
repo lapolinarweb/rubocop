@@ -9,27 +9,17 @@ module RuboCop
       #
       # @example
       #
-      #   # Example for OpenSSL::Cipher instantiation.
-      #
       #   # bad
       #   OpenSSL::Cipher::AES.new(128, :GCM)
       #
       #   # good
       #   OpenSSL::Cipher.new('aes-128-gcm')
       #
-      # @example
-      #
-      #   # Example for OpenSSL::Digest instantiation.
-      #
       #   # bad
       #   OpenSSL::Digest::SHA256.new
       #
       #   # good
       #   OpenSSL::Digest.new('SHA256')
-      #
-      # @example
-      #
-      #   # Example for ::Digest inherited class methods.
       #
       #   # bad
       #   OpenSSL::Digest::SHA256.digest('foo')
@@ -43,6 +33,7 @@ module RuboCop
 
         MSG = 'Use `%<constant>s.%<method>s(%<replacement_args>s)` instead of `%<original>s`.'
 
+        RESTRICT_ON_SEND = %i[new digest].freeze
         NO_ARG_ALGORITHM = %w[BF DES IDEA RC4].freeze
 
         # @!method algorithm_const(node)
@@ -55,8 +46,14 @@ module RuboCop
             ...)
         PATTERN
 
+        # @!method digest_const?(node)
+        def_node_matcher :digest_const?, <<~PATTERN
+          (const _ :Digest)
+        PATTERN
+
         def on_send(node)
-          return if node.arguments.any? { |arg| arg.variable? || arg.send_type? || arg.const_type? }
+          return if node.arguments.any? { |arg| arg.variable? || arg.call_type? || arg.const_type? }
+          return if digest_const?(node.receiver)
           return unless algorithm_const(node)
 
           message = message(node)
@@ -94,7 +91,7 @@ module RuboCop
         end
 
         def correction_range(node)
-          range_between(node.loc.dot.end_pos, node.loc.expression.end_pos)
+          range_between(node.loc.dot.end_pos, node.source_range.end_pos)
         end
 
         def openssl_class(node)
@@ -121,8 +118,11 @@ module RuboCop
 
         def replacement_args(node)
           algorithm_constant, = algorithm_const(node)
-          algorithm_name = algorithm_name(algorithm_constant)
+          if algorithm_constant.source == 'OpenSSL::Cipher::Cipher'
+            return node.first_argument.source
+          end
 
+          algorithm_name = algorithm_name(algorithm_constant)
           if openssl_class(algorithm_constant) == 'OpenSSL::Cipher'
             build_cipher_arguments(node, algorithm_name, node.arguments.empty?)
           else
@@ -137,7 +137,7 @@ module RuboCop
           if NO_ARG_ALGORITHM.include?(algorithm_parts.first.upcase) && no_arguments
             "'#{algorithm_parts.first}'"
           else
-            mode = 'cbc' unless size_and_mode == ['cbc']
+            mode = 'cbc' if size_and_mode.empty?
 
             "'#{(algorithm_parts + size_and_mode + [mode]).compact.take(3).join('-')}'"
           end

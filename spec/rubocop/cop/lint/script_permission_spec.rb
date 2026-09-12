@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# rubocop:disable Style/NumericLiteralPrefix
+# rubocop:disable-next Style/NumericLiteralPrefix -- the source under test is what it is
 RSpec.describe RuboCop::Cop::Lint::ScriptPermission, :config do
   subject(:cop) { described_class.new(config, options) }
 
@@ -37,13 +37,13 @@ RSpec.describe RuboCop::Cop::Lint::ScriptPermission, :config do
         RUBY
 
         expect_no_corrections
-        expect(file.stat.executable?).to be_truthy
+        expect(file.stat).to be_executable
       end
 
-      context 'if auto-correction is off' do
+      context 'if autocorrection is off' do
         # very dirty hack
         def _investigate(cop, processed_source)
-          cop.instance_variable_get(:@options)[:auto_correct] = false
+          cop.instance_variable_get(:@options)[:autocorrect] = false
           super
         end
 
@@ -54,7 +54,21 @@ RSpec.describe RuboCop::Cop::Lint::ScriptPermission, :config do
           RUBY
 
           expect_no_corrections
-          expect(file.stat.executable?).to be false
+          expect(file.stat).not_to be_executable
+        end
+      end
+
+      context 'if `AutoCorrect: false` is configured for the cop' do
+        let(:cop_config) { { 'AutoCorrect' => false } }
+
+        it 'leaves the file intact' do
+          expect_offense(<<~RUBY, file)
+            #!/usr/bin/ruby
+            ^^^^^^^^^^^^^^^ Script file #{filename} doesn't have execute permission.
+          RUBY
+
+          expect_no_corrections
+          expect(file.stat).not_to be_executable
         end
       end
     end
@@ -89,5 +103,13 @@ RSpec.describe RuboCop::Cop::Lint::ScriptPermission, :config do
       expect_no_offenses(source)
     end
   end
+
+  context 'with a source that has no file on disk' do
+    it 'does not crash (e.g. an unsaved editor buffer or programmatic source)' do
+      expect_no_offenses(<<~RUBY)
+        #!/usr/bin/ruby
+        puts 'hello, world'
+      RUBY
+    end
+  end
 end
-# rubocop:enable Style/NumericLiteralPrefix

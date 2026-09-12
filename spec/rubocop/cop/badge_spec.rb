@@ -22,10 +22,10 @@ RSpec.describe RuboCop::Cop::Badge do
       end
     end
 
-    include_examples 'assignment of department and name', %w[Foo], nil, 'Foo'
-    include_examples 'assignment of department and name', %w[Foo Bar], :Foo, 'Bar'
-    include_examples 'assignment of department and name', %w[Foo Bar Baz], :'Foo/Bar', 'Baz'
-    include_examples 'assignment of department and name', %w[Foo Bar Baz Qux], :'Foo/Bar/Baz', 'Qux'
+    it_behaves_like 'assignment of department and name', %w[Foo], nil, 'Foo'
+    it_behaves_like 'assignment of department and name', %w[Foo Bar], :Foo, 'Bar'
+    it_behaves_like 'assignment of department and name', %w[Foo Bar Baz], :'Foo/Bar', 'Baz'
+    it_behaves_like 'assignment of department and name', %w[Foo Bar Baz Qux], :'Foo/Bar/Baz', 'Qux'
   end
 
   describe '.parse' do
@@ -35,10 +35,12 @@ RSpec.describe RuboCop::Cop::Badge do
       end
     end
 
-    include_examples 'cop identifier parsing', 'Bar', %w[Bar]
-    include_examples 'cop identifier parsing', 'Foo/Bar', %w[Foo Bar]
-    include_examples 'cop identifier parsing', 'Foo/Bar/Baz', %w[Foo Bar Baz]
-    include_examples 'cop identifier parsing', 'Foo/Bar/Baz/Qux', %w[Foo Bar Baz Qux]
+    it_behaves_like 'cop identifier parsing', 'bar', %w[Bar]
+    it_behaves_like 'cop identifier parsing', 'Bar', %w[Bar]
+    it_behaves_like 'cop identifier parsing', 'snake_case/example', %w[SnakeCase Example]
+    it_behaves_like 'cop identifier parsing', 'Foo/Bar', %w[Foo Bar]
+    it_behaves_like 'cop identifier parsing', 'Foo/Bar/Baz', %w[Foo Bar Baz]
+    it_behaves_like 'cop identifier parsing', 'Foo/Bar/Baz/Qux', %w[Foo Bar Baz Qux]
   end
 
   describe '.for' do
@@ -48,18 +50,18 @@ RSpec.describe RuboCop::Cop::Badge do
       end
     end
 
-    include_examples 'cop class name parsing', 'Foo', %w[Foo]
-    include_examples 'cop class name parsing', 'Foo::Bar', %w[Foo Bar]
-    include_examples 'cop class name parsing', 'RuboCop::Cop::Foo', %w[Cop Foo]
-    include_examples 'cop class name parsing', 'RuboCop::Cop::Foo::Bar', %w[Foo Bar]
-    include_examples 'cop class name parsing', 'RuboCop::Cop::Foo::Bar::Baz', %w[Foo Bar Baz]
+    it_behaves_like 'cop class name parsing', 'Foo', %w[Foo]
+    it_behaves_like 'cop class name parsing', 'Foo::Bar', %w[Foo Bar]
+    it_behaves_like 'cop class name parsing', 'RuboCop::Cop::Foo', %w[Cop Foo]
+    it_behaves_like 'cop class name parsing', 'RuboCop::Cop::Foo::Bar', %w[Foo Bar]
+    it_behaves_like 'cop class name parsing', 'RuboCop::Cop::Foo::Bar::Baz', %w[Foo Bar Baz]
   end
 
   it 'compares by value' do
     badge1 = described_class.new(%w[Foo Bar])
     badge2 = described_class.new(%w[Foo Bar])
 
-    expect(Set.new([badge1, badge2]).one?).to be(true)
+    expect(Set.new([badge1, badge2])).to be_one
   end
 
   it 'can be converted to a string with the Department/CopName format' do
@@ -68,15 +70,49 @@ RSpec.describe RuboCop::Cop::Badge do
 
   describe '#qualified?' do
     it 'says `CopName` is not qualified' do
-      expect(described_class.parse('Bar').qualified?).to be(false)
+      expect(described_class.parse('Bar')).not_to be_qualified
     end
 
     it 'says `Department/CopName` is qualified' do
-      expect(described_class.parse('Department/Bar').qualified?).to be(true)
+      expect(described_class.parse('Department/Bar')).to be_qualified
     end
 
     it 'says `Deep/Department/CopName` is qualified' do
-      expect(described_class.parse('Deep/Department/Bar').qualified?).to be(true)
+      expect(described_class.parse('Deep/Department/Bar')).to be_qualified
+    end
+  end
+
+  describe '#match_name?' do
+    subject(:badge) { described_class.parse('Foo/Bar') }
+
+    it 'returns true when the given names include the qualified name' do
+      expect(badge).to be_match_name(['Foo/Bar'])
+    end
+
+    it 'returns true when the given names include the department name' do
+      expect(badge).to be_match_name(['Foo'])
+    end
+
+    it 'returns false when the given names include neither' do
+      expect(badge).not_to be_match_name(['Foo/Baz'])
+    end
+
+    it 'returns false when no names are given' do
+      expect(badge).not_to be_match_name(nil)
+    end
+  end
+
+  describe '#camel_case' do
+    it 'converts "lint" to CamelCase' do
+      expect(described_class.camel_case('lint')).to eq('Lint')
+    end
+
+    it 'converts "foo_bar" to CamelCase' do
+      expect(described_class.camel_case('foo_bar')).to eq('FooBar')
+    end
+
+    it 'converts "rspec" to CamelCase' do
+      expect(described_class.camel_case('rspec')).to eq('RSpec')
     end
   end
 end

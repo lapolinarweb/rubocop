@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for case statements with an empty condition.
+      # Checks for case statements with an empty condition.
       #
       # @example
       #
@@ -40,15 +40,18 @@ module RuboCop
         extend AutoCorrector
 
         MSG = 'Do not use empty `case` condition, instead use an `if` expression.'
+        NOT_SUPPORTED_PARENT_TYPES = %i[return break next send csend yield super].freeze
 
+        # rubocop:disable-next Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
         def on_case(case_node)
-          return if case_node.condition
+          if case_node.condition || NOT_SUPPORTED_PARENT_TYPES.include?(case_node.parent&.type)
+            return
+          end
 
           branch_bodies = [*case_node.when_branches.map(&:body), case_node.else_branch].compact
 
           return if branch_bodies.any? do |body|
-            body.return_type? ||
-            body.each_descendant.any?(&:return_type?)
+            body.return_type? || body.each_descendant.any?(&:return_type?)
           end
 
           add_offense(case_node.loc.keyword) { |corrector| autocorrect(corrector, case_node) }
@@ -70,7 +73,7 @@ module RuboCop
 
           keep_first_when_comment(case_range, corrector)
 
-          when_nodes[1..-1].each do |when_node|
+          when_nodes[1..].each do |when_node|
             corrector.replace(when_node.loc.keyword, 'elsif')
           end
         end
@@ -79,12 +82,24 @@ module RuboCop
           when_nodes.each do |when_node|
             conditions = when_node.conditions
 
+            replace_then_with_line_break(corrector, conditions, when_node)
+
             next unless conditions.size > 1
 
             range = range_between(conditions.first.source_range.begin_pos,
                                   conditions.last.source_range.end_pos)
 
-            corrector.replace(range, conditions.map(&:source).join(' || '))
+            corrector.replace(range, conditions.map { |c| parenthesize_condition(c) }.join(' || '))
+          end
+        end
+
+        # A condition that binds looser than `||` (e.g. a ternary, range, or
+        # assignment) must be parenthesized so the joined `||` keeps its meaning.
+        def parenthesize_condition(condition)
+          if condition.assignment? || condition.type?(:if, :and, :or, :range)
+            "(#{condition.source})"
+          else
+            condition.source
           end
         end
 
@@ -96,6 +111,14 @@ module RuboCop
 
           line_beginning = case_range.adjust(begin_pos: -case_range.column)
           corrector.insert_before(line_beginning, comments)
+        end
+
+        def replace_then_with_line_break(corrector, conditions, when_node)
+          return unless when_node.parent.parent && when_node.then?
+
+          range = range_between(conditions.last.source_range.end_pos, when_node.loc.begin.end_pos)
+
+          corrector.replace(range, "\n")
         end
       end
     end

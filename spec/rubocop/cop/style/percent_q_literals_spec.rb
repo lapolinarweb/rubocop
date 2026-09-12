@@ -31,7 +31,7 @@ RSpec.describe RuboCop::Cop::Style::PercentQLiterals, :config do
         expect_no_offenses('%q(hi)')
       end
 
-      it 'registers offense for %Q' do
+      it 'registers an offense for %Q' do
         expect_offense(<<~RUBY)
           %Q(hi)
           ^^^ Do not use `%Q` unless interpolation is needed. Use `%q`.
@@ -42,8 +42,8 @@ RSpec.describe RuboCop::Cop::Style::PercentQLiterals, :config do
         RUBY
       end
 
-      include_examples 'accepts quote characters'
-      include_examples 'accepts any q string with backslash t'
+      it_behaves_like 'accepts quote characters'
+      it_behaves_like 'accepts any q string with backslash t'
     end
 
     context 'with interpolation' do
@@ -56,7 +56,7 @@ RSpec.describe RuboCop::Cop::Style::PercentQLiterals, :config do
         expect_no_offenses('%q(#{1 + 2})')
       end
 
-      include_examples 'accepts quote characters'
+      it_behaves_like 'accepts quote characters'
     end
   end
 
@@ -64,7 +64,7 @@ RSpec.describe RuboCop::Cop::Style::PercentQLiterals, :config do
     let(:cop_config) { { 'EnforcedStyle' => 'upper_case_q' } }
 
     context 'without interpolation' do
-      it 'registers offense for %q' do
+      it 'registers an offense for %q' do
         expect_offense(<<~RUBY)
           %q(hi)
           ^^^ Use `%Q` instead of `%q`.
@@ -79,8 +79,14 @@ RSpec.describe RuboCop::Cop::Style::PercentQLiterals, :config do
         expect_no_offenses('%Q(hi)')
       end
 
-      include_examples 'accepts quote characters'
-      include_examples 'accepts any q string with backslash t'
+      it 'does not register an offense when correcting leads to a parsing error' do
+        expect_no_offenses(<<~'RUBY')
+          %q(\u)
+        RUBY
+      end
+
+      it_behaves_like 'accepts quote characters'
+      it_behaves_like 'accepts any q string with backslash t'
     end
 
     context 'with interpolation' do
@@ -95,7 +101,7 @@ RSpec.describe RuboCop::Cop::Style::PercentQLiterals, :config do
         expect_no_offenses('%q(#{1 + 2})')
       end
 
-      include_examples 'accepts quote characters'
+      it_behaves_like 'accepts quote characters'
     end
   end
 end

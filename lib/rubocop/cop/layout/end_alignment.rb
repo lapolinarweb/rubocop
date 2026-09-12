@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Layout
-      # This cop checks whether the end keywords are aligned properly.
+      # Checks whether the end keywords are aligned properly.
       #
       # Three modes are supported through the `EnforcedStyleAlignWith`
       # configuration parameter:
@@ -19,8 +19,10 @@ module RuboCop
       #
       # This `Layout/EndAlignment` cop aligns with keywords (e.g. `if`, `while`, `case`)
       # by default. On the other hand, `Layout/BeginEndAlignment` cop aligns with
-      # `EnforcedStyleAlignWith: start_of_line` by default due to `||= begin` tends
-      # to align with the start of the line. These style can be configured by each cop.
+      # `EnforcedStyleAlignWith: start_of_line` by default because `||= begin` tends
+      # to align with the start of the line. `Layout/DefEndAlignment` cop also aligns with
+      # `EnforcedStyleAlignWith: start_of_line` by default.
+      # These styles can be configured by each cop.
       #
       # @example EnforcedStyleAlignWith: keyword (default)
       #   # bad
@@ -82,6 +84,14 @@ module RuboCop
           check_other_alignment(node)
         end
 
+        def on_sclass(node)
+          if node.parent&.assignment?
+            check_asgn_alignment(node.parent, node)
+          else
+            check_other_alignment(node)
+          end
+        end
+
         def on_module(node)
           check_other_alignment(node)
         end
@@ -105,6 +115,7 @@ module RuboCop
             check_other_alignment(node)
           end
         end
+        alias on_case_match on_case
 
         private
 
@@ -112,12 +123,18 @@ module RuboCop
           AlignmentCorrector.align_end(corrector, processed_source, node, alignment_node(node))
         end
 
+        # rubocop:disable-next Metrics/CyclomaticComplexity
         def check_assignment(node, rhs)
           # If there are method calls chained to the right hand side of the
           # assignment, we let rhs be the receiver of those method calls before
           # we check if it's an if/unless/while/until.
           return unless (rhs = first_part_of_call_chain(rhs))
-          return unless rhs.conditional?
+
+          # If `rhs` is a `begin` node or a logical operator,
+          # unwrap to find the leading conditional.
+          rhs = rhs.child_nodes.first while rhs&.type?(:begin, :or, :and)
+
+          return unless rhs&.conditional?
           return if rhs.if_type? && rhs.ternary?
 
           check_asgn_alignment(node, rhs)
@@ -158,15 +175,23 @@ module RuboCop
           when :keyword
             node
           when :variable
-            alignment_node_for_variable_style(node)
+            align_to = alignment_node_for_variable_style(node)
+
+            while (parent = align_to.parent) && parent.send_type? && same_line?(align_to, parent)
+              align_to = parent
+            end
+
+            align_to
           else
             start_line_range(node)
           end
         end
 
         def alignment_node_for_variable_style(node)
-          return node.parent if node.case_type? && node.argument? &&
-                                node.loc.line == node.parent.loc.line
+          if node.type?(:case, :case_match) && node.argument? &&
+             same_line?(node, node.parent)
+            return node.parent
+          end
 
           assignment = assignment_or_operator_method(node)
 

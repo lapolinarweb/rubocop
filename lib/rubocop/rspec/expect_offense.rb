@@ -6,7 +6,7 @@ module RuboCop
     #
     # This mixin makes it easier to specify strict offense expectations
     # in a declarative and visual fashion. Just type out the code that
-    # should generate a offense, annotate code by writing '^'s
+    # should generate an offense, annotate code by writing '^'s
     # underneath each character that should be highlighted, and follow
     # the carets with a string (separated by a space) that is the
     # message of the offense. You can include multiple offenses in
@@ -38,7 +38,7 @@ module RuboCop
     #       'Avoid chaining a method call on a do...end block.'
     #     )
     #
-    # Auto-correction can be tested using `expect_correction` after
+    # Autocorrection can be tested using `expect_correction` after
     # `expect_offense`.
     #
     # @example `expect_offense` and `expect_correction`
@@ -58,7 +58,7 @@ module RuboCop
     # that there were no offenses. The `expect_offense` method has
     # to do more work by parsing out lines that contain carets.
     #
-    # If the code produces an offense that could not be auto-corrected, you can
+    # If the code produces an offense that could not be autocorrected, you can
     # use `expect_no_corrections` after `expect_offense`.
     #
     # @example `expect_offense` and `expect_no_corrections`
@@ -72,9 +72,15 @@ module RuboCop
     #
     #   expect_no_corrections
     #
-    # If your code has variables of different lengths, you can use `%{foo}`,
-    # `^{foo}`, and `_{foo}` to format your template; you can also abbreviate
-    # offense messages with `[...]`:
+    # If your code has variables of different lengths, you can use the
+    # following markers to format your template by passing the variables as a
+    # keyword arguments:
+    #
+    # - `%{foo}`: Interpolates `foo`
+    # - `^{foo}`: Inserts `'^' * foo.size` for dynamic offense range length
+    # - `_{foo}`: Inserts `' ' * foo.size` for dynamic offense range indentation
+    #
+    # You can also abbreviate offense messages with `[...]`.
     #
     #   %w[raise fail].each do |keyword|
     #     expect_offense(<<~RUBY, keyword: keyword)
@@ -111,6 +117,7 @@ module RuboCop
         source
       end
 
+      # rubocop:disable-next Metrics/AbcSize
       def expect_offense(source, file = nil, severity: nil, chomp: false, **replacements)
         expected_annotations = parse_annotations(source, **replacements)
         source = expected_annotations.plain_source
@@ -123,10 +130,16 @@ module RuboCop
         expect(actual_annotations).to eq(expected_annotations), ''
         expect(@offenses.map(&:severity).uniq).to eq([severity]) if severity
 
+        # Validate that all offenses have a range that formatters can display
+        expect do
+          @offenses.each { |offense| offense.location.source_line }
+        end.not_to raise_error, 'One of the offenses has a misconstructed range, for ' \
+                                'example if the offense is on line 1 and the source is empty'
+
         @offenses
       end
 
-      # rubocop:disable Metrics/AbcSize, Metrics/MethodLength, Metrics/CyclomaticComplexity
+      # rubocop:disable-next Metrics/AbcSize, Metrics/MethodLength, Metrics/CyclomaticComplexity
       def expect_correction(correction, loop: true, source: nil)
         if source
           expected_annotations = parse_annotations(source, raise_error: false)
@@ -138,6 +151,8 @@ module RuboCop
 
         source = @processed_source.raw_source
 
+        raise 'Use `expect_no_corrections` if the code will not change' if correction == source
+
         iteration = 0
         new_source = loop do
           iteration += 1
@@ -146,7 +161,6 @@ module RuboCop
 
           break corrected_source unless loop
           break corrected_source if @last_corrector.empty?
-          break corrected_source if corrected_source == @processed_source.buffer.source
 
           if iteration > RuboCop::Runner::MAX_ITERATIONS
             raise RuboCop::Runner::InfiniteCorrectionLoop.new(@processed_source.path, [@offenses])
@@ -157,29 +171,33 @@ module RuboCop
           _investigate(cop, @processed_source)
         end
 
-        raise 'Use `expect_no_corrections` if the code will not change' if new_source == source
+        raise 'Expected correction but no corrections were made' if new_source == source
 
         expect(new_source).to eq(correction)
+        expect(@processed_source).to be_valid_syntax, 'Expected correction to be valid syntax'
       end
-      # rubocop:enable Metrics/AbcSize, Metrics/MethodLength, Metrics/CyclomaticComplexity
 
       def expect_no_corrections
         raise '`expect_no_corrections` must follow `expect_offense`' unless @processed_source
 
         return if @last_corrector.empty?
 
-        # In order to print a nice diff, e.g. what source got corrected to,
-        # we need to run the actual corrections
-
+        # This is just here for a pretty diff if the source actually got changed
         new_source = @last_corrector.rewrite
-
         expect(new_source).to eq(@processed_source.buffer.source)
+
+        # There is an infinite loop if a corrector is present that did not make
+        # any changes. It will cause the same offense/correction on the next loop.
+        raise RuboCop::Runner::InfiniteCorrectionLoop.new(@processed_source.path, [@offenses])
       end
 
       def expect_no_offenses(source, file = nil)
         offenses = inspect_source(source, file)
 
-        expected_annotations = AnnotatedSource.parse(source)
+        # Since source given `expect_no_offenses` does not have annotations, we do not need to parse
+        # for them, and can just build an `AnnotatedSource` object from the source lines.
+        # This also prevents treating source lines that begin with a caret as an annotation.
+        expected_annotations = AnnotatedSource.new(source.each_line.to_a, [])
         actual_annotations = expected_annotations.with_offense_annotations(offenses)
         expect(actual_annotations.to_s).to eq(source)
       end
@@ -205,12 +223,13 @@ module RuboCop
       def set_formatter_options
         RuboCop::Formatter::DisabledConfigFormatter.config_to_allow_offenses = {}
         RuboCop::Formatter::DisabledConfigFormatter.detected_styles = {}
-        cop.instance_variable_get(:@options)[:auto_correct] = true
+        cop.instance_variable_get(:@options)[:autocorrect] = true
       end
 
       # Parsed representation of code annotated with the `^^^ Message` style
       class AnnotatedSource
-        ANNOTATION_PATTERN = /\A\s*(\^+|\^{}) /.freeze
+        # Ignore escaped carets, don't treat as annotations
+        ANNOTATION_PATTERN = /\A\s*((?<!\\)\^+|\^{}) ?/.freeze
         ABBREV = "[...]\n"
 
         # @param annotated_source [String] string passed to the matchers

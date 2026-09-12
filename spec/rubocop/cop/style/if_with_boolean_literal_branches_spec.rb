@@ -85,6 +85,25 @@ RSpec.describe RuboCop::Cop::Style::IfWithBooleanLiteralBranches, :config do
         RUBY
       end
 
+      it 'registers and corrects an offense when using `if` with boolean literal branches directly under `def`' do
+        expect_offense(<<~RUBY, comparison_operator: comparison_operator)
+          def foo
+            if bar > baz
+            ^^ Remove redundant `if` with boolean literal branches.
+              true
+            else
+              false
+            end
+          end
+        RUBY
+
+        expect_correction(<<~RUBY)
+          def foo
+            bar > baz
+          end
+        RUBY
+      end
+
       it 'does not register an offense when using a branch that is not boolean literal' do
         expect_no_offenses(<<~RUBY)
           if foo #{comparison_operator} bar
@@ -417,7 +436,7 @@ RSpec.describe RuboCop::Cop::Style::IfWithBooleanLiteralBranches, :config do
       RUBY
     end
 
-    it 'register and corrects an offense when using `if (foo? || bar) && baz?` with boolean literal branches' do
+    it 'registers and corrects an offense when using `if (foo? || bar) && baz?` with boolean literal branches' do
       expect_offense(<<~RUBY)
         if (foo? || bar) && baz?
         ^^ Remove redundant `if` with boolean literal branches.
@@ -553,6 +572,51 @@ RSpec.describe RuboCop::Cop::Style::IfWithBooleanLiteralBranches, :config do
         foo? && bar? || baz?
       RUBY
     end
+  end
+
+  context 'when using `elsif` with boolean literal branches' do
+    it 'registers and corrects an offense when using single `elsif` with boolean literal branches' do
+      expect_offense(<<~RUBY)
+        if foo
+          true
+        elsif bar > baz
+        ^^^^^ Use `else` instead of redundant `elsif` with boolean literal branches.
+          true
+        else
+          false
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        if foo
+          true
+        else
+          bar > baz
+        end
+      RUBY
+    end
+
+    it 'does not register an offense when using multiple `elsif` with boolean literal branches' do
+      expect_no_offenses(<<~RUBY)
+        if foo
+          true
+        elsif bar > baz
+          true
+        elsif qux > quux
+          true
+        else
+          false
+        end
+      RUBY
+    end
+  end
+
+  it 'does not crash when using `()` as a condition' do
+    expect_no_offenses(<<~RUBY)
+      if ()
+      else
+      end
+    RUBY
   end
 
   context 'when `AllowedMethods: nonzero?`' do

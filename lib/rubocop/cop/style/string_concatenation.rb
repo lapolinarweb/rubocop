@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for places where string concatenation
+      # Checks for places where string concatenation
       # can be replaced with string interpolation.
       #
       # The cop can autocorrect simple cases but will skip autocorrecting
@@ -51,8 +51,6 @@ module RuboCop
       #   Pathname.new('/') + 'test'
       #
       class StringConcatenation < Base
-        include Util
-        include RangeHelp
         extend AutoCorrector
 
         MSG = 'Prefer string interpolation to string concatenation.'
@@ -76,7 +74,7 @@ module RuboCop
 
           topmost_plus_node = find_topmost_plus_node(node)
           parts = collect_parts(topmost_plus_node)
-          return unless parts[0..-2].any? { |receiver_node| offensive_for_mode?(receiver_node) }
+          return if mode == :conservative && !parts.first.str_type?
 
           register_offense(topmost_plus_node, parts)
         end
@@ -95,11 +93,6 @@ module RuboCop
           end
         end
 
-        def offensive_for_mode?(receiver_node)
-          mode = cop_config['Mode'].to_sym
-          mode == :aggressive || (mode == :conservative && receiver_node.str_type?)
-        end
-
         def line_end_concatenation?(node)
           # If the concatenation happens at the end of the line,
           # and both the receiver and argument are strings, allow
@@ -107,7 +100,7 @@ module RuboCop
           node.receiver.str_type? &&
             node.first_argument.str_type? &&
             node.multiline? &&
-            node.source =~ /\+\s*\n/
+            node.source.match?(/\+\s*\n/)
         end
 
         def find_topmost_plus_node(node)
@@ -134,7 +127,13 @@ module RuboCop
         end
 
         def uncorrectable?(part)
-          part.multiline? || (part.str_type? && part.heredoc?) || part.each_descendant(:block).any?
+          part.multiline? || heredoc?(part) || part.each_descendant(:any_block).any?
+        end
+
+        def heredoc?(node)
+          return false unless node.type?(:str, :dstr)
+
+          node.heredoc?
         end
 
         def corrected_ancestor?(node)
@@ -142,20 +141,35 @@ module RuboCop
         end
 
         def replacement(parts)
-          interpolated_parts =
-            parts.map do |part|
-              case part.type
-              when :str
-                value = part.value
-                single_quoted?(part) ? value.gsub(/(\\|")/, '\\\\\&') : value.inspect[1..-2]
-              when :dstr
-                contents_range(part).source
-              else
-                "\#{#{part.source}}"
-              end
-            end
+          interpolated_parts = parts.map { |part| adjust_str(part) }
 
           "\"#{handle_quotes(interpolated_parts).join}\""
+        end
+
+        def adjust_str(part)
+          case part.type
+          when :str
+            adjust_str_literal(part)
+          when :dstr, :begin
+            part.children.map do |child|
+              adjust_str(child)
+            end.join
+          else
+            "\#{#{part.source}}"
+          end
+        end
+
+        def adjust_str_literal(part)
+          if single_quoted?(part)
+            part.value.gsub(/(\\|"|#\{|#@|#\$)/, '\\\\\&')
+          elsif double_quoted?(part)
+            # Reuse the source as written - rebuilding it from the value via
+            # `inspect` would rewrite the author's escape notation
+            # (e.g. `\x0a` into `\n`).
+            part.source[1..-2]
+          else
+            part.value.inspect[1..-2]
+          end
         end
 
         def handle_quotes(parts)
@@ -166,6 +180,14 @@ module RuboCop
 
         def single_quoted?(str_node)
           str_node.source.start_with?("'")
+        end
+
+        def double_quoted?(str_node)
+          str_node.source.start_with?('"')
+        end
+
+        def mode
+          cop_config['Mode'].to_sym
         end
       end
     end

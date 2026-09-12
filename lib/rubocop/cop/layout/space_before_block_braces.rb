@@ -57,15 +57,15 @@ module RuboCop
           return if node.keywords?
 
           # Do not register an offense for multi-line braces when specifying
-          # `EnforcedStyle: no_space`. It will conflict with auto-correction
+          # `EnforcedStyle: no_space`. It will conflict with autocorrection
           # by `EnforcedStyle: line_count_based` of `Style/BlockDelimiters` cop.
-          # That means preventing auto-correction to incorrect auto-corrected
+          # That means preventing autocorrection to incorrect autocorrected
           # code.
           # See: https://github.com/rubocop/rubocop/issues/7534
           return if conflict_with_block_delimiters?(node)
 
           left_brace = node.loc.begin
-          space_plus_brace = range_with_surrounding_space(range: left_brace)
+          space_plus_brace = range_with_surrounding_space(left_brace)
           used_style =
             space_plus_brace.source.start_with?('{') ? :no_space : :space
 
@@ -76,22 +76,34 @@ module RuboCop
           end
         end
 
+        alias on_numblock on_block
+        alias on_itblock on_block
+
         private
 
         def check_empty(left_brace, space_plus_brace, used_style)
-          return if style_for_empty_braces == used_style
-
-          config_to_allow_offenses['EnforcedStyleForEmptyBraces'] = used_style.to_s
+          if style_for_empty_braces == used_style
+            handle_different_styles_for_empty_braces(used_style)
+            return
+          elsif !config_to_allow_offenses.key?('Enabled')
+            config_to_allow_offenses['EnforcedStyleForEmptyBraces'] = used_style.to_s
+          end
 
           if style_for_empty_braces == :space
-            add_offense(left_brace, message: MISSING_MSG) do |corrector|
-              autocorrect(corrector, left_brace)
-            end
+            range = left_brace
+            msg = MISSING_MSG
           else
-            space = range_between(space_plus_brace.begin_pos, left_brace.begin_pos)
-            add_offense(space, message: DETECTED_MSG) do |corrector|
-              autocorrect(corrector, space)
-            end
+            range = range_between(space_plus_brace.begin_pos, left_brace.begin_pos)
+            msg = DETECTED_MSG
+          end
+          add_offense(range, message: msg) { |corrector| autocorrect(corrector, range) }
+        end
+
+        def handle_different_styles_for_empty_braces(used_style)
+          if config_to_allow_offenses['EnforcedStyleForEmptyBraces'] &&
+             config_to_allow_offenses['EnforcedStyleForEmptyBraces'].to_sym != used_style
+            config_to_allow_offenses.clear
+            config_to_allow_offenses['Enabled'] = false
           end
         end
 

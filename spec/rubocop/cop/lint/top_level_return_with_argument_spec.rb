@@ -13,6 +13,10 @@ RSpec.describe RuboCop::Cop::Lint::TopLevelReturnWithArgument, :config do
         return 1, 2, 3
         ^^^^^^^^^^^^^^ Top level return with argument detected.
       RUBY
+
+      expect_correction(<<~RUBY)
+        return
+      RUBY
     end
 
     it 'expects multiple offenses from the return with arguments statements' do
@@ -26,10 +30,30 @@ RSpec.describe RuboCop::Cop::Lint::TopLevelReturnWithArgument, :config do
         return 1, 2, 3
         ^^^^^^^^^^^^^^ Top level return with argument detected.
       RUBY
+
+      expect_correction(<<~RUBY)
+        return
+
+        return
+
+        return
+      RUBY
     end
   end
 
   context 'Code segment with block level returns other than the top-level return' do
+    it 'expects no offense from a return with an argument inside a numbered-parameter block' do
+      expect_no_offenses(<<~RUBY)
+        [1, 2, 3].each { return _1 }
+      RUBY
+    end
+
+    it 'expects no offense from a return with an argument inside an `it` block', :ruby34 do
+      expect_no_offenses(<<~RUBY)
+        [1, 2, 3].each { return it }
+      RUBY
+    end
+
     it 'expects no offense from the return without arguments' do
       expect_no_offenses(<<~RUBY)
         foo
@@ -53,6 +77,16 @@ RSpec.describe RuboCop::Cop::Lint::TopLevelReturnWithArgument, :config do
 
         bar
       RUBY
+
+      expect_correction(<<~RUBY)
+        foo
+
+        [1, 2, 3, 4, 5].each { |n| return n }
+
+        return
+
+        bar
+      RUBY
     end
   end
 
@@ -65,6 +99,14 @@ RSpec.describe RuboCop::Cop::Lint::TopLevelReturnWithArgument, :config do
 
         return 1, 2, 3
         ^^^^^^^^^^^^^^ Top level return with argument detected.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        def method
+          return 'Hello World'
+        end
+
+        return
       RUBY
     end
   end
@@ -84,7 +126,7 @@ RSpec.describe RuboCop::Cop::Lint::TopLevelReturnWithArgument, :config do
       RUBY
     end
 
-    it 'expects multiple offense from the return with arguments' do
+    it 'expects multiple offenses from the return with arguments' do
       expect_offense(<<~RUBY)
         foo
         return 1, 2, 3 if 1 == 1
@@ -94,6 +136,18 @@ RSpec.describe RuboCop::Cop::Lint::TopLevelReturnWithArgument, :config do
         ^^^^^^^^ Top level return with argument detected.
         return 3
         ^^^^^^^^ Top level return with argument detected.
+
+        def method
+          return "Hello World" if 1 == 1
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        foo
+        return if 1 == 1
+        bar
+        return
+        return
 
         def method
           return "Hello World" if 1 == 1
@@ -109,6 +163,14 @@ RSpec.describe RuboCop::Cop::Lint::TopLevelReturnWithArgument, :config do
 
         if a == b; warn 'hey'; return 42; end
                                ^^^^^^^^^ Top level return with argument detected.
+
+        bar
+      RUBY
+
+      expect_correction(<<~RUBY)
+        foo
+
+        if a == b; warn 'hey'; return; end
 
         bar
       RUBY

@@ -4,7 +4,7 @@ RSpec.describe RuboCop::Cop::Style::StringLiterals, :config do
   context 'configured with single quotes preferred' do
     let(:cop_config) { { 'EnforcedStyle' => 'single_quotes' } }
 
-    it 'registers offense for double quotes when single quotes suffice' do
+    it 'registers an offense for double quotes when single quotes suffice' do
       expect_offense(<<~'RUBY')
         s = "abc"
             ^^^^^ Prefer single-quoted strings when you don't need string interpolation or special symbols.
@@ -14,6 +14,8 @@ RSpec.describe RuboCop::Cop::Style::StringLiterals, :config do
            ^^^^^ Prefer single-quoted strings when you don't need string interpolation or special symbols.
         z = "a\\"
             ^^^^^ Prefer single-quoted strings when you don't need string interpolation or special symbols.
+        t = "{\"[\\\"*\\\"]\""
+            ^^^^^^^^^^^^^^^^^^ Prefer single-quoted strings when you don't need string interpolation or special symbols.
       RUBY
       expect(cop.config_to_allow_offenses).to eq('EnforcedStyle' => 'double_quotes')
 
@@ -22,10 +24,11 @@ RSpec.describe RuboCop::Cop::Style::StringLiterals, :config do
         x = 'a\\b'
         y ='\\b'
         z = 'a\\'
+        t = '{"[\"*\"]"'
       RUBY
     end
 
-    it 'registers offense for correct + opposite' do
+    it 'registers an offense for correct + opposite' do
       expect_offense(<<~RUBY)
         s = "abc"
             ^^^^^ Prefer single-quoted strings when you don't need string interpolation or special symbols.
@@ -152,8 +155,19 @@ RSpec.describe RuboCop::Cop::Style::StringLiterals, :config do
         ^^^^ Prefer single-quoted strings when you don't need string interpolation or special symbols.
       RUBY
 
-      expect_correction(<<~'RUBY')
+      expect_correction(<<~RUBY)
         '"'
+      RUBY
+    end
+
+    it 'registers an offense for "\\"' do
+      expect_offense(<<~'RUBY')
+        "\\"
+        ^^^^ Prefer single-quoted strings when you don't need string interpolation or special symbols.
+      RUBY
+
+      expect_correction(<<~'RUBY')
+        '\\'
       RUBY
     end
 
@@ -176,7 +190,7 @@ RSpec.describe RuboCop::Cop::Style::StringLiterals, :config do
   context 'configured with double quotes preferred' do
     let(:cop_config) { { 'EnforcedStyle' => 'double_quotes' } }
 
-    it 'registers offense for single quotes when double quotes would be equivalent' do
+    it 'registers an offense for single quotes when double quotes would be equivalent' do
       expect_offense(<<~RUBY)
         s = 'abc'
             ^^^^^ Prefer double-quoted strings unless you need single quotes to avoid extra backslashes for escaping.
@@ -188,21 +202,21 @@ RSpec.describe RuboCop::Cop::Style::StringLiterals, :config do
       RUBY
     end
 
-    it 'registers offense for opposite + correct' do
-      expect_offense(<<~'RUBY')
+    it 'registers an offense for opposite + correct' do
+      expect_offense(<<~RUBY)
         s = "abc"
         x = 'abc'
             ^^^^^ Prefer double-quoted strings unless you need single quotes to avoid extra backslashes for escaping.
       RUBY
       expect(cop.config_to_allow_offenses).to eq('Enabled' => false)
 
-      expect_correction(<<~'RUBY')
+      expect_correction(<<~RUBY)
         s = "abc"
         x = "abc"
       RUBY
     end
 
-    it 'registers offense for escaped single quote in single quotes' do
+    it 'registers an offense for escaped single quote in single quotes' do
       expect_offense(<<~'RUBY')
         '\''
         ^^^^ Prefer double-quoted strings unless you need single quotes to avoid extra backslashes for escaping.
@@ -222,7 +236,7 @@ RSpec.describe RuboCop::Cop::Style::StringLiterals, :config do
         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Prefer double-quoted strings unless you need single quotes to avoid extra backslashes for escaping.
       RUBY
 
-      expect_correction(<<~'RUBY')
+      expect_correction(<<~RUBY)
         "This 'string' has 'multiple' escaped quotes"
       RUBY
     end
@@ -241,6 +255,14 @@ RSpec.describe RuboCop::Cop::Style::StringLiterals, :config do
 
     it 'accepts % quotes' do
       expect_no_offenses('a = %(x)')
+    end
+
+    it 'accepts single quoted string with backslash' do
+      expect_no_offenses(<<~'RUBY')
+        '\,'
+        '100\%'
+        '(\)'
+      RUBY
     end
 
     it 'accepts heredocs' do
@@ -266,6 +288,8 @@ RSpec.describe RuboCop::Cop::Style::StringLiterals, :config do
         c = '#{x}'
         d = '#@x'
         e = '#$x'
+        f = '\s'
+        g = '\z'
       RUBY
     end
 
@@ -315,7 +339,7 @@ RSpec.describe RuboCop::Cop::Style::StringLiterals, :config do
       end
 
       it 'registers an offense for strings with line breaks in them' do
-        expect_offense(<<~'RUBY')
+        expect_offense(<<~RUBY)
           "--
           ^^^ Prefer single-quoted strings when you don't need string interpolation or special symbols.
           SELECT *

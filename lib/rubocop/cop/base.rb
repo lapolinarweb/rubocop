@@ -41,6 +41,7 @@ module RuboCop
       include AutocorrectLogic
 
       attr_reader :config, :processed_source
+      attr_accessor :project_index
 
       # Reports of an investigation.
       # Immutable
@@ -48,108 +49,37 @@ module RuboCop
       InvestigationReport = Struct.new(:cop, :processed_source, :offenses, :corrector)
 
       # List of methods names to restrict calls for `on_send` / `on_csend`
-      RESTRICT_ON_SEND = Set[].freeze
+      RESTRICT_ON_SEND = Set[].freeze # rubocop:disable InternalAffairs/UselessRestrictOnSend -- the base class default, which cops override
+
+      # Departments whose cops report above `convention` unless a cop says
+      # otherwise. The exceptions live in `config/default.yml` as an explicit
+      # `Severity`, such as the lint-like cops in `Bundler` and `Gemspec`.
+      DEPARTMENT_SEVERITIES = { Lint: :warning, Security: :warning, Metrics: :refactor }.freeze
 
       # List of cops that should not try to autocorrect at the same
       # time as this cop
       #
-      # @return [Array<RuboCop::Cop::Cop>]
+      # @return [Array<RuboCop::Cop::Base>]
       #
       # @api public
       def self.autocorrect_incompatible_with
         []
       end
 
-      # Cops (other than builtin) are encouraged to implement this
+      # Returns a url to view this cops documentation online.
+      # Requires 'DocumentationBaseURL' to be set for your department.
+      # Will follow the convention of RuboCops own documentation structure,
+      # overwrite this method to accommodate your custom layout.
       # @return [String, nil]
       #
       # @api public
-      def self.documentation_url
-        Documentation.url_for(self) if builtin?
-      end
-
-      def initialize(config = nil, options = nil)
-        @config = config || Config.new
-        @options = options || { debug: false }
-        reset_investigation
-      end
-
-      # Called before all on_... have been called
-      # When refining this method, always call `super`
-      def on_new_investigation
-        # Typically do nothing here
-      end
-
-      # Called after all on_... have been called
-      # When refining this method, always call `super`
-      def on_investigation_end
-        # Typically do nothing here
-      end
-
-      # Called instead of all on_... callbacks for unrecognized files / syntax errors
-      # When refining this method, always call `super`
-      def on_other_file
-        # Typically do nothing here
-      end
-
-      # Override and return the Force class(es) you need to join
-      def self.joining_forces; end
-
-      # Gets called if no message is specified when calling `add_offense` or
-      # `add_global_offense`
-      # Cops are discouraged to override this; instead pass your message directly
-      def message(_range = nil)
-        self.class::MSG
-      end
-
-      # Adds an offense that has no particular location.
-      # No correction can be applied to global offenses
-      def add_global_offense(message = nil, severity: nil)
-        severity = find_severity(nil, severity)
-        message = find_message(nil, message)
-        @current_offenses <<
-          Offense.new(severity, Offense::NO_LOCATION, message, name, :unsupported)
-      end
-
-      # Adds an offense on the specified range (or node with an expression)
-      # Unless that offense is disabled for this range, a corrector will be yielded
-      # to provide the cop the opportunity to autocorrect the offense.
-      # If message is not specified, the method `message` will be called.
-      def add_offense(node_or_range, message: nil, severity: nil, &block)
-        range = range_from_node_or_range(node_or_range)
-        return unless current_offense_locations.add?(range)
-
-        range_to_pass = callback_argument(range)
-
-        severity = find_severity(range_to_pass, severity)
-        message = find_message(range_to_pass, message)
-
-        status, corrector = enabled_line?(range.line) ? correct(range, &block) : :disabled
-
-        @current_offenses << Offense.new(severity, range, message, name, status, corrector)
-      end
-
-      # This method should be overridden when a cop's behavior depends
-      # on state that lives outside of these locations:
-      #
-      #   (1) the file under inspection
-      #   (2) the cop's source code
-      #   (3) the config (eg a .rubocop.yml file)
-      #
-      # For example, some cops may want to look at other parts of
-      # the codebase being inspected to find violations. A cop may
-      # use the presence or absence of file `foo.rb` to determine
-      # whether a certain violation exists in `bar.rb`.
-      #
-      # Overriding this method allows the cop to indicate to RuboCop's
-      # ResultCache system when those external dependencies change,
-      # ie when the ResultCache should be invalidated.
-      def external_dependency_checksum
-        nil
+      def self.documentation_url(config = nil)
+        Documentation.url_for(self, config)
       end
 
       def self.inherited(subclass)
         super
+        subclass.instance_variable_set(:@gem_requirements, gem_requirements.dup)
         Registry.global.enlist(subclass)
       end
 
@@ -158,7 +88,7 @@ module RuboCop
         Registry.global.dismiss(self)
       end
 
-      # Returns if class supports auto_correct.
+      # Returns if class supports autocorrect.
       # It is recommended to extend AutoCorrector instead of overriding
       def self.support_autocorrect?
         false
@@ -187,7 +117,132 @@ module RuboCop
       def self.match?(given_names)
         return false unless given_names
 
-        given_names.include?(cop_name) || given_names.include?(department.to_s)
+        given_names.include?(cop_name) || given_names.include?(badge.department_name)
+      end
+
+      # Override and return the Force class(es) you need to join
+      def self.joining_forces; end
+
+      ### Persistence
+
+      # Override if your cop should be called repeatedly for multiple investigations
+      # Between calls to `on_new_investigation` and `on_investigation_end`,
+      # the result of `processed_source` will remain constant.
+      # You should invalidate any caches that depend on the current `processed_source`
+      # in the `on_new_investigation` callback.
+      # If your cop does autocorrections, be aware that your instance may be called
+      # multiple times with the same `processed_source.path` but different content.
+      # Note that under `--parallel` each worker process has its own cop
+      # instances, so state persists only within a worker's share of the files.
+      def self.support_multiple_source?
+        false
+      end
+
+      ## Gem requirements
+
+      @gem_requirements = {}
+
+      class << self
+        attr_reader :gem_requirements
+
+        # Register a version requirement for the given gem name.
+        # This cop will be skipped unless the target satisfies *all* requirements.
+        # @param [String] gem_name
+        # @param [Array<String>] version_requirements The version requirements,
+        #   using the same syntax as a Gemfile, e.g. ">= 1.2.3"
+        #
+        #   If omitted, any version of the gem will be accepted.
+        #
+        #   https://guides.rubygems.org/patterns/#declaring-dependencies
+        #
+        # @api public
+        def requires_gem(gem_name, *version_requirements)
+          @gem_requirements[gem_name] = Gem::Requirement.new(version_requirements)
+        end
+      end
+
+      def initialize(config = nil, options = nil)
+        @config = config || Config.new
+        @options = options || { debug: false }
+        reset_investigation
+      end
+
+      # Called before all on_... have been called
+      # When refining this method, always call `super`
+      def on_new_investigation
+        # Typically do nothing here
+      end
+
+      # Called after all on_... have been called
+      # When refining this method, always call `super`
+      def on_investigation_end
+        # Typically do nothing here
+      end
+
+      # Called instead of all on_... callbacks for unrecognized files / syntax errors
+      # When refining this method, always call `super`
+      def on_other_file
+        # Typically do nothing here
+      end
+
+      # Gets called if no message is specified when calling `add_offense` or
+      # `add_global_offense`
+      # Cops are discouraged to override this; instead pass your message directly
+      def message(_range = nil)
+        self.class::MSG
+      end
+
+      # Adds an offense that has no particular location.
+      # No correction can be applied to global offenses
+      def add_global_offense(message = nil, severity: nil)
+        severity = find_severity(nil, severity)
+        message = find_message(nil, message)
+        range = Offense::NO_LOCATION
+        status = enabled_line?(range.line) ? :unsupported : :disabled
+        current_offenses << Offense.new(severity, range, message, name, status)
+      end
+
+      # Adds an offense on the specified range (or node with an expression)
+      # Unless that offense is disabled for this range, a corrector will be yielded
+      # to provide the cop the opportunity to autocorrect the offense.
+      # If message is not specified, the method `message` will be called.
+      def add_offense(node_or_range, message: nil, severity: nil, &block)
+        range = range_from_node_or_range(node_or_range)
+        return unless current_offense_locations.add?(range)
+
+        range_to_pass = callback_argument(range)
+
+        severity = find_severity(range_to_pass, severity)
+        message = find_message(range_to_pass, message)
+
+        status, corrector = enabled_lines?(range) ? correct(range, &block) : :disabled
+        justification = suppression_reason(range) if status == :disabled
+
+        # Since this range may be generated from Ruby code embedded in some
+        # template file, we convert it to location info in the original file.
+        range = range_for_original(range)
+
+        current_offenses << Offense.new(severity, range, message, name, status, corrector,
+                                        justification: justification)
+      end
+
+      # This method should be overridden when a cop's behavior depends
+      # on state that lives outside of these locations:
+      #
+      #   (1) the file under inspection
+      #   (2) the cop's source code
+      #   (3) the config (eg a .rubocop.yml file)
+      #
+      # For example, some cops may want to look at other parts of
+      # the codebase being inspected to find violations. A cop may
+      # use the presence or absence of file `foo.rb` to determine
+      # whether a certain violation exists in `bar.rb`.
+      #
+      # Overriding this method allows the cop to indicate to RuboCop's
+      # ResultCache system when those external dependencies change,
+      # ie when the ResultCache should be invalidated.
+      def external_dependency_checksum
+        nil
       end
 
       def cop_name
@@ -216,11 +271,39 @@ module RuboCop
         @config.target_ruby_version
       end
 
+      # Returns a gems locked versions (i.e. from Gemfile.lock or gems.locked)
+      # @returns [Gem::Version | nil] The locked gem version, or nil if the gem is not present.
+      def target_gem_version(gem_name)
+        @config.gem_versions_in_target && @config.gem_versions_in_target[gem_name]
+      end
+
+      def parser_engine
+        @config.parser_engine
+      end
+
       def target_rails_version
         @config.target_rails_version
       end
 
+      def active_support_extensions_enabled?
+        @config.active_support_extensions_enabled?
+      end
+
+      def string_literals_frozen_by_default?
+        @config.string_literals_frozen_by_default?
+      end
+
+      # Whether the user opted in to unstable behavior, with `--preview` or
+      # `AllCops: Preview`. Cops branch on this to ship a change that is not
+      # ready to be the default yet.
+      def preview?
+        @config.preview?(@options)
+      end
+
       def relevant_file?(file)
+        return false unless target_satisfies_all_gem_version_requirements?
+        return true unless @config.clusivity_config_for_badge?(self.class.badge)
+
         file == RuboCop::AST::ProcessedSource::STRING_SOURCE_NAME ||
           (file_name_matches_any?(file, 'Include', true) &&
             !file_name_matches_any?(file, 'Exclude', false))
@@ -232,20 +315,7 @@ module RuboCop
 
       # There should be very limited reasons for a Cop to do it's own parsing
       def parse(source, path = nil)
-        ProcessedSource.new(source, target_ruby_version, path)
-      end
-
-      ### Persistence
-
-      # Override if your cop should be called repeatedly for multiple investigations
-      # Between calls to `on_new_investigation` and `on_investigation_end`,
-      # the result of `processed_source` will remain constant.
-      # You should invalidate any caches that depend on the current `processed_source`
-      # in the `on_new_investigation` callback.
-      # If your cop does autocorrections, be aware that your instance may be called
-      # multiple times with the same `processed_source.path` but different content.
-      def self.support_multiple_source?
-        false
+        ProcessedSource.new(source, target_ruby_version, path, parser_engine: parser_engine)
       end
 
       # @api private
@@ -253,7 +323,9 @@ module RuboCop
       def ready
         return self if self.class.support_multiple_source?
 
-        self.class.new(@config, @options)
+        self.class.new(@config, @options).tap do |fresh|
+          fresh.project_index = @project_index
+        end
       end
 
       ### Reserved for Cop::Cop
@@ -266,6 +338,7 @@ module RuboCop
 
       ### Reserved for Commissioner
 
+      # rubocop:disable Layout/ClassStructure -- grouped under the Commissioner heading above
       # @api private
       def callbacks_needed
         self.class.callbacks_needed
@@ -274,12 +347,52 @@ module RuboCop
       # @api private
       def self.callbacks_needed
         @callbacks_needed ||= public_instance_methods.select do |m|
-          m.match?(/^on_|^after_/) &&
-            !Base.method_defined?(m) # exclude standard "callbacks" like 'on_begin_investigation'
+          # OPTIMIZE: `start_with?` with two string arguments instead of a regex
+          # is faster in this specific case.
+          m.start_with?('on_', 'after_') &&
+            # exclude standard "callbacks" like 'on_new_investigation' unless refined
+            instance_method(m).owner != Base
         end
+      end
+      # rubocop:enable Layout/ClassStructure
+
+      # Called before any investigation
+      # @api private
+      def begin_investigation(processed_source, offset: 0, original: processed_source)
+        @current_offenses = nil
+        @current_offense_locations = nil
+        @currently_disabled_lines = nil
+        @processed_source = processed_source
+        @current_corrector = nil
+
+        # We need to keep track of the original source and offset,
+        # because `processed_source` here may be an embedded code in it.
+        @current_offset = offset
+        @current_original = original
+      end
+
+      # @api private
+      def always_autocorrect?
+        # `true` is the same as `'always'` for backward compatibility.
+        ['always', true].include?(cop_config.fetch('AutoCorrect', 'always'))
+      end
+
+      # @api private
+      def contextual_autocorrect?
+        cop_config.fetch('AutoCorrect', 'always') == 'contextual'
+      end
+
+      def inspect # :nodoc:
+        "#<#{self.class.name}:#{object_id} @config=#{@config} @options=#{@options}>"
       end
 
       private
+
+      ### Reserved for Commissioner
+
+      private_class_method def self.restrict_on_send
+        @restrict_on_send ||= self::RESTRICT_ON_SEND.to_a.freeze
+      end
 
       ### Reserved for Cop::Cop
 
@@ -288,7 +401,7 @@ module RuboCop
       end
 
       def apply_correction(corrector)
-        @current_corrector&.merge!(corrector) if corrector
+        current_corrector&.merge!(corrector) if corrector
       end
 
       ### Reserved for Commissioner:
@@ -301,38 +414,32 @@ module RuboCop
         @currently_disabled_lines ||= Set.new
       end
 
-      private_class_method def self.restrict_on_send
-        @restrict_on_send ||= self::RESTRICT_ON_SEND.to_a.freeze
+      def current_corrector
+        @current_corrector ||= Corrector.new(@processed_source) if @processed_source.valid_syntax?
       end
 
-      # Called before any investigation
-      def begin_investigation(processed_source)
-        @current_offenses = []
-        @current_offense_locations = nil
-        @currently_disabled_lines = nil
-        @processed_source = processed_source
-        @current_corrector = Corrector.new(@processed_source) if @processed_source.valid_syntax?
+      def current_offenses
+        @current_offenses ||= []
       end
 
+      EMPTY_OFFENSES = [].freeze
+      private_constant :EMPTY_OFFENSES
       # Called to complete an investigation
       def complete_investigation
-        InvestigationReport.new(self, processed_source, @current_offenses, @current_corrector)
+        InvestigationReport.new(
+          self, processed_source, @current_offenses || EMPTY_OFFENSES, @current_corrector
+        )
       ensure
         reset_investigation
       end
 
       ### Actually private methods
 
-      def self.builtin?
-        return false unless (m = instance_methods(false).first) # any custom method will do
-
-        path, _line = instance_method(m).source_location
-        path.start_with?(__dir__)
-      end
-      private_class_method :builtin?
-
       def reset_investigation
-        @currently_disabled_lines = @current_offenses = @processed_source = @current_corrector = nil
+        @currently_disabled_lines = nil
+        @current_offenses = nil
+        @processed_source = nil
+        @current_corrector = nil
       end
 
       # @return [Symbol, Corrector] offense status
@@ -354,7 +461,11 @@ module RuboCop
       def use_corrector(range, corrector)
         if autocorrect?
           attempt_correction(range, corrector)
-        elsif corrector && cop_config.fetch('AutoCorrect', true)
+        elsif skipped_unsafe_correction_with_disable_uncorrectable?
+          # The unsafe correction will not run, so the offense is
+          # uncorrectable for this run and gets a todo comment.
+          attempt_correction(range, nil)
+        elsif corrector && (always_autocorrect? || (contextual_autocorrect? && !LSP.enabled?))
           :uncorrected
         else
           :unsupported
@@ -385,7 +496,7 @@ module RuboCop
 
       def range_from_node_or_range(node_or_range)
         if node_or_range.respond_to?(:loc)
-          node_or_range.loc.expression
+          node_or_range.source_range
         elsif node_or_range.is_a?(::Parser::Source::Range)
           node_or_range
         else
@@ -408,14 +519,22 @@ module RuboCop
         patterns = cop_config[parameter]
         return default_result unless patterns
 
-        path = nil
-        patterns.any? do |pattern|
-          # Try to match the absolute path, as Exclude properties are absolute.
-          next true if match_path?(pattern, file)
+        file_patterns = FilePatterns.from(patterns)
+        relative_file_path = config.path_relative_to_config(file)
+        return true if file_patterns.match?(relative_file_path)
 
-          # Try with relative path.
-          path ||= config.path_relative_to_config(file)
-          match_path?(pattern, path)
+        if parameter == 'Include' && !relative_file_path.start_with?('..')
+          matches_absolute_include_pattern?(patterns, file)
+        else
+          file_patterns.match?(file)
+        end
+      end
+
+      def matches_absolute_include_pattern?(patterns, file)
+        absolute_file_path = absolute?(file) ? file : File.expand_path(file)
+        patterns.any? do |pattern|
+          (absolute?(pattern.to_s) || pattern.to_s.start_with?('..')) &&
+            match_path?(pattern, absolute_file_path)
         end
       end
 
@@ -425,12 +544,36 @@ module RuboCop
         @processed_source.comment_config.cop_enabled_at_line?(self, line_number)
       end
 
+      # A multi-line offense is suppressed by a directive on any line of its
+      # range, not only its first line, matching the intuition that the
+      # directive is attached to the offending code.
+      def enabled_lines?(range)
+        return true if @options[:ignore_disable_comments] || !@processed_source
+
+        comment_config = @processed_source.comment_config
+        comment_config.cop_enabled_at_lines?(self, range.first_line, range.last_line)
+      end
+
+      # The `--` reason on the directive that suppresses offenses on this
+      # range, or `nil` when the directive carries none.
+      def suppression_reason(range)
+        covering = covering_disabled_range(range)
+        covering.directive.reason if covering.respond_to?(:directive)
+      end
+
+      def covering_disabled_range(range)
+        disabled_ranges = @processed_source.comment_config.cop_disabled_line_ranges[cop_name]
+        disabled_ranges&.find do |disabled_range|
+          disabled_range.end >= range.first_line && disabled_range.begin <= range.last_line
+        end
+      end
+
       def find_severity(_range, severity)
         custom_severity || severity || default_severity
       end
 
       def default_severity
-        self.class.lint? ? :warning : :convention
+        DEPARTMENT_SEVERITIES.fetch(self.class.department, :convention)
       end
 
       def custom_severity
@@ -443,6 +586,32 @@ module RuboCop
           message = "Warning: Invalid severity '#{severity}'. " \
                     "Valid severities are #{Severity::NAMES.join(', ')}."
           warn(Rainbow(message).red)
+        end
+      end
+
+      def range_for_original(range)
+        buffer = @current_original.buffer
+        return range if @current_offset.zero? && range.source_buffer.equal?(buffer)
+
+        ::Parser::Source::Range.new(
+          buffer,
+          range.begin_pos + @current_offset,
+          range.end_pos + @current_offset
+        )
+      end
+
+      def target_satisfies_all_gem_version_requirements?
+        gem_requirements = self.class.gem_requirements
+        return true if gem_requirements.empty?
+
+        gem_requirements.all? do |gem_name, version_req|
+          all_gem_versions_in_target = @config.gem_versions_in_target
+          next false unless all_gem_versions_in_target
+
+          gem_version_in_target = all_gem_versions_in_target[gem_name]
+          next false unless gem_version_in_target
+
+          version_req.satisfied_by?(gem_version_in_target)
         end
       end
     end

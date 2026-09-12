@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for options hashes and discourages them if the
+      # Checks for options hashes and discourages them if the
       # current Ruby version supports keyword arguments.
       #
       # @example
@@ -46,7 +46,7 @@ module RuboCop
         end
 
         def super_used?(node)
-          node.parent.each_node(:zsuper).any?
+          node.parent.each_node(:zsuper, :super).any?
         end
       end
     end

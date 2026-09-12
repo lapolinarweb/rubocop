@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for redundant parentheses.
+      # Checks for redundant parentheses.
       #
       # @example
       #
@@ -13,24 +13,28 @@ module RuboCop
       #   # good
       #   x if y.z.nil?
       #
-      class RedundantParentheses < Base
+      class RedundantParentheses < Base # rubocop:disable Metrics/ClassLength
         include Parentheses
+        include ReparsedEquivalence
         extend AutoCorrector
 
+        ALLOWED_NODE_TYPES = %i[or send splat kwsplat].freeze
+
         # @!method square_brackets?(node)
-        def_node_matcher :square_brackets?, '(send {(send _recv _msg) str array hash} :[] ...)'
-
-        # @!method range_end?(node)
-        def_node_matcher :range_end?, '^^{irange erange}'
-
-        # @!method method_node_and_args(node)
-        def_node_matcher :method_node_and_args, '$(call _recv _msg $...)'
+        def_node_matcher :square_brackets?, <<~PATTERN
+          (send `{(send _recv _msg) str array hash const #variable?} :[] ...)
+        PATTERN
 
         # @!method rescue?(node)
         def_node_matcher :rescue?, '{^resbody ^^resbody}'
 
-        # @!method arg_in_call_with_block?(node)
-        def_node_matcher :arg_in_call_with_block?, '^^(block (send _ _ equal?(%0) ...) ...)'
+        # @!method allowed_pin_operator?(node)
+        def_node_matcher :allowed_pin_operator?, '^(pin (begin !{lvar ivar cvar gvar}))'
+
+        def on_new_investigation
+          @pending_offenses = {}.compare_by_identity
+          super
+        end
 
         def on_begin(node)
           return if !parentheses?(node) || parens_allowed?(node) || ignore_syntax?(node)
@@ -38,37 +42,50 @@ module RuboCop
           check(node)
         end
 
+        def on_investigation_end
+          # Each candidate's exact correction is verified by reparsing before
+          # the offense is registered, so redundancy never depends on
+          # hand-maintained knowledge of Ruby's grammar.
+          verified_by_reparse(@pending_offenses.keys).each do |node|
+            add_offense(node, message: @pending_offenses[node]) do |corrector|
+              ParenthesesCorrector.correct(corrector, node)
+            end
+          end
+
+          super
+        end
+
         private
+
+        def variable?(node)
+          node.respond_to?(:variable?) && node.variable?
+        end
 
         def parens_allowed?(node)
           empty_parentheses?(node) ||
-            first_arg_begins_with_hash_literal?(node) ||
             rescue?(node) ||
+            in_pattern_matching_in_method_argument?(node) ||
+            allowed_pin_operator?(node) ||
             allowed_expression?(node)
         end
 
         def ignore_syntax?(node)
           return false unless (parent = node.parent)
 
-          parent.while_post_type? || parent.until_post_type? ||
-            like_method_argument_parentheses?(parent)
+          parent.type?(:while_post, :until_post, :match_with_lvasgn) ||
+            like_method_argument_parentheses?(parent) || multiline_control_flow_statements?(node)
         end
 
         def allowed_expression?(node)
           allowed_ancestor?(node) ||
-            allowed_method_call?(node) ||
-            allowed_array_or_hash_element?(node) ||
-            allowed_multiple_expression?(node)
+            allowed_multiple_expression?(node) ||
+            allowed_ternary?(node) ||
+            node.parent&.range_type?
         end
 
         def allowed_ancestor?(node)
           # Don't flag `break(1)`, etc
           keyword_ancestor?(node) && parens_required?(node)
-        end
-
-        def allowed_method_call?(node)
-          # Don't flag `method (arg) { }`
-          arg_in_call_with_block?(node) && !parentheses?(node.parent)
         end
 
         def allowed_multiple_expression?(node)
@@ -77,11 +94,34 @@ module RuboCop
           ancestor = node.ancestors.first
           return false unless ancestor
 
-          !ancestor.begin_type? && !ancestor.def_type? && !ancestor.block_type?
+          !ancestor.type?(:begin, :any_def, :any_block)
+        end
+
+        def allowed_ternary?(node)
+          return false unless node&.parent&.if_type?
+
+          node.parent.ternary? && ternary_parentheses_required?
+        end
+
+        def ternary_parentheses_required?
+          config = @config.for_cop('Style/TernaryParentheses')
+          allowed_styles = %w[require_parentheses require_parentheses_when_complex]
+
+          config.fetch('Enabled') && allowed_styles.include?(config['EnforcedStyle'])
         end
 
         def like_method_argument_parentheses?(node)
-          node.send_type? && node.arguments.size == 1 && !node.arithmetic_operation?
+          return false unless node.type?(:send, :super, :yield)
+
+          node.arguments.one? && !node.parenthesized? &&
+            !node.operator_method? && node.first_argument.begin_type?
+        end
+
+        def multiline_control_flow_statements?(node)
+          return false unless (parent = node.parent)
+          return false if parent.single_line?
+
+          parent.type?(:return, :next, :break)
         end
 
         def empty_parentheses?(node)
@@ -89,41 +129,111 @@ module RuboCop
           node.children.empty?
         end
 
-        def first_arg_begins_with_hash_literal?(node)
-          # Don't flag `method ({key: value})` or `method ({key: value}.method)`
-          method_chain_begins_with_hash_literal?(node.children.first) &&
-            first_argument?(node) &&
-            !parentheses?(node.parent)
-        end
+        def in_pattern_matching_in_method_argument?(begin_node)
+          return false unless begin_node.parent&.call_type?
+          return false unless (node = begin_node.children.first)
 
-        def method_chain_begins_with_hash_literal?(node)
-          return false if node.nil?
-          return true if node.hash_type?
-          return false unless node.send_type?
-
-          method_chain_begins_with_hash_literal?(node.children.first)
+          target_ruby_version <= 2.7 ? node.match_pattern_type? : node.match_pattern_p_type?
         end
 
         def check(begin_node)
           node = begin_node.children.first
-          return offense(begin_node, 'a keyword') if keyword_with_redundant_parentheses?(node)
-          return offense(begin_node, 'a literal') if disallowed_literal?(begin_node, node)
-          return offense(begin_node, 'a variable') if node.variable?
-          return offense(begin_node, 'a constant') if node.const_type?
 
-          return offense(begin_node, 'an interpolated expression') if interpolation?(begin_node)
+          if (message = find_offense_message(begin_node, node))
+            return offense(begin_node, message) if message == 'block body'
 
-          check_send(begin_node, node) if node.call_type?
+            if node.range_type? && !argument_of_parenthesized_method_call?(begin_node, node)
+              begin_node = begin_node.parent
+            end
+
+            return offense(begin_node, message)
+          end
+
+          check_send(begin_node, node) if call_node?(node)
+        end
+
+        # rubocop:disable-next Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/MethodLength, Metrics/PerceivedComplexity
+        def find_offense_message(begin_node, node)
+          return 'a keyword' if keyword_with_redundant_parentheses?(node)
+          return 'a literal' if node.literal? && disallowed_literal?(begin_node, node)
+          return 'a variable' if node.variable?
+          return 'a constant' if node.const_type?
+          return 'block body' if begin_node.parent&.any_block_type? || body_range?(begin_node, node)
+
+          if node.assignment? && (begin_node.parent.nil? || begin_node.parent.begin_type?)
+            return 'an assignment'
+          end
+          if node.lambda_or_proc? && (node.braces? || node.send_node.lambda_literal?)
+            return 'an expression'
+          end
+          if disallowed_one_line_pattern_matching?(begin_node, node)
+            return 'a one-line pattern matching'
+          end
+          return 'an interpolated expression' if interpolation?(begin_node)
+          if argument_of_parenthesized_method_call?(begin_node, node) &&
+             !keyword_logical_operator?(node)
+            return 'a method argument'
+          end
+          return 'a one-line rescue' if oneline_rescue_parentheses_required?(begin_node, node)
+
+          return if begin_node.chained?
+
+          if node.operator_keyword?
+            return if node.semantic_operator? && begin_node.parent
+            return if node.multiline? && allow_in_multiline_conditions?
+            return if ALLOWED_NODE_TYPES.include?(begin_node.parent&.type)
+            return if !node.and_type? && begin_node.parent&.and_type?
+            return if begin_node.parent&.if_type? && begin_node.parent.ternary?
+
+            'a logical expression'
+          elsif node.respond_to?(:comparison_method?) && node.comparison_method?
+            return unless begin_node.parent.nil?
+
+            'a comparison expression'
+          end
         end
 
         # @!method interpolation?(node)
         def_node_matcher :interpolation?, '[^begin ^^dstr]'
 
+        def argument_of_parenthesized_method_call?(begin_node, node)
+          if node.basic_conditional? || node.rescue_type? || method_call_parentheses_required?(node)
+            return false
+          end
+          return false unless (parent = begin_node.parent)
+
+          parent.call_type? && parent.parenthesized? && parent.receiver != begin_node
+        end
+
+        def oneline_rescue_parentheses_required?(begin_node, node)
+          return false unless node.rescue_type?
+          return false unless (parent = begin_node.parent)
+          return false if parent.if_type? && parent.ternary?
+          return false if parent.conditional? && parent.condition == begin_node
+
+          !parent.type?(:call, :array, :pair)
+        end
+
+        def method_call_parentheses_required?(node)
+          return false unless node.call_type?
+
+          (node.receiver.nil? || node.loc.dot) && node.arguments.any?
+        end
+
+        def allow_in_multiline_conditions?
+          !!config.for_enabled_cop('Style/ParenthesesAroundCondition')['AllowInMultilineConditions']
+        end
+
+        def call_node?(node)
+          node.call_type? || (node.any_block_type? && node.braces? && !node.lambda_or_proc?)
+        end
+
         def check_send(begin_node, node)
+          node = node.send_node if node.any_block_type?
+
           return check_unary(begin_node, node) if node.unary_operation?
 
-          return unless method_call_with_redundant_parentheses?(node)
-          return if call_chain_starts_with_int?(begin_node, node)
+          return unless method_call_with_redundant_parentheses?(begin_node, node)
 
           offense(begin_node, 'a method call')
         end
@@ -132,16 +242,54 @@ module RuboCop
           return if begin_node.chained?
 
           node = node.children.first while suspect_unary?(node)
+          return unless method_call_with_redundant_parentheses?(begin_node, node)
 
-          return if node.send_type? && !method_call_with_redundant_parentheses?(node)
-
-          offense(begin_node, 'an unary operation')
+          offense(begin_node, 'a unary operation')
         end
 
         def offense(node, msg)
-          add_offense(node, message: "Don't use parentheses around #{msg}.") do |corrector|
-            ParenthesesCorrector.correct(corrector, node)
+          @pending_offenses[node] = "Don't use parentheses around #{msg}."
+        end
+
+        def apply_reparse_correction(corrector, node)
+          ParenthesesCorrector.correct(corrector, node)
+        end
+
+        # Grouping parentheses are transparent to the comparison: single-child
+        # `begin` nodes are collapsed, a parenthesized statement sequence
+        # inside another sequence is spliced in place, and chains of the same
+        # `&&`/`||` operator are normalized to left association (`x && (y &&
+        # z)` and `x && y && z` differ as trees but `&&` and `||` cannot be
+        # redefined, so same-operator regrouping is semantically transparent).
+        def normalize_reparsed_ast(node)
+          return node unless node.is_a?(::Parser::AST::Node)
+
+          children = node.children.map { |child| normalize_reparsed_ast(child) }
+          children = splice_nested_sequences(children) if %i[begin kwbegin].include?(node.type)
+
+          node = node.updated(nil, children)
+          if node.begin_type? && children.one? && children.first.is_a?(::Parser::AST::Node)
+            children.first
+          else
+            rotate_same_operator(node)
           end
+        end
+
+        def splice_nested_sequences(children)
+          children.flat_map do |child|
+            child.is_a?(::Parser::AST::Node) && child.begin_type? ? child.children : [child]
+          end
+        end
+
+        def rotate_same_operator(node)
+          return node unless node.type?(:and, :or)
+
+          right = node.rhs
+          return node unless right.is_a?(::Parser::AST::Node) && right.type == node.type
+
+          rotated_left = rotate_same_operator(node.updated(nil, [node.lhs, right.lhs]))
+
+          rotate_same_operator(node.updated(nil, [rotated_left, right.rhs]))
         end
 
         def suspect_unary?(node)
@@ -152,39 +300,38 @@ module RuboCop
           node.parent&.keyword?
         end
 
-        def allowed_array_or_hash_element?(node)
-          # Don't flag
-          # ```
-          # { a: (1
-          #      ), }
-          # ```
-          hash_or_array_element?(node) && only_closing_paren_before_comma?(node)
-        end
-
-        def hash_or_array_element?(node)
-          node.each_ancestor(:array, :hash).any?
-        end
-
-        def only_closing_paren_before_comma?(node)
-          source_buffer = node.source_range.source_buffer
-          line_range = source_buffer.line_range(node.loc.end.line)
-
-          /^\s*\)\s*,/.match?(line_range.source)
-        end
-
         def disallowed_literal?(begin_node, node)
-          node.literal? && !node.range_type? && !raised_to_power_negative_numeric?(begin_node, node)
+          return true unless node.range_type?
+          return false unless (parent = begin_node.parent)
+
+          parent.begin_type? && parent.children.one?
         end
 
-        def raised_to_power_negative_numeric?(begin_node, node)
-          return false unless node.numeric_type?
+        # rubocop:disable-next Metrics/CyclomaticComplexity
+        def body_range?(begin_node, node)
+          return false if begin_node.chained?
+          return false unless node.range_type?
+          return false unless (parent = begin_node.parent)
+          return false unless parent.begin_type?
 
-          next_sibling = begin_node.right_sibling
-          return false unless next_sibling
+          (node.begin.nil? && begin_node == parent.children.first) ||
+            (node.end.nil? && begin_node == parent.children.last)
+        end
 
-          base_value = node.children.first
+        # `and`/`or` keyword operators bind looser than the method-argument
+        # boundary, so `foo((x and y))` cannot drop its parentheses without
+        # becoming a syntax error (unlike `&&`/`||`).
+        def keyword_logical_operator?(node)
+          node.operator_keyword? && node.semantic_operator?
+        end
 
-          base_value.negative? && next_sibling == :**
+        def disallowed_one_line_pattern_matching?(begin_node, node)
+          if (parent = begin_node.parent)
+            return false if parent.any_def_type? && parent.endless?
+            return false if parent.assignment?
+          end
+
+          node.any_match_pattern_type? && node.each_ancestor.none?(&:operator_keyword?)
         end
 
         def keyword_with_redundant_parentheses?(node)
@@ -200,43 +347,23 @@ module RuboCop
           end
         end
 
-        def method_call_with_redundant_parentheses?(node)
-          return false unless node.call_type?
+        def method_call_with_redundant_parentheses?(begin_node, node)
+          return false unless node.type?(:call, :super, :yield, :defined?)
           return false if node.prefix_not?
-          return false if range_end?(node)
+          return true if singular_parenthesized_parent?(begin_node)
 
-          send_node, args = method_node_and_args(node)
+          node.arguments.empty? || parentheses?(node) || square_brackets?(node)
+        end
 
-          args.empty? || parentheses?(send_node) || square_brackets?(send_node)
+        def singular_parenthesized_parent?(begin_node)
+          return true unless (parent = begin_node.parent)
+          return false if parent.type?(:splat, :kwsplat)
+
+          parent.children.one?
         end
 
         def only_begin_arg?(args)
-          args.one? && args.first.begin_type?
-        end
-
-        def first_argument?(node)
-          first_send_argument?(node) || first_super_argument?(node) || first_yield_argument?(node)
-        end
-
-        # @!method first_send_argument?(node)
-        def_node_matcher :first_send_argument?, <<~PATTERN
-          ^(send _ _ equal?(%0) ...)
-        PATTERN
-
-        # @!method first_super_argument?(node)
-        def_node_matcher :first_super_argument?, <<~PATTERN
-          ^(super equal?(%0) ...)
-        PATTERN
-
-        # @!method first_yield_argument?(node)
-        def_node_matcher :first_yield_argument?, <<~PATTERN
-          ^(yield equal?(%0) ...)
-        PATTERN
-
-        def call_chain_starts_with_int?(begin_node, send_node)
-          recv = first_part_of_call_chain(send_node)
-          recv&.int_type? && (parent = begin_node.parent) &&
-            parent.send_type? && (parent.method?(:-@) || parent.method?(:+@))
+          args.one? && args.first&.begin_type?
         end
       end
     end

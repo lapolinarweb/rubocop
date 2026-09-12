@@ -12,6 +12,17 @@ RSpec.describe RuboCop::Cop::Lint::RedundantWithObject, :config do
     RUBY
   end
 
+  it 'registers an offense and corrects when using `ary&.each_with_object { |v| v }`' do
+    expect_offense(<<~RUBY)
+      ary&.each_with_object([]) { |v| v }
+           ^^^^^^^^^^^^^^^^^^^^ Use `each` instead of `each_with_object`.
+    RUBY
+
+    expect_correction(<<~RUBY)
+      ary&.each { |v| v }
+    RUBY
+  end
+
   it 'registers an offense and corrects when using `ary.each.with_object([]) { |v| v }`' do
     expect_offense(<<~RUBY)
       ary.each.with_object([]) { |v| v }
@@ -65,6 +76,82 @@ RSpec.describe RuboCop::Cop::Lint::RedundantWithObject, :config do
 
     it 'does not register an offense when block has 1 argument' do
       expect_no_offenses('ary.each_with_object { |v| v }')
+    end
+  end
+
+  context 'Ruby 2.7', :ruby27 do
+    it 'does not register an offense when the second numbered parameter is used' do
+      expect_no_offenses(<<~RUBY)
+        ary.each_with_object([]) { _1 << _2 }
+      RUBY
+    end
+
+    it 'registers an offense and corrects when using `ary.each_with_object { _1 }`' do
+      expect_offense(<<~RUBY)
+        ary.each_with_object([]) { _1 }
+            ^^^^^^^^^^^^^^^^^^^^ Use `each` instead of `each_with_object`.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        ary.each { _1 }
+      RUBY
+    end
+
+    it 'registers an offense and corrects when using `ary&.each_with_object { _1 }`' do
+      expect_offense(<<~RUBY)
+        ary&.each_with_object([]) { _1 }
+             ^^^^^^^^^^^^^^^^^^^^ Use `each` instead of `each_with_object`.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        ary&.each { _1 }
+      RUBY
+    end
+
+    it 'registers an offense and corrects when using `ary.each.with_object([]) { _1 }`' do
+      expect_offense(<<~RUBY)
+        ary.each.with_object([]) { _1 }
+                 ^^^^^^^^^^^^^^^ Remove redundant `with_object`.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        ary.each { _1 }
+      RUBY
+    end
+  end
+
+  context 'Ruby 3.4', :ruby34 do
+    it 'registers an offense and corrects when using `ary.each_with_object { it }`' do
+      expect_offense(<<~RUBY)
+        ary.each_with_object([]) { it }
+            ^^^^^^^^^^^^^^^^^^^^ Use `each` instead of `each_with_object`.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        ary.each { it }
+      RUBY
+    end
+
+    it 'registers an offense and corrects when using `ary&.each_with_object { it }`' do
+      expect_offense(<<~RUBY)
+        ary&.each_with_object([]) { it }
+             ^^^^^^^^^^^^^^^^^^^^ Use `each` instead of `each_with_object`.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        ary&.each { it }
+      RUBY
+    end
+
+    it 'registers an offense and corrects when using `ary.each.with_object([]) { it }`' do
+      expect_offense(<<~RUBY)
+        ary.each.with_object([]) { it }
+                 ^^^^^^^^^^^^^^^ Remove redundant `with_object`.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        ary.each { it }
+      RUBY
     end
   end
 end

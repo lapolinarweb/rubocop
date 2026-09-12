@@ -14,6 +14,12 @@ RSpec.describe RuboCop::Cop::Lint::MixedRegexpCaptureTypes, :config do
     RUBY
   end
 
+  it 'does not register offense to a regexp with look behind' do
+    expect_no_offenses(<<~RUBY)
+      /(?<=>)(<br>)(?=><)/
+    RUBY
+  end
+
   it 'does not register offense to a regexp with numbered capture only' do
     expect_no_offenses(<<~RUBY)
       /(foo)(bar)/
@@ -28,7 +34,7 @@ RSpec.describe RuboCop::Cop::Lint::MixedRegexpCaptureTypes, :config do
 
   # See https://github.com/rubocop/rubocop/issues/8083
   it 'does not register offense when using a Regexp cannot be processed by regexp_parser gem' do
-    expect_no_offenses(<<~'RUBY')
+    expect_no_offenses(<<~RUBY)
       /data = ({"words":.+}}}[^}]*})/m
     RUBY
   end
@@ -44,7 +50,7 @@ RSpec.describe RuboCop::Cop::Lint::MixedRegexpCaptureTypes, :config do
       RUBY
     end
 
-    it 'does not register an offense when containing a ivar' do
+    it 'does not register an offense when containing an ivar' do
       expect_no_offenses(<<~'RUBY')
         /(?<foo>#{@var}*)/
       RUBY

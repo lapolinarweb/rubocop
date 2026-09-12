@@ -3,9 +3,17 @@
 module RuboCop
   module Cop
     module Lint
-      # This cop checks for a rescued exception that get shadowed by a
+      # Checks for a rescued exception that gets shadowed by a
       # less specific exception being rescued before a more specific
       # exception is rescued.
+      #
+      # An exception is considered shadowed if it is rescued after its
+      # ancestor is, or if it and its ancestor are both rescued in the
+      # same `rescue` statement. In both cases, the more specific rescue is
+      # unnecessary because it is covered by rescuing the less specific
+      # exception. (ie. `rescue Exception, StandardError` has the same behavior
+      # whether `StandardError` is included or not, because all ``StandardError``s
+      # are rescued by `rescue Exception`).
       #
       # @example
       #
@@ -17,6 +25,13 @@ module RuboCop
       #     handle_exception
       #   rescue StandardError
       #     handle_standard_error
+      #   end
+      #
+      #   # bad
+      #   begin
+      #     something
+      #   rescue Exception, StandardError
+      #     handle_error
       #   end
       #
       #   # good
@@ -52,7 +67,7 @@ module RuboCop
         def on_rescue(node)
           return if rescue_modifier?(node)
 
-          _body, *rescues, _else = *node
+          rescues = node.resbody_branches
           rescued_groups = rescued_groups_for(rescues)
 
           rescue_group_rescues_multiple_levels = rescued_groups.any? do |group|
@@ -68,7 +83,7 @@ module RuboCop
 
         def offense_range(rescues)
           shadowing_rescue = find_shadowing_rescue(rescues)
-          expression = shadowing_rescue.loc.expression
+          expression = shadowing_rescue.source_range
           range_between(expression.begin_pos, expression.end_pos)
         end
 
@@ -106,18 +121,12 @@ module RuboCop
 
           if rescued_exceptions.any?
             rescued_exceptions.each_with_object([]) do |exception, converted|
-              # FIXME: Workaround `rubocop:disable` comment for JRuby.
-              #        https://github.com/jruby/jruby/issues/6642
-              # rubocop:disable Style/RedundantBegin
-              begin
-                RuboCop::Util.silence_warnings do
-                  # Avoid printing deprecation warnings about constants
-                  converted << Kernel.const_get(exception.source)
-                end
-              rescue NameError
-                converted << nil
+              RuboCop::Util.silence_warnings do
+                # Avoid printing deprecation warnings about constants
+                converted << Kernel.const_get(exception.source)
               end
-              # rubocop:enable Style/RedundantBegin
+            rescue NameError
+              converted << nil
             end
           else
             # treat an empty `rescue` as `rescue StandardError`
@@ -138,16 +147,6 @@ module RuboCop
               (x <=> y || 0) <= 0
             end
           end
-        end
-
-        # @param [RuboCop::AST::Node] rescue_group is a node of array_type
-        def rescued_exceptions(rescue_group)
-          klasses = *rescue_group
-          klasses.map do |klass|
-            next unless klass.const_type?
-
-            klass.source
-          end.compact
         end
 
         def find_shadowing_rescue(rescues)

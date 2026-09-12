@@ -12,9 +12,8 @@ RSpec.describe RuboCop::Cop::InternalAffairs::UndefinedConfig, :config, :isolate
         Defined: true
     YAML
 
-    allow(RuboCop::ConfigLoader).to receive(:default_configuration).and_return(
-      RuboCop::ConfigLoader.load_file('config/default.yml', check: false)
-    )
+    stub_const('RuboCop::Cop::InternalAffairs::UndefinedConfig::CONFIG',
+               RuboCop::ConfigLoader.load_yaml_configuration('config/default.yml'))
   end
 
   it 'does not register an offense for implicit configuration keys' do
@@ -24,10 +23,7 @@ RSpec.describe RuboCop::Cop::InternalAffairs::UndefinedConfig, :config, :isolate
           module Test
             class Foo < Base
               def configured?
-                cop_config['Safe']
-                cop_config['SafeAutoCorrect']
-                cop_config['AutoCorrect']
-                cop_config['Severity']
+                #{described_class::ALLOWED_CONFIGURATIONS.map { "cop_config['#{_1}']" }.join("\n          ")}
               end
             end
           end
@@ -57,6 +53,48 @@ RSpec.describe RuboCop::Cop::InternalAffairs::UndefinedConfig, :config, :isolate
     expect_offense(<<~RUBY)
       module Test
         class Foo < Base
+          def configured?
+            cop_config['Defined']
+            cop_config['Missing']
+                       ^^^^^^^^^ `Missing` is not defined in the configuration for `Test/Foo` in `config/default.yml`.
+          end
+        end
+      end
+    RUBY
+  end
+
+  it 'registers an offense when the cop inherits `Cop::Base`' do
+    expect_offense(<<~RUBY)
+      module Test
+        class Foo < Cop::Base
+          def configured?
+            cop_config['Defined']
+            cop_config['Missing']
+                       ^^^^^^^^^ `Missing` is not defined in the configuration for `Test/Foo` in `config/default.yml`.
+          end
+        end
+      end
+    RUBY
+  end
+
+  it 'registers an offense when the cop inherits `RuboCop::Cop::Base`' do
+    expect_offense(<<~RUBY)
+      module Test
+        class Foo < RuboCop::Cop::Base
+          def configured?
+            cop_config['Defined']
+            cop_config['Missing']
+                       ^^^^^^^^^ `Missing` is not defined in the configuration for `Test/Foo` in `config/default.yml`.
+          end
+        end
+      end
+    RUBY
+  end
+
+  it 'registers an offense when the cop inherits `::RuboCop::Cop::Base`' do
+    expect_offense(<<~RUBY)
+      module Test
+        class Foo < ::RuboCop::Cop::Base
           def configured?
             cop_config['Defined']
             cop_config['Missing']
@@ -216,6 +254,18 @@ RSpec.describe RuboCop::Cop::InternalAffairs::UndefinedConfig, :config, :isolate
       class Test
         def configured?
           cop_config['Missing']
+        end
+      end
+    RUBY
+  end
+
+  it 'ignores `cop_config` in non-cop subclasses' do
+    expect_no_offenses(<<~RUBY)
+      module M
+        class C < ApplicationRecord::Base
+          def configured?
+            cop_config['Missing']
+          end
         end
       end
     RUBY

@@ -239,6 +239,14 @@ RSpec.describe RuboCop::Cop::Style::RedundantRegexpCharacterClass, :config do
     end
   end
 
+  context 'with a character class containing multiple unicode code-points' do
+    it 'does not register an offense' do
+      expect_no_offenses(<<~'RUBY')
+        foo = /[\u{0061 0062}]/
+      RUBY
+    end
+  end
+
   context 'with a character class containing a single unicode character property' do
     it 'registers an offense and corrects' do
       expect_offense(<<~'RUBY')
@@ -278,6 +286,19 @@ RSpec.describe RuboCop::Cop::Style::RedundantRegexpCharacterClass, :config do
     end
   end
 
+  context 'with a character class containing an unescaped-#' do
+    it 'registers an offense and corrects' do
+      expect_offense(<<~'RUBY')
+        foo = /[#]{0}/
+               ^^^ Redundant single-element character class, `[#]` can be replaced with `\#`.
+      RUBY
+
+      expect_correction(<<~'RUBY')
+        foo = /\#{0}/
+      RUBY
+    end
+  end
+
   context 'with a character class containing an escaped-b' do
     # See https://github.com/rubocop/rubocop/issues/8193 for details - in short \b != [\b] - the
     # former matches a word boundary, the latter a backspace character.
@@ -286,8 +307,46 @@ RSpec.describe RuboCop::Cop::Style::RedundantRegexpCharacterClass, :config do
     end
   end
 
+  context 'with a character class containing an octal escape sequence that also works outside' do
+    # See https://github.com/rubocop/rubocop/issues/11067 for details - in short "\0" != "0" - the
+    # former means an Unicode code point `"\u0000"`, the latter a number character `"0"`.
+    # Similarly "\032" means "\u001A".
+    # "\0" and "\" followed by *more* than one digit also work outside sets because they are
+    # not treated as backreferences by Onigmo.
+    it 'registers an offense for escapes that would work outside the class' do
+      expect_offense(<<~'RUBY')
+        foo = /[\032]/
+               ^^^^^^ Redundant single-element character class, `[\032]` can be replaced with `\032`.
+      RUBY
+
+      expect_correction(<<~'RUBY')
+        foo = /\032/
+      RUBY
+    end
+  end
+
+  context 'with a character class containing an octal escape sequence that does not work outside' do
+    # The octal escapes \1 to \7 only work inside a character class
+    # because they would be a backreference outside it.
+    it 'does not register an offense' do
+      expect_no_offenses('foo = /[\1]/')
+    end
+  end
+
+  context 'with a character class containing a `\8` or `\9` escape' do
+    # `\8` and `\9` match a literal digit inside a character class but are
+    # backreferences outside it (a syntax error when the group does not exist).
+    it 'does not register an offense for `\8`' do
+      expect_no_offenses('foo = /[\8]/')
+    end
+
+    it 'does not register an offense for `\9`' do
+      expect_no_offenses('foo = /[\9]/')
+    end
+  end
+
   context 'with a character class containing a character requiring escape outside' do
-    # Not implemented for now, since we would have to escape on auto-correct, and the cop message
+    # Not implemented for now, since we would have to escape on autocorrect, and the cop message
     # would need to be dynamic to not be misleading.
     it 'does not register an offense' do
       expect_no_offenses('foo = /[+]/')
@@ -407,7 +466,7 @@ RSpec.describe RuboCop::Cop::Style::RedundantRegexpCharacterClass, :config do
 
     context 'with an unnecessary-character-class after a comment' do
       it 'registers an offense and corrects' do
-        expect_offense(<<~'RUBY')
+        expect_offense(<<~RUBY)
           foo = /
             a # This comment shouldn't affect the position of the offense
             [b]
@@ -415,7 +474,7 @@ RSpec.describe RuboCop::Cop::Style::RedundantRegexpCharacterClass, :config do
           /x
         RUBY
 
-        expect_correction(<<~'RUBY')
+        expect_correction(<<~RUBY)
           foo = /
             a # This comment shouldn't affect the position of the offense
             b

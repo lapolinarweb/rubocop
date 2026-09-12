@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Layout
-      # Check that the keys, separators, and values of a multi-line hash
+      # Checks that the keys, separators, and values of a multi-line hash
       # literal are aligned according to configuration. The configuration
       # options are:
       #
@@ -19,7 +19,7 @@ module RuboCop
       # * ignore_implicit (without curly braces)
       #
       # Alternatively you can specify multiple allowed styles. That's done by
-      # passing a list of styles to EnforcedStyles.
+      # passing a list of styles to EnforcedHashRocketStyle and EnforcedColonStyle.
       #
       # @example EnforcedHashRocketStyle: key (default)
       #   # bad
@@ -190,8 +190,9 @@ module RuboCop
                                    'more than one line.'
         }.freeze
 
+        SEPARATOR_ALIGNMENT_STYLES = %w[EnforcedColonStyle EnforcedHashRocketStyle].freeze
+
         def on_send(node)
-          return if double_splat?(node)
           return unless node.arguments?
 
           last_argument = node.last_argument
@@ -200,6 +201,7 @@ module RuboCop
 
           ignore_node(last_argument)
         end
+        alias on_csend on_send
         alias on_super on_send
         alias on_yield on_send
 
@@ -222,9 +224,17 @@ module RuboCop
                               node.pairs.any? &&
                               node.parent&.call_type?
 
+          left_sibling = argument_before_hash(node)
           parent_loc = node.parent.loc
-          selector = parent_loc.selector || parent_loc.expression
-          selector.line == node.pairs.first.loc.line
+          selector = left_sibling || parent_loc.selector || parent_loc.expression
+
+          same_line?(selector, node.pairs.first)
+        end
+
+        def argument_before_hash(hash_node)
+          return hash_node.children.first.children.first if hash_node.children.first.kwsplat_type?
+
+          hash_node.left_sibling.respond_to?(:loc) ? hash_node.left_sibling : nil
         end
 
         def reset!
@@ -232,16 +242,12 @@ module RuboCop
           self.column_deltas = Hash.new { |hash, key| hash[key] = {} }
         end
 
-        def double_splat?(node)
-          node.children.last.is_a?(Symbol)
-        end
-
         def check_pairs(node)
           first_pair = node.pairs.first
           reset!
 
           alignment_for(first_pair).each do |alignment|
-            delta = alignment.deltas_for_first_pair(first_pair, node)
+            delta = alignment.deltas_for_first_pair(first_pair)
             check_delta delta, node: first_pair, alignment: alignment
           end
 
@@ -313,7 +319,7 @@ module RuboCop
           # just give each lambda the same reference and they would all get the
           # last value of each. A local variable fixes the problem.
 
-          if node.value
+          if node.value && node.respond_to?(:value_omission?) && !node.value_omission?
             correct_key_value(corrector, delta, node.key.source_range,
                               node.value.source_range,
                               node.loc.operator)
@@ -324,7 +330,11 @@ module RuboCop
         end
 
         def correct_no_value(corrector, key_delta, key)
-          adjust(corrector, key_delta, key)
+          adjust(corrector, clamped_key_delta(key_delta, key), key)
+        end
+
+        def clamped_key_delta(key_delta, key)
+          [key_delta, -key.column].max
         end
 
         def correct_key_value(corrector, delta, key, value, separator)
@@ -335,10 +345,7 @@ module RuboCop
           value_delta     = delta[:value]     || 0
           key_delta       = delta[:key]       || 0
 
-          key_column = key.column
-          key_delta = -key_column if key_delta < -key_column
-
-          adjust(corrector, key_delta, key)
+          adjust(corrector, clamped_key_delta(key_delta, key), key)
           adjust(corrector, separator_delta, separator)
           adjust(corrector, value_delta, value)
         end
@@ -375,13 +382,13 @@ module RuboCop
         end
 
         def enforce_first_argument_with_fixed_indentation?
-          return false unless argument_alignment_config['Enabled']
-
+          argument_alignment_config = config.for_enabled_cop('Layout/ArgumentAlignment')
           argument_alignment_config['EnforcedStyle'] == 'with_fixed_indentation'
         end
 
-        def argument_alignment_config
-          config.for_cop('Layout/ArgumentAlignment')
+        def same_line?(node1, node2)
+          # Override `Util#same_line?`
+          super || node1.last_line == line(node2)
         end
       end
     end

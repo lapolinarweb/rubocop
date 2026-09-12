@@ -5,14 +5,14 @@ module RuboCop
     # This module checks for nodes that should be aligned to the left or right.
     # This amount is determined by the instance variable @column_delta.
     module Alignment
-      private
-
       SPACE = ' '
+
+      private
 
       attr_reader :column_delta
 
       def configured_indentation_width
-        cop_config['IndentationWidth'] || config.for_cop('Layout/IndentationWidth')['Width']
+        cop_config['IndentationWidth'] || config.for_cop('Layout/IndentationWidth')['Width'] || 2
       end
 
       def indentation(node)
@@ -28,7 +28,7 @@ module RuboCop
 
         each_bad_alignment(items, base_column) do |current|
           expr = current.source_range
-          if @current_offenses.any? { |o| within?(expr, o.location) }
+          if @current_offenses&.any? { |o| within?(expr, o.location) }
             # If this offense is within a line range that is already being
             # realigned by autocorrect, we report the offense without
             # autocorrecting it. Two rewrites in the same area by the same
@@ -65,8 +65,12 @@ module RuboCop
         inner.begin_pos >= outer.begin_pos && inner.end_pos <= outer.end_pos
       end
 
-      # @deprecated Use processed_source.comment_at_line(line)
-      def end_of_line_comment(line)
+      # @deprecated Use processed_source.line_with_comment?(line)
+      def end_of_line_comment(line) # rubocop:disable Naming/PredicateMethod -- a deprecated shim kept under its original name
+        warn Rainbow(<<~WARNING).yellow, uplevel: 1
+          `end_of_line_comment` is deprecated. Use `processed_source.line_with_comment?` instead.
+        WARNING
+
         processed_source.line_with_comment?(line)
       end
 

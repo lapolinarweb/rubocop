@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Layout
-      # This cop checks whether class/module/method definitions are
+      # Checks whether class/module/method definitions are
       # separated by one or more empty lines.
       #
       # `NumberOfEmptyLines` can be an integer (default is 1) or
@@ -22,8 +22,6 @@ module RuboCop
       #   def b
       #   end
       #
-      # @example
-      #
       #   # good
       #   def a
       #   end
@@ -41,8 +39,6 @@ module RuboCop
       #   end
       #   def b
       #   end
-      #
-      # @example
       #
       #   # good
       #   class A
@@ -65,8 +61,6 @@ module RuboCop
       #   def b
       #   end
       #
-      # @example
-      #
       #   # good
       #   module A
       #   end
@@ -77,12 +71,45 @@ module RuboCop
       #   def b
       #   end
       #
-      # @example AllowAdjacentOneLineDefs: true
+      # @example AllowAdjacentOneLineDefs: true (default)
       #
       #   # good
       #   class ErrorA < BaseError; end
       #   class ErrorB < BaseError; end
-      #   class ErrorC < BaseError; end
+      #
+      #   # good
+      #   class ErrorA < BaseError; end
+      #
+      #   class ErrorB < BaseError; end
+      #
+      #   # good - DefLikeMacros: [memoize]
+      #   memoize :attribute_a
+      #   memoize :attribute_b
+      #
+      #   # good
+      #   memoize :attribute_a
+      #
+      #   memoize :attribute_b
+      #
+      # @example AllowAdjacentOneLineDefs: false
+      #
+      #   # bad
+      #   class ErrorA < BaseError; end
+      #   class ErrorB < BaseError; end
+      #
+      #   # good
+      #   class ErrorA < BaseError; end
+      #
+      #   class ErrorB < BaseError; end
+      #
+      #   # bad - DefLikeMacros: [memoize]
+      #   memoize :attribute_a
+      #   memoize :attribute_b
+      #
+      #   # good
+      #   memoize :attribute_a
+      #
+      #   memoize :attribute_b
       #
       class EmptyLineBetweenDefs < Base
         include RangeHelp
@@ -114,7 +141,8 @@ module RuboCop
           return if nodes.all?(&:single_line?) && cop_config['AllowAdjacentOneLineDefs']
 
           correction_node = nodes.last
-          location = correction_node.loc.keyword.join(correction_node.loc.name)
+
+          location = def_location(correction_node)
           add_offense(location, message: message(correction_node, count: count)) do |corrector|
             autocorrect(corrector, *nodes, count)
           end
@@ -127,7 +155,8 @@ module RuboCop
           newline_pos = source_buffer.source.index("\n", end_pos)
 
           # Handle the case when multiple one-liners are on the same line.
-          newline_pos = end_pos + 1 if newline_pos > node.source_range.begin_pos
+          begin_pos = node.source_range.begin_pos
+          newline_pos = begin_pos - 1 if newline_pos > begin_pos
 
           if count > maximum_empty_lines
             autocorrect_remove_lines(corrector, newline_pos, count)
@@ -138,14 +167,40 @@ module RuboCop
 
         private
 
-        def candidate?(node)
-          return unless node
+        def def_location(correction_node)
+          if correction_node.any_block_type?
+            correction_node.source_range.join(correction_node.children.first.source_range)
+          elsif correction_node.send_type?
+            correction_node.source_range
+          else
+            correction_node.loc.keyword.join(correction_node.loc.name)
+          end
+        end
 
-          method_candidate?(node) || class_candidate?(node) || module_candidate?(node)
+        def candidate?(node)
+          return false unless node
+
+          method_candidate?(node) || class_candidate?(node) || module_candidate?(node) ||
+            macro_candidate?(node)
+        end
+
+        def empty_line_between_macros
+          @empty_line_between_macros ||= cop_config.fetch('DefLikeMacros', []).map(&:to_sym).freeze
+        end
+
+        def macro_candidate?(node)
+          macro_candidate = if node.any_block_type?
+                              node.send_node
+                            elsif node.send_type?
+                              node
+                            end
+          return false unless macro_candidate
+
+          macro_candidate.macro? && empty_line_between_macros.include?(macro_candidate.method_name)
         end
 
         def method_candidate?(node)
-          cop_config['EmptyLineBetweenMethodDefs'] && (node.def_type? || node.defs_type?)
+          cop_config['EmptyLineBetweenMethodDefs'] && node.any_def_type?
         end
 
         def class_candidate?(node)
@@ -205,7 +260,13 @@ module RuboCop
         end
 
         def def_start(node)
-          node.loc.keyword.line
+          node = node.send_node if node.any_block_type?
+
+          if node.send_type?
+            node.source_range.line
+          else
+            node.loc.keyword.line
+          end
         end
 
         def def_end(node)
@@ -213,11 +274,20 @@ module RuboCop
         end
 
         def end_loc(node)
-          if (node.def_type? || node.defs_type?) && node.endless?
-            node.loc.expression.end
-          else
-            node.loc.end
-          end
+          end_location = node.source_range.end
+          trailing_heredoc_end(node, end_location) || end_location
+        end
+
+        # For an endless method whose body is a heredoc (e.g. `def a = <<~TEXT`), the
+        # node's source range ends at the heredoc opening line, before the heredoc body.
+        # Use the heredoc's closing delimiter so the def's real end is located after the
+        # heredoc and blank-line insertion does not land inside the heredoc body.
+        def trailing_heredoc_end(node, end_location)
+          heredocs = node.each_descendant(:any_str).select(&:heredoc?)
+          return if heredocs.empty?
+
+          heredoc_end = heredocs.map { |heredoc| heredoc.loc.heredoc_end }.max_by(&:end_pos)
+          heredoc_end if heredoc_end.end_pos > end_location.end_pos
         end
 
         def autocorrect_remove_lines(corrector, newline_pos, count)
@@ -238,6 +308,8 @@ module RuboCop
           case node.type
           when :def, :defs
             :method
+          when :numblock, :itblock
+            :block
           else
             node.type
           end

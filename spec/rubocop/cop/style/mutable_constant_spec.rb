@@ -83,10 +83,10 @@ RSpec.describe RuboCop::Cop::Style::MutableConstant, :config do
   shared_examples 'string literal' do
     # TODO : It is not yet decided when frozen string will be the default.
     # It has been abandoned in the Ruby 3.0 period, but may default in
-    # the long run. So these tests are left with a provisional value of 4.0.
-    if RuboCop::TargetRuby.supported_versions.include?(4.0)
-      context 'when the target ruby version >= 4.0' do
-        let(:ruby_version) { 4.0 }
+    # the long run. So these tests are left with a provisional value of 5.0.
+    if RuboCop::TargetRuby.supported_versions.include?(5.0)
+      context 'when the target ruby version >= 5.0' do
+        let(:ruby_version) { 5.0 }
 
         context 'when the frozen string literal comment is missing' do
           it_behaves_like 'immutable objects', '"#{a}"'
@@ -115,7 +115,7 @@ RSpec.describe RuboCop::Cop::Style::MutableConstant, :config do
         let(:prefix) { '# frozen_string_literal: true' }
 
         it_behaves_like 'mutable objects', '"#{a}"'
-        it_behaves_like 'immutable objects', <<~'RUBY'
+        it_behaves_like 'immutable objects', <<~RUBY
           <<~HERE
             foo
             bar
@@ -131,6 +131,41 @@ RSpec.describe RuboCop::Cop::Style::MutableConstant, :config do
               bar
             HERE
           RUBY
+
+          expect_correction(<<~'RUBY')
+            # frozen_string_literal: true
+
+            CONST = <<~HERE.freeze
+              foo #{use_interpolation}
+              bar
+            HERE
+          RUBY
+        end
+
+        it 'does not register an offense when using a multiline string' do
+          expect_no_offenses(<<~RUBY)
+            # frozen_string_literal: true
+
+            CONST = 'foo' \
+                    'bar'
+          RUBY
+        end
+
+        it 'registers an offense when using a multiline string with interpolation' do
+          expect_offense(<<~'RUBY')
+            # frozen_string_literal: true
+
+            CONST = "#{foo}" \
+                    ^^^^^^^^^^ Freeze mutable objects assigned to constants.
+                    'bar'
+          RUBY
+
+          expect_correction(<<~'RUBY')
+            # frozen_string_literal: true
+
+            CONST = "#{foo}" \
+                    'bar'.freeze
+          RUBY
         end
       end
 
@@ -141,7 +176,7 @@ RSpec.describe RuboCop::Cop::Style::MutableConstant, :config do
       end
     end
 
-    context 'Ruby 2.7 or lower', :ruby27 do
+    context 'Ruby 2.7 or lower', :ruby27, unsupported_on: :prism do
       context 'when the frozen string literal comment is missing' do
         it_behaves_like 'mutable objects', '"#{a}"'
       end
@@ -150,7 +185,7 @@ RSpec.describe RuboCop::Cop::Style::MutableConstant, :config do
         let(:prefix) { '# frozen_string_literal: true' }
 
         it_behaves_like 'immutable objects', '"#{a}"'
-        it_behaves_like 'immutable objects', <<~'RUBY'
+        it_behaves_like 'immutable objects', <<~RUBY
           <<~HERE
             foo
             bar
@@ -164,6 +199,15 @@ RSpec.describe RuboCop::Cop::Style::MutableConstant, :config do
               foo #{use_interpolation}
               bar
             HERE
+          RUBY
+        end
+
+        it 'does not register an offense when using a multiline string' do
+          expect_no_offenses(<<~RUBY)
+            # frozen_string_literal: true
+
+            CONST = 'foo' \
+                    'bar'
           RUBY
         end
       end
@@ -227,7 +271,7 @@ RSpec.describe RuboCop::Cop::Style::MutableConstant, :config do
     end
 
     context 'when assigning an array without brackets' do
-      it 'adds brackets when auto-correcting' do
+      it 'adds brackets when autocorrecting' do
         expect_offense(<<~RUBY)
           XXX = YYY, ZZZ
                 ^^^^^^^^ Freeze mutable objects assigned to constants.
@@ -305,6 +349,11 @@ RSpec.describe RuboCop::Cop::Style::MutableConstant, :config do
           Y = [4, 5, 6]
               ^^^^^^^^^ Freeze mutable objects assigned to constants.
         RUBY
+
+        expect_correction(<<~RUBY)
+          X = [1, 2, 3].freeze # shareable_constant_value: literal
+          Y = [4, 5, 6].freeze
+        RUBY
       end
 
       it 'raises offense only for shareable_constant_value as none when set in the order of: literal, none and experimental_everything' do
@@ -317,10 +366,19 @@ RSpec.describe RuboCop::Cop::Style::MutableConstant, :config do
           # shareable_constant_value: experimental_everything
           Z = [7, 8, 9]
         RUBY
+
+        expect_correction(<<~RUBY)
+          # shareable_constant_value: literal
+          X = [1, 2, 3]
+          # shareable_constant_value: none
+          Y = [4, 5, 6].freeze
+          # shareable_constant_value: experimental_everything
+          Z = [7, 8, 9]
+        RUBY
       end
     end
 
-    context 'Ruby 2.7 or lower', :ruby27 do
+    context 'Ruby 2.7 or lower', :ruby27, unsupported_on: :prism do
       context 'when assigning a regexp' do
         it 'registers an offense' do
           expect_offense(<<~RUBY)
@@ -335,7 +393,7 @@ RSpec.describe RuboCop::Cop::Style::MutableConstant, :config do
       end
 
       context 'when assigning a range (irange) without parenthesis' do
-        it 'adds parenthesis when auto-correcting' do
+        it 'adds parentheses when autocorrecting' do
           expect_offense(<<~RUBY)
             XXX = 1..99
                   ^^^^^ Freeze mutable objects assigned to constants.
@@ -359,7 +417,7 @@ RSpec.describe RuboCop::Cop::Style::MutableConstant, :config do
       end
 
       context 'when assigning a range (erange) without parenthesis' do
-        it 'adds parenthesis when auto-correcting' do
+        it 'adds parentheses when autocorrecting' do
           expect_offense(<<~RUBY)
             XXX = 1...99
                   ^^^^^^ Freeze mutable objects assigned to constants.
@@ -417,6 +475,16 @@ RSpec.describe RuboCop::Cop::Style::MutableConstant, :config do
     it_behaves_like 'immutable objects', 'Struct.new(:a, :b)'
     it_behaves_like 'immutable objects', <<~RUBY
       Struct.new(:node) do
+        def assignment?
+          true
+        end
+      end
+    RUBY
+    it_behaves_like 'immutable objects', 'Data.define'
+    it_behaves_like 'immutable objects', '::Data.define'
+    it_behaves_like 'immutable objects', 'Data.define(:a, :b)'
+    it_behaves_like 'immutable objects', <<~RUBY
+      Data.define(:node) do
         def assignment?
           true
         end
@@ -508,7 +576,7 @@ RSpec.describe RuboCop::Cop::Style::MutableConstant, :config do
         RUBY
       end
 
-      it 'accepts operating on a constant and an interger' do
+      it 'accepts operating on a constant and an integer' do
         expect_no_offenses(<<~RUBY)
           CONST = FOO + 2
         RUBY
@@ -575,7 +643,7 @@ RSpec.describe RuboCop::Cop::Style::MutableConstant, :config do
     end
 
     context 'when assigning an array without brackets' do
-      it 'adds brackets when auto-correcting' do
+      it 'adds brackets when autocorrecting' do
         expect_offense(<<~RUBY)
           XXX = YYY, ZZZ
                 ^^^^^^^^ Freeze mutable objects assigned to constants.
@@ -614,5 +682,182 @@ RSpec.describe RuboCop::Cop::Style::MutableConstant, :config do
     end
 
     it_behaves_like 'string literal'
+  end
+
+  context 'with Recursive: false (default)' do
+    let(:cop_config) { { 'EnforcedStyle' => 'literals' } }
+
+    it 'only freezes the outermost literal, leaving nested mutables alone' do
+      expect_offense(<<~RUBY)
+        CONST = [{ a: [], b: 'foo' }]
+                ^^^^^^^^^^^^^^^^^^^^^ Freeze mutable objects assigned to constants.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        CONST = [{ a: [], b: 'foo' }].freeze
+      RUBY
+    end
+
+    it 'does not descend into an already-frozen outer literal' do
+      expect_no_offenses(<<~RUBY)
+        CONST = [{ a: [] }].freeze
+      RUBY
+    end
+  end
+
+  context 'with Recursive: true and nested mutable literals' do
+    let(:cop_config) { { 'EnforcedStyle' => 'literals', 'Recursive' => true } }
+
+    it 'recursively freezes a hash nested inside an array' do
+      expect_offense(<<~RUBY)
+        CONST = [{ a: [], b: 'foo' }]
+                ^^^^^^^^^^^^^^^^^^^^^ Freeze mutable objects assigned to constants.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        CONST = [{ a: [].freeze, b: 'foo'.freeze }.freeze].freeze
+      RUBY
+    end
+
+    it 'recursively freezes deeply nested literals' do
+      expect_offense(<<~RUBY)
+        CONST = { a: [1, [2, { b: 'x' }]] }
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^ Freeze mutable objects assigned to constants.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        CONST = { a: [1, [2, { b: 'x'.freeze }.freeze].freeze].freeze }.freeze
+      RUBY
+    end
+
+    it 'descends into an already-frozen outer array and reports the outermost unfrozen literal' do
+      expect_offense(<<~RUBY)
+        CONST = [{ a: [] }].freeze
+                 ^^^^^^^^^ Freeze mutable objects assigned to constants.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        CONST = [{ a: [].freeze }.freeze].freeze
+      RUBY
+    end
+
+    it 'descends through multiple already-frozen layers' do
+      expect_offense(<<~RUBY)
+        CONST = [{ a: [] }.freeze].freeze
+                      ^^ Freeze mutable objects assigned to constants.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        CONST = [{ a: [].freeze }.freeze].freeze
+      RUBY
+    end
+
+    it 'reports separate offenses for each outermost unfrozen literal at the same level' do
+      expect_offense(<<~RUBY)
+        CONST = [[1, 2], { a: 1 }].freeze
+                 ^^^^^^ Freeze mutable objects assigned to constants.
+                         ^^^^^^^^ Freeze mutable objects assigned to constants.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        CONST = [[1, 2].freeze, { a: 1 }.freeze].freeze
+      RUBY
+    end
+
+    it 'wraps nested ranges in parentheses when freezing', :ruby27, unsupported_on: :prism do
+      expect_offense(<<~RUBY)
+        CONST = { a: 1..10 }
+                ^^^^^^^^^^^^ Freeze mutable objects assigned to constants.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        CONST = { a: (1..10).freeze }.freeze
+      RUBY
+    end
+
+    it 'does not descend into percent-literal arrays' do
+      expect_offense(<<~RUBY)
+        CONST = [%w(a b c)]
+                ^^^^^^^^^^^ Freeze mutable objects assigned to constants.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        CONST = [%w(a b c).freeze].freeze
+      RUBY
+    end
+
+    it 'leaves non-literal nested expressions alone' do
+      expect_offense(<<~RUBY)
+        CONST = [foo, bar]
+                ^^^^^^^^^^ Freeze mutable objects assigned to constants.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        CONST = [foo, bar].freeze
+      RUBY
+    end
+
+    it 'does not double-freeze nested literals that already have .freeze' do
+      expect_offense(<<~RUBY)
+        CONST = [{ a: 'foo'.freeze, b: [] }]
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Freeze mutable objects assigned to constants.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        CONST = [{ a: 'foo'.freeze, b: [].freeze }.freeze].freeze
+      RUBY
+    end
+
+    context 'with frozen_string_literal: true' do
+      it 'does not add .freeze to nested string literals' do
+        expect_offense(<<~RUBY)
+          # frozen_string_literal: true
+
+          CONST = [{ a: [], b: 'foo' }]
+                  ^^^^^^^^^^^^^^^^^^^^^ Freeze mutable objects assigned to constants.
+        RUBY
+
+        expect_correction(<<~RUBY)
+          # frozen_string_literal: true
+
+          CONST = [{ a: [].freeze, b: 'foo' }.freeze].freeze
+        RUBY
+      end
+    end
+
+    context 'when shareable_constant_value is set', :ruby30 do
+      it 'does not register an offense for nested mutable literals either' do
+        expect_no_offenses(<<~RUBY)
+          # shareable_constant_value: literal
+          CONST = [{ a: [], b: 'foo' }]
+        RUBY
+      end
+    end
+  end
+
+  context 'with Recursive: true and EnforcedStyle: strict' do
+    let(:cop_config) { { 'EnforcedStyle' => 'strict', 'Recursive' => true } }
+
+    it 'recursively freezes nested literals at the top level' do
+      expect_offense(<<~RUBY)
+        CONST = [{ a: [] }]
+                ^^^^^^^^^^^ Freeze mutable objects assigned to constants.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        CONST = [{ a: [].freeze }.freeze].freeze
+      RUBY
+    end
+
+    it 'descends into an already-frozen outer literal in strict mode' do
+      expect_offense(<<~RUBY)
+        CONST = [Something.new].freeze
+                 ^^^^^^^^^^^^^ Freeze mutable objects assigned to constants.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        CONST = [Something.new.freeze].freeze
+      RUBY
+    end
   end
 end

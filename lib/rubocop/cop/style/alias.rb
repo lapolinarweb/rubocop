@@ -3,9 +3,17 @@
 module RuboCop
   module Cop
     module Style
-      # This cop enforces the use of either `#alias` or `#alias_method`
-      # depending on configuration.
+      # Enforces the use of either `#alias` or `#alias_method`
+      # depending on configuration. Consistent use of one or the
+      # other prevents confusion about their different semantics
+      # (e.g., `alias` is resolved at parse time, while `alias_method`
+      # is resolved at runtime).
       # It also flags uses of `alias :symbol` rather than `alias bareword`.
+      #
+      # However, it will always enforce `alias_method` when `alias` is used
+      # in an instance method definition and in a singleton method definition.
+      # If used in a block, always enforce `alias_method`
+      # unless it is an `instance_eval` block.
       #
       # @example EnforcedStyle: prefer_alias (default)
       #   # bad
@@ -22,6 +30,7 @@ module RuboCop
       #
       #   # good
       #   alias_method :bar, :foo
+      #
       class Alias < Base
         include ConfigurableEnforcedStyle
         extend AutoCorrector
@@ -35,6 +44,8 @@ module RuboCop
         def on_send(node)
           return unless node.command?(:alias_method)
           return unless style == :prefer_alias && alias_keyword_possible?(node)
+          return unless node.arguments.count == 2
+          return if alias_method_value_used?(node)
 
           msg = format(MSG_ALIAS_METHOD, current: lexical_scope_type(node))
           add_offense(node.loc.selector, message: msg) do |corrector|
@@ -70,13 +81,23 @@ module RuboCop
           scope_type(node) != :dynamic && node.arguments.all?(&:sym_type?)
         end
 
+        # `alias_method` is a method call whose return value can be used
+        # (e.g., as an argument to `public`/`module_function`, or as an assignment),
+        # but `alias` is a keyword statement that cannot appear in such positions.
+        # Detect these positions so the conversion does not produce a syntax error.
+        def alias_method_value_used?(node)
+          node.argument? || node.parent&.assignment?
+        end
+
         def alias_method_possible?(node)
-          scope_type(node) != :instance_eval && node.children.none?(&:gvar_type?)
+          scope_type(node) != :instance_eval &&
+            node.children.none?(&:gvar_type?) &&
+            node.each_ancestor(:def).none?
         end
 
         def add_offense_for_args(node, &block)
           existing_args  = node.children.map(&:source).join(' ')
-          preferred_args = node.children.map { |a| a.source[1..-1] }.join(' ')
+          preferred_args = node.children.map { |a| a.source[1..] }.join(' ')
           arg_ranges     = node.children.map(&:source_range)
           msg            = format(MSG_SYMBOL_ARGS, prefer: preferred_args, current: existing_args)
           add_offense(arg_ranges.reduce(&:join), message: msg, &block)
@@ -92,7 +113,7 @@ module RuboCop
               return :lexical
             when :def, :defs
               return :dynamic
-            when :block
+            when :block, :numblock, :itblock
               return :instance_eval if parent.method?(:instance_eval)
 
               return :dynamic
@@ -114,7 +135,7 @@ module RuboCop
         end
 
         def bareword?(sym_node)
-          !sym_node.source.start_with?(':')
+          !sym_node.source.start_with?(':') || sym_node.dsym_type?
         end
 
         def correct_alias_method_to_alias(corrector, send_node)
@@ -126,22 +147,23 @@ module RuboCop
 
         def correct_alias_to_alias_method(corrector, node)
           replacement =
-            'alias_method ' \
-            ":#{identifier(node.new_identifier)}, " \
-            ":#{identifier(node.old_identifier)}"
+            "alias_method #{identifier(node.new_identifier)}, #{identifier(node.old_identifier)}"
 
           corrector.replace(node, replacement)
         end
 
         def correct_alias_with_symbol_args(corrector, node)
-          corrector.replace(node.new_identifier, node.new_identifier.source[1..-1])
-          corrector.replace(node.old_identifier, node.old_identifier.source[1..-1])
+          corrector.replace(node.new_identifier, node.new_identifier.source[1..])
+          corrector.replace(node.old_identifier, node.old_identifier.source[1..])
         end
 
-        # @!method identifier(node)
-        def_node_matcher :identifier, <<~PATTERN
-          (sym $_)
-        PATTERN
+        def identifier(node)
+          if node.sym_type?
+            ":#{node.children.first}"
+          else
+            node.source
+          end
+        end
       end
     end
   end

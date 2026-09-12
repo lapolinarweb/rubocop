@@ -3,9 +3,9 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for redundant `begin` blocks.
-      #
-      # Currently it checks for code like this:
+      # Checks for redundant `begin` blocks. A `begin` block is redundant
+      # when the `rescue`/`ensure` can be handled by the enclosing method
+      # or block definition directly, avoiding unnecessary indentation.
       #
       # @example
       #
@@ -36,6 +36,7 @@ module RuboCop
       #   do_something
       #
       #   # bad
+      #   # When using Ruby 2.5 or later.
       #   do_something do
       #     begin
       #       something
@@ -67,14 +68,48 @@ module RuboCop
 
         MSG = 'Redundant `begin` block detected.'
 
+        def self.autocorrect_incompatible_with
+          [Style::BlockDelimiters]
+        end
+
+        # @!method offensive_kwbegins(node)
+        def_node_search :offensive_kwbegins, <<~PATTERN
+          [(kwbegin ...) !#allowable_kwbegin?]
+        PATTERN
+
         def on_def(node)
           return unless node.body&.kwbegin_type?
+          return if node.endless?
 
           register_offense(node.body)
         end
         alias on_defs on_def
 
+        def on_if(node)
+          return if node.modifier_form?
+
+          inspect_branches(node)
+        end
+
+        def on_case(node)
+          inspect_branches(node)
+        end
+        alias on_case_match on_case
+
+        def on_while(node)
+          return if node.modifier_form?
+
+          body = node.body
+
+          return unless body&.kwbegin_type?
+          return if body.rescue_node || body.ensure_node
+
+          register_offense(body)
+        end
+        alias on_until on_while
+
         def on_block(node)
+          return if target_ruby_version < 2.5
           return if node.send_node.lambda_literal?
           return if node.braces?
           return unless node.body&.kwbegin_type?
@@ -82,25 +117,32 @@ module RuboCop
           register_offense(node.body)
         end
 
-        def on_kwbegin(node)
-          return if empty_begin?(node) ||
-                    begin_block_has_multiline_statements?(node) ||
-                    contain_rescue_or_ensure?(node) ||
-                    valid_context_using_only_begin?(node)
+        alias on_numblock on_block
+        alias on_itblock on_block
 
-          register_offense(node)
+        def on_kwbegin(node)
+          return unless (target_node = offensive_kwbegins(node).to_a.last)
+
+          register_offense(target_node)
         end
 
         private
+
+        def allowable_kwbegin?(node)
+          empty_begin?(node) ||
+            begin_block_has_multiline_statements?(node) ||
+            contain_rescue_or_ensure?(node) ||
+            valid_context_using_only_begin?(node)
+        end
 
         def register_offense(node)
           offense_range = node.loc.begin
 
           add_offense(offense_range) do |corrector|
-            if any_ancestor_assignment_node?(node)
+            if node.parent&.assignment?
               replace_begin_with_statement(corrector, offense_range, node)
             else
-              corrector.remove(offense_range)
+              remove_begin(corrector, offense_range, node)
             end
 
             if use_modifier_form_after_multiline_begin_block?(node)
@@ -122,6 +164,14 @@ module RuboCop
           restore_removed_comments(corrector, offense_range, node, first_child)
         end
 
+        def remove_begin(corrector, offense_range, node)
+          if node.parent.respond_to?(:endless?) && node.parent.endless?
+            offense_range = range_with_surrounding_space(offense_range, newlines: true)
+          end
+
+          corrector.remove(offense_range)
+        end
+
         # Restore comments that occur between "begin" and "first_child".
         # These comments will be moved to above the assignment line.
         def restore_removed_comments(corrector, offense_range, node, first_child)
@@ -132,7 +182,7 @@ module RuboCop
         end
 
         def use_modifier_form_after_multiline_begin_block?(node)
-          return unless (parent = node.parent)
+          return false unless (parent = node.parent)
 
           node.multiline? && parent.if_type? && parent.modifier_form?
         end
@@ -153,13 +203,15 @@ module RuboCop
         end
 
         def begin_block_has_multiline_statements?(node)
+          return false unless node.parent
+
           node.children.count >= 2
         end
 
         def contain_rescue_or_ensure?(node)
           first_child = node.children.first
 
-          first_child.rescue_type? || first_child.ensure_type?
+          first_child.type?(:rescue, :ensure)
         end
 
         def valid_context_using_only_begin?(node)
@@ -170,11 +222,16 @@ module RuboCop
         end
 
         def valid_begin_assignment?(node)
-          any_ancestor_assignment_node?(node) && !node.children.one?
+          node.parent&.assignment? && !node.children.one?
         end
 
-        def any_ancestor_assignment_node?(node)
-          node.each_ancestor.any?(&:assignment?)
+        def inspect_branches(node)
+          node.branches.each do |branch|
+            next unless branch&.kwbegin_type?
+            next if branch.rescue_node || branch.ensure_node
+
+            register_offense(branch)
+          end
         end
       end
     end

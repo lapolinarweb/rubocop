@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Layout
-      # This cop checks that the closing brace in a hash literal is either
+      # Checks that the closing brace in a hash literal is either
       # on the same line as the last hash element, or a new line.
       #
       # When using the `symmetrical` (default) style:
@@ -28,66 +28,66 @@ module RuboCop
       #
       # @example EnforcedStyle: symmetrical (default)
       #
-      #     # bad
-      #     { a: 1,
-      #       b: 2
-      #     }
-      #     # bad
-      #     {
-      #       a: 1,
-      #       b: 2 }
+      #   # bad
+      #   { a: 1,
+      #     b: 2
+      #   }
+      #   # bad
+      #   {
+      #     a: 1,
+      #     b: 2 }
       #
-      #     # good
-      #     { a: 1,
-      #       b: 2 }
+      #   # good
+      #   { a: 1,
+      #     b: 2 }
       #
-      #     # good
-      #     {
-      #       a: 1,
-      #       b: 2
-      #     }
+      #   # good
+      #   {
+      #     a: 1,
+      #     b: 2
+      #   }
       #
       # @example EnforcedStyle: new_line
-      #     # bad
-      #     {
-      #       a: 1,
-      #       b: 2 }
+      #   # bad
+      #   {
+      #     a: 1,
+      #     b: 2 }
       #
-      #     # bad
-      #     { a: 1,
-      #       b: 2 }
+      #   # bad
+      #   { a: 1,
+      #     b: 2 }
       #
-      #     # good
-      #     { a: 1,
-      #       b: 2
-      #     }
+      #   # good
+      #   { a: 1,
+      #     b: 2
+      #   }
       #
-      #     # good
-      #     {
-      #       a: 1,
-      #       b: 2
-      #     }
+      #   # good
+      #   {
+      #     a: 1,
+      #     b: 2
+      #   }
       #
       # @example EnforcedStyle: same_line
-      #     # bad
-      #     { a: 1,
-      #       b: 2
-      #     }
+      #   # bad
+      #   { a: 1,
+      #     b: 2
+      #   }
       #
-      #     # bad
-      #     {
-      #       a: 1,
-      #       b: 2
-      #     }
+      #   # bad
+      #   {
+      #     a: 1,
+      #     b: 2
+      #   }
       #
-      #     # good
-      #     {
-      #       a: 1,
-      #       b: 2 }
+      #   # good
+      #   {
+      #     a: 1,
+      #     b: 2 }
       #
-      #     # good
-      #     { a: 1,
-      #       b: 2 }
+      #   # good
+      #   { a: 1,
+      #     b: 2 }
       class MultilineHashBraceLayout < Base
         include MultilineLiteralBraceLayout
         extend AutoCorrector

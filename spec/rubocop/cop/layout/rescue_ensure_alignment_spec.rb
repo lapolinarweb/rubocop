@@ -69,7 +69,7 @@ RSpec.describe RuboCop::Cop::Layout::RescueEnsureAlignment, :config do
             end
           RUBY
 
-          # Except for `rescue`, it will be aligned by `Layout/BeginEndAlignment` auto-correction.
+          # Except for `rescue`, it will be aligned by `Layout/BeginEndAlignment` autocorrection.
           expect_correction(<<~RUBY)
             x ||= begin
               1
@@ -118,7 +118,7 @@ RSpec.describe RuboCop::Cop::Layout::RescueEnsureAlignment, :config do
                   end
           RUBY
 
-          # Except for `rescue`, it will be aligned by `Layout/BeginEndAlignment` auto-correction.
+          # Except for `rescue`, it will be aligned by `Layout/BeginEndAlignment` autocorrection.
           expect_correction(<<~RUBY)
             x ||= begin
                     1
@@ -167,7 +167,7 @@ RSpec.describe RuboCop::Cop::Layout::RescueEnsureAlignment, :config do
             end
           RUBY
 
-          # Except for `rescue`, it will be aligned by `Layout/BeginEndAlignment` auto-correction.
+          # Except for `rescue`, it will be aligned by `Layout/BeginEndAlignment` autocorrection.
           expect_correction(<<~RUBY)
             x ||= begin
               1
@@ -256,6 +256,27 @@ RSpec.describe RuboCop::Cop::Layout::RescueEnsureAlignment, :config do
 
       expect_correction(<<~RUBY)
         module M
+          something
+        rescue
+            error
+        end
+      RUBY
+    end
+  end
+
+  context 'rescue with self class' do
+    it 'registers an offense when rescue used with class' do
+      expect_offense(<<~RUBY)
+        class << self
+          something
+            rescue
+            ^^^^^^ `rescue` at 3, 4 is not aligned with `class << self` at 1, 0.
+            error
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        class << self
           something
         rescue
             error
@@ -369,6 +390,27 @@ RSpec.describe RuboCop::Cop::Layout::RescueEnsureAlignment, :config do
     end
   end
 
+  context 'ensure with self class' do
+    it 'registers an offense when ensure used with self class' do
+      expect_offense(<<~RUBY)
+        class << self
+          something
+            ensure
+            ^^^^^^ `ensure` at 3, 4 is not aligned with `class << self` at 1, 0.
+            error
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        class << self
+          something
+        ensure
+            error
+        end
+      RUBY
+    end
+  end
+
   it 'accepts end being misaligned' do
     expect_no_offenses(<<~RUBY)
       def method1
@@ -430,7 +472,7 @@ RSpec.describe RuboCop::Cop::Layout::RescueEnsureAlignment, :config do
   end
 
   it 'accepts correctly aligned rescue in assigned begin-end block' do
-    expect_no_offenses(<<-RUBY)
+    expect_no_offenses(<<~RUBY)
       foo = begin
               bar
             rescue BazError
@@ -449,7 +491,17 @@ RSpec.describe RuboCop::Cop::Layout::RescueEnsureAlignment, :config do
     RUBY
   end
 
-  it 'accepts aligned rescue with do-end block that line break with leading dot for method calls' do
+  it 'accepts aligned rescue in do-end block with `.()` call' do
+    expect_no_offenses(<<~RUBY)
+      foo.() do |el|
+        el.to_s
+      rescue StandardError => _exception
+        next
+      end
+    RUBY
+  end
+
+  it 'accepts aligned `rescue` with do-end block that line break with leading dot for method calls' do
     expect_no_offenses(<<~RUBY)
       [1, 2, 3]
         .each do |el|
@@ -460,12 +512,202 @@ RSpec.describe RuboCop::Cop::Layout::RescueEnsureAlignment, :config do
     RUBY
   end
 
-  it 'accepts aligned rescue with do-end block that line break with trailing dot for method calls' do
+  it 'registers an offense and corrects indented `rescue` with do-end block that line break with leading dot for method calls' do
+    expect_offense(<<~RUBY)
+      [1, 2, 3]
+        .each do |el|
+          el.to_s
+            rescue StandardError => _exception
+            ^^^^^^ `rescue` at 4, 6 is not aligned with `.each do` at 2, 2.
+          next
+        end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      [1, 2, 3]
+        .each do |el|
+          el.to_s
+        rescue StandardError => _exception
+          next
+        end
+    RUBY
+  end
+
+  it 'registers an offense and corrects unindented `rescue` with do-end block that line break with leading dot for method calls' do
+    expect_offense(<<~RUBY)
+      [1, 2, 3]
+        .each do |el|
+          el.to_s
+      rescue StandardError => _exception
+      ^^^^^^ `rescue` at 4, 0 is not aligned with `.each do` at 2, 2.
+          next
+        end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      [1, 2, 3]
+        .each do |el|
+          el.to_s
+        rescue StandardError => _exception
+          next
+        end
+    RUBY
+  end
+
+  it 'accepts aligned `rescue` with do-end block that line break with trailing dot for method calls' do
     expect_no_offenses(<<~RUBY)
       [1, 2, 3].
         each do |el|
           el.to_s
         rescue StandardError => _exception
+          next
+        end
+    RUBY
+  end
+
+  it 'registers an offense and corrects indented `rescue` with do-end block that line break with trailing dot for method calls' do
+    expect_offense(<<~RUBY)
+      [1, 2, 3].
+        each do |el|
+          el.to_s
+            rescue StandardError => _exception
+            ^^^^^^ `rescue` at 4, 6 is not aligned with `each do` at 2, 2.
+          next
+        end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      [1, 2, 3].
+        each do |el|
+          el.to_s
+        rescue StandardError => _exception
+          next
+        end
+    RUBY
+  end
+
+  it 'registers an offense and corrects unindented `rescue` with do-end block that line break with trailing dot for method calls' do
+    expect_offense(<<~RUBY)
+      [1, 2, 3].
+        each do |el|
+          el.to_s
+      rescue StandardError => _exception
+      ^^^^^^ `rescue` at 4, 0 is not aligned with `each do` at 2, 2.
+          next
+        end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      [1, 2, 3].
+        each do |el|
+          el.to_s
+        rescue StandardError => _exception
+          next
+        end
+    RUBY
+  end
+
+  it 'accepts aligned `ensure` with do-end block that line break with leading dot for method calls' do
+    expect_no_offenses(<<~RUBY)
+      [1, 2, 3]
+        .each do |el|
+          el.to_s
+        ensure
+          next
+        end
+    RUBY
+  end
+
+  it 'registers an offense and corrects indented `ensure` with do-end block that line break with leading dot for method calls' do
+    expect_offense(<<~RUBY)
+      [1, 2, 3]
+        .each do |el|
+          el.to_s
+            ensure
+            ^^^^^^ `ensure` at 4, 6 is not aligned with `.each do` at 2, 2.
+          next
+        end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      [1, 2, 3]
+        .each do |el|
+          el.to_s
+        ensure
+          next
+        end
+    RUBY
+  end
+
+  it 'registers an offense and corrects unindented `ensure` with do-end block that line break with leading dot for method calls' do
+    expect_offense(<<~RUBY)
+      [1, 2, 3]
+        .each do |el|
+          el.to_s
+      ensure
+      ^^^^^^ `ensure` at 4, 0 is not aligned with `.each do` at 2, 2.
+          next
+        end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      [1, 2, 3]
+        .each do |el|
+          el.to_s
+        ensure
+          next
+        end
+    RUBY
+  end
+
+  it 'accepts aligned `ensure` with do-end block that line break with trailing dot for method calls' do
+    expect_no_offenses(<<~RUBY)
+      [1, 2, 3].
+        each do |el|
+          el.to_s
+        ensure
+          next
+        end
+    RUBY
+  end
+
+  it 'registers an offense and corrects indented `ensure` with do-end block that line break with trailing dot for method calls' do
+    expect_offense(<<~RUBY)
+      [1, 2, 3].
+        each do |el|
+          el.to_s
+            ensure
+            ^^^^^^ `ensure` at 4, 6 is not aligned with `each do` at 2, 2.
+          next
+        end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      [1, 2, 3].
+        each do |el|
+          el.to_s
+        ensure
+          next
+        end
+    RUBY
+  end
+
+  it 'registers an offense and corrects unindented `ensure` with do-end block that line break with trailing dot for method calls' do
+    expect_offense(<<~RUBY)
+      [1, 2, 3].
+        each do |el|
+          el.to_s
+      ensure
+      ^^^^^^ `ensure` at 4, 0 is not aligned with `each do` at 2, 2.
+          next
+        end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      [1, 2, 3].
+        each do |el|
+          el.to_s
+        ensure
           next
         end
     RUBY
@@ -593,6 +835,84 @@ RSpec.describe RuboCop::Cop::Layout::RescueEnsureAlignment, :config do
     end
   end
 
+  context 'Ruby 2.7', :ruby27 do
+    it 'accepts aligned rescue in do-end numbered block in a method' do
+      expect_no_offenses(<<~RUBY)
+        def foo
+          [1, 2, 3].each do
+            _1.to_s
+          rescue StandardError => _exception
+            next
+          end
+        end
+      RUBY
+    end
+
+    context 'rescue with do-end numbered block' do
+      it 'registers an offense' do
+        expect_offense(<<~RUBY)
+          def foo
+            [1, 2, 3].each do
+              _1.to_s
+          rescue StandardError => _exception
+          ^^^^^^ `rescue` at 4, 0 is not aligned with `[1, 2, 3].each do` at 2, 2.
+              next
+            end
+          end
+        RUBY
+
+        expect_correction(<<~RUBY)
+          def foo
+            [1, 2, 3].each do
+              _1.to_s
+            rescue StandardError => _exception
+              next
+            end
+          end
+        RUBY
+      end
+    end
+  end
+
+  context 'Ruby 3.4', :ruby34 do
+    it 'accepts aligned rescue in do-end `it` block in a method' do
+      expect_no_offenses(<<~RUBY)
+        def foo
+          [1, 2, 3].each do
+            it.to_s
+          rescue StandardError => _exception
+            next
+          end
+        end
+      RUBY
+    end
+
+    context 'rescue with do-end `it` block' do
+      it 'registers an offense' do
+        expect_offense(<<~RUBY)
+          def foo
+            [1, 2, 3].each do
+              it.to_s
+          rescue StandardError => _exception
+          ^^^^^^ `rescue` at 4, 0 is not aligned with `[1, 2, 3].each do` at 2, 2.
+              next
+            end
+          end
+        RUBY
+
+        expect_correction(<<~RUBY)
+          def foo
+            [1, 2, 3].each do
+              it.to_s
+            rescue StandardError => _exception
+              next
+            end
+          end
+        RUBY
+      end
+    end
+  end
+
   context 'rescue in do-end block assigned to local variable' do
     it 'registers an offense' do
       expect_offense(<<~RUBY)
@@ -673,6 +993,23 @@ RSpec.describe RuboCop::Cop::Layout::RescueEnsureAlignment, :config do
       expect_correction(<<~RUBY)
         CLASS = [].map do |_|
         rescue StandardError => _
+        end
+      RUBY
+    end
+  end
+
+  context 'rescue in do-end block assigned to object attribute' do
+    it 'registers an offense' do
+      expect_offense(<<~RUBY)
+        obj.attr = do_something do
+          rescue StandardError
+          ^^^^^^ `rescue` at 2, 2 is not aligned with `obj` at 1, 0.
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        obj.attr = do_something do
+        rescue StandardError
         end
       RUBY
     end
@@ -847,7 +1184,7 @@ RSpec.describe RuboCop::Cop::Layout::RescueEnsureAlignment, :config do
           RUBY
         end
 
-        it 'correct alignment' do
+        it 'corrects alignment' do
           expect_no_offenses(<<~RUBY)
             #{modifier} def test
               'foo'
@@ -878,7 +1215,7 @@ RSpec.describe RuboCop::Cop::Layout::RescueEnsureAlignment, :config do
           RUBY
         end
 
-        it 'correct alignment' do
+        it 'corrects alignment' do
           expect_no_offenses(<<~RUBY)
             #{modifier} def Test.test
               'foo'
@@ -909,7 +1246,7 @@ RSpec.describe RuboCop::Cop::Layout::RescueEnsureAlignment, :config do
           RUBY
         end
 
-        it 'correct alignment' do
+        it 'corrects alignment' do
           expect_no_offenses(<<~RUBY)
             #{modifier} def test
               'foo'
@@ -940,7 +1277,7 @@ RSpec.describe RuboCop::Cop::Layout::RescueEnsureAlignment, :config do
           RUBY
         end
 
-        it 'correct alignment' do
+        it 'corrects alignment' do
           expect_no_offenses(<<~RUBY)
             #{modifier} def Test.test
               'foo'
@@ -953,15 +1290,15 @@ RSpec.describe RuboCop::Cop::Layout::RescueEnsureAlignment, :config do
     end
 
     context 'with private modifier' do
-      include_examples 'access modifier', 'private'
+      it_behaves_like 'access modifier', 'private'
     end
 
     context 'with private_class_method modifier' do
-      include_examples 'access modifier', 'private_class_method'
+      it_behaves_like 'access modifier', 'private_class_method'
     end
 
     context 'with public_class_method modifier' do
-      include_examples 'access modifier', 'public_class_method'
+      it_behaves_like 'access modifier', 'public_class_method'
     end
   end
 

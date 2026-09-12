@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Layout
-      # This cop checks whether the end keywords of method definitions are
+      # Checks whether the end keywords of method definitions are
       # aligned properly.
       #
       # Two modes are supported through the EnforcedStyleAlignWith configuration
@@ -48,7 +48,7 @@ module RuboCop
         def on_send(node)
           return unless node.def_modifier?
 
-          method_def = node.each_descendant(:def, :defs).first
+          method_def = node.each_descendant(:any_def).first
           expr = node.source_range
 
           line_start = range_between(expr.begin_pos, method_def.loc.keyword.end_pos)
@@ -61,7 +61,7 @@ module RuboCop
         private
 
         def autocorrect(corrector, node)
-          if style == :start_of_line && node.parent && node.parent.send_type?
+          if style == :start_of_line && node.parent&.send_type?
             AlignmentCorrector.align_end(corrector, processed_source, node, node.parent)
           else
             AlignmentCorrector.align_end(corrector, processed_source, node, node)

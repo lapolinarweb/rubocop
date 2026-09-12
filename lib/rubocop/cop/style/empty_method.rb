@@ -3,13 +3,17 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for the formatting of empty method definitions.
+      # Checks for the formatting of empty method definitions.
       # By default it enforces empty method definitions to go on a single
       # line (compact style), but it can be configured to enforce the `end`
       # to go on its own line (expanded style).
       #
       # NOTE: A method definition is not considered empty if it contains
-      #       comments.
+      # comments.
+      #
+      # NOTE: Autocorrection will not be applied for the `compact` style
+      # if the resulting code is longer than the `Max` configuration for
+      # `Layout/LineLength`, but an offense will still be registered.
       #
       # @example EnforcedStyle: compact (default)
       #   # bad
@@ -48,10 +52,15 @@ module RuboCop
         MSG_EXPANDED = 'Put the `end` of empty method definitions on the next line.'
 
         def on_def(node)
-          return if node.body || comment_lines?(node)
-          return if correct_style?(node)
+          return if node.body || processed_source.contains_comment?(node.source_range)
+          return if correct_style?(node) || compact_style_disallowed?
 
-          add_offense(node) { |corrector| corrector.replace(node, corrected(node)) }
+          add_offense(node) do |corrector|
+            correction = corrected(node)
+            next if correction_exceeds_line_length?(correction)
+
+            corrector.replace(node, correction)
+          end
         end
         alias on_defs on_def
 
@@ -65,6 +74,12 @@ module RuboCop
           (compact_style? && compact?(node)) || (expanded_style? && expanded?(node))
         end
 
+        def compact_style_disallowed?
+          return false unless compact_style?
+
+          config.for_enabled_cop('Style/SingleLineMethods')['AllowIfMethodIsEmpty'] == false
+        end
+
         def corrected(node)
           scope = node.receiver ? "#{node.receiver.source}." : ''
           arguments = if node.arguments?
@@ -75,6 +90,10 @@ module RuboCop
           signature = [scope, node.method_name, arguments].join
 
           ["def #{signature}", 'end'].join(joint(node))
+        end
+
+        def correction_exceeds_line_length?(correction)
+          compact_style? && max_line_length && correction.size > max_line_length
         end
 
         def joint(node)

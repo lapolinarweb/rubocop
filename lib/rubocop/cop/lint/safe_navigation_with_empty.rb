@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Lint
-      # This cop checks to make sure safe navigation isn't used with `empty?` in
+      # Checks to make sure safe navigation isn't used with `empty?` in
       # a conditional.
       #
       # While the safe navigation operator is generally a good idea, when
@@ -26,7 +26,7 @@ module RuboCop
 
         # @!method safe_navigation_empty_in_conditional?(node)
         def_node_matcher :safe_navigation_empty_in_conditional?, <<~PATTERN
-          (if (csend (send ...) :empty?) ...)
+          (if (csend !csend :empty?) ...)
         PATTERN
 
         def on_if(node)

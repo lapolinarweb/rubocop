@@ -3,24 +3,29 @@
 module RuboCop
   module Cop
     module Layout
-      # Checks if the code style follows the ExpectedOrder configuration:
+      # Checks if the code style follows the `ExpectedOrder` configuration:
       #
       # `Categories` allows us to map macro names into a category.
       #
       # Consider an example of code style that covers the following order:
       #
-      # * Module inclusion (include, prepend, extend)
+      # * Module inclusion (`include`, `prepend`, `extend`)
       # * Constants
-      # * Associations (has_one, has_many)
-      # * Public attribute macros (attr_accessor, attr_writer, attr_reader)
-      # * Other macros (validates, validate)
+      # * Associations (`has_one`, `has_many`)
+      # * Public attribute macros (`attr_accessor`, `attr_writer`, `attr_reader`)
+      # * Other macros (`validates`, `validate`)
       # * Public class methods
       # * Initializer
       # * Public instance methods
-      # * Protected attribute macros (attr_accessor, attr_writer, attr_reader)
+      # * Protected attribute macros (`attr_accessor`, `attr_writer`, `attr_reader`)
       # * Protected instance methods
-      # * Private attribute macros (attr_accessor, attr_writer, attr_reader)
+      # * Private attribute macros (`attr_accessor`, `attr_writer`, `attr_reader`)
       # * Private instance methods
+      #
+      # NOTE: Simply enabling the cop with `Enabled: true` will not use
+      # the example order shown below.
+      # To enforce the order of macros like `attr_reader`,
+      # you must define both `ExpectedOrder` *and* `Categories`.
       #
       # You can configure the following order:
       #
@@ -44,7 +49,7 @@ module RuboCop
       #      - private_methods
       # ----
       #
-      # Instead of putting all literals in the expected order, is also
+      # Instead of putting all literals in the expected order, it is also
       # possible to group categories of macros. Visibility levels are handled
       # automatically.
       #
@@ -67,6 +72,43 @@ module RuboCop
       #        - prepend
       #        - extend
       # ----
+      #
+      # If you only set `ExpectedOrder`
+      # without defining `Categories`,
+      # macros such as `attr_reader` or `has_many`
+      # will not be recognized as part of a category, and their order will not be validated.
+      # For example, the following will NOT raise any offenses, even if the order is incorrect:
+      #
+      # [source,yaml]
+      # ----
+      # Layout/ClassStructure:
+      #   Enabled: true
+      #   ExpectedOrder:
+      #     - public_attribute_macros
+      #     - initializer
+      # ----
+      #
+      # To make it work as expected, you must also specify `Categories` like this:
+      #
+      # [source,yaml]
+      # ----
+      # Layout/ClassStructure:
+      #   ExpectedOrder:
+      #     - public_attribute_macros
+      #     - initializer
+      #   Categories:
+      #     attribute_macros:
+      #       - attr_reader
+      #       - attr_writer
+      #       - attr_accessor
+      # ----
+      #
+      # @safety
+      #   Autocorrection is unsafe because class methods and module inclusion
+      #   can behave differently, based on which methods or constants have
+      #   already been defined.
+      #
+      #   Constants will only be moved when they are assigned with literals.
       #
       # @example
       #   # bad
@@ -132,60 +174,81 @@ module RuboCop
       #     end
       #   end
       #
-      # @see https://rubystyle.guide#consistent-classes
       class ClassStructure < Base
         include VisibilityHelp
+        include CommentsHelp
         extend AutoCorrector
 
         HUMANIZED_NODE_TYPE = {
           casgn: :constants,
-          defs: :class_methods,
+          defs: :public_class_methods,
           def: :public_methods,
           sclass: :class_singleton
         }.freeze
 
         MSG = '`%<category>s` is supposed to appear before `%<previous>s`.'
 
-        # @!method dynamic_constant?(node)
-        def_node_matcher :dynamic_constant?, <<~PATTERN
-          (casgn nil? _ (send ...))
-        PATTERN
-
         # Validates code style on class declaration.
         # Add offense when find a node out of expected order.
+        # A node is out of order when its category is expected earlier than
+        # the highest-priority category seen so far, so that a low-priority element
+        # (even an unmovable one) cannot mask disorder among the elements that follow it.
+        # Consecutive elements of the same category are reported only once,
+        # on the first element of the group.
         def on_class(class_node)
-          previous = -1
-          walk_over_nested_class_definition(class_node) do |node, category|
-            index = expected_order.index(category)
-            if index < previous
-              message = format(MSG, category: category, previous: expected_order[previous])
-              add_offense(node, message: message) { |corrector| autocorrect(corrector, node) }
+          # Corrections are registered in reverse source order because an insertion at
+          # a given position lands before any insertion already made there;
+          # this keeps the source order of nodes moved before the same anchor.
+          out_of_order_elements(class_node).reverse_each do |node, category, previous|
+            message = format(MSG, category: category, previous: previous)
+
+            add_offense(node, message: message) do |corrector|
+              autocorrect(corrector, node)
             end
-            previous = index
           end
         end
+        alias on_sclass on_class
 
         private
 
-        # Autocorrect by swapping between two nodes autocorrecting them
-        def autocorrect(corrector, node)
-          previous = node.left_siblings.find do |sibling|
-            !ignore_for_autocorrect?(node, sibling)
+        def out_of_order_elements(class_node)
+          out_of_order = []
+          max_index = -1
+          previous_category = nil
+          walk_over_nested_class_definition(class_node) do |node, category|
+            index = expected_order.index(category)
+            if index < max_index && category != previous_category
+              out_of_order << [node, category, expected_order[max_index]]
+            end
+            max_index = index if index > max_index
+            previous_category = category
           end
-          return unless previous
+          out_of_order
+        end
 
-          current_range = source_range_with_comment(node)
-          previous_range = source_range_with_comment(previous)
+        # Autocorrect by moving the node, together with the contiguous group of
+        # same-category elements that follows it, to its expected position.
+        def autocorrect(corrector, node)
+          return if dynamic_constant?(node)
 
-          corrector.insert_before(previous_range, current_range.source)
-          corrector.remove(current_range)
+          anchor = insertion_anchor(node)
+          return unless anchor
+
+          anchor_range = source_range_with_comment(anchor)
+          # Reversed for the same reason offenses are registered in reverse source order:
+          # the last insertion at a position comes first.
+          movable_group(node).reverse_each do |group_node|
+            current_range = source_range_with_comment(group_node)
+            corrector.insert_before(anchor_range, current_range.source)
+            corrector.remove(current_range)
+          end
         end
 
         # Classifies a node to match with something in the {expected_order}
         # @param node to be analysed
         # @return String when the node type is a `:block` then
         #   {classify} recursively with the first children
-        # @return String when the node type is a `:send` then {find_category}
+        # @return String when the node type is a `:send` then {find_send_node_category}
         #   by method name
         # @return String otherwise trying to {humanize_node} of the current node
         def classify(node)
@@ -195,9 +258,10 @@ module RuboCop
           when :block
             classify(node.send_node)
           when :send
-            find_category(node)
+            find_send_node_category(node)
           else
-            humanize_node(node)
+            name = humanize_node(node)
+            find_category(name) || name
           end.to_s
         end
 
@@ -206,23 +270,29 @@ module RuboCop
         # also its visibility.
         # @param node to be analysed.
         # @return [String] with the key category or the `method_name` as string
-        def find_category(node)
+        def find_send_node_category(node)
           name = node.method_name.to_s
-          category, = categories.find { |_, names| names.include?(name) }
+          category = find_category(name)
           key = category || name
           visibility_key =
             if node.def_modifier?
-              "#{name}_methods"
+              name.end_with?('_class_method') ? "#{name}s" : "#{name}_methods"
             else
               "#{node_visibility(node)}_#{key}"
             end
           expected_order.include?(visibility_key) ? visibility_key : key
         end
 
+        def find_category(name)
+          name = name.to_s
+          category, = categories.find { |_, names| names.include?(name) }
+          category
+        end
+
         def walk_over_nested_class_definition(class_node)
           class_elements(class_node).each do |node|
             classification = classify(node)
-            next if ignore?(classification)
+            next if ignore?(node, classification)
 
             yield node, classification
           end
@@ -233,24 +303,28 @@ module RuboCop
 
           return [] unless class_def
 
-          if class_def.def_type? || class_def.send_type?
-            [class_def]
+          # Only a multi-statement body (`begin`/`kwbegin`) wraps several elements; any
+          # single statement (`def`, `send`, `csend`, `if`, ...) is itself the sole element.
+          # Exploding such a node into its children would yield non-node values (e.g. a
+          # method-name `Symbol` from a `csend`) and crash later checks.
+          if class_def.type?(:begin, :kwbegin)
+            flatten_class_elements(class_def)
           else
-            class_def.children.compact
+            [class_def]
           end
         end
 
-        def ignore?(classification)
+        def ignore?(node, classification)
           classification.nil? ||
             classification.to_s.end_with?('=') ||
-            expected_order.index(classification).nil?
+            expected_order.index(classification).nil? ||
+            private_constant?(node)
         end
 
-        def ignore_for_autocorrect?(node, sibling)
-          classification = classify(node)
-          sibling_class = classify(sibling)
-
-          ignore?(sibling_class) || classification == sibling_class || dynamic_constant?(node)
+        def flatten_class_elements(node)
+          node.children.compact.flat_map do |child|
+            child.kwbegin_type? ? flatten_class_elements(child) : [child]
+          end
         end
 
         def humanize_node(node)
@@ -262,26 +336,97 @@ module RuboCop
           HUMANIZED_NODE_TYPE[node.type] || node.type
         end
 
-        def source_range_with_comment(node)
-          begin_pos, end_pos =
-            if (node.def_type? && !node.method?(:initialize)) ||
-               (node.send_type? && node.def_modifier?)
-              start_node = find_visibility_start(node) || node
-              end_node = find_visibility_end(node) || node
-              [begin_pos_with_comment(start_node),
-               end_position_for(end_node) + 1]
-            else
-              [begin_pos_with_comment(node), end_position_for(node)]
-            end
+        def dynamic_constant?(node)
+          return false unless node.casgn_type? && node.namespace.nil?
 
-          Parser::Source::Range.new(buffer, begin_pos, end_pos)
+          expression = node.expression
+          expression.send_type? &&
+            !(expression.method?(:freeze) && expression.receiver&.recursive_basic_literal?)
+        end
+
+        # The expected position of the node: the first left sibling within its movable span
+        # whose category is expected to appear after the node's.
+        # Requiring a strictly later category keeps the order of elements sharing a category stable.
+        def insertion_anchor(node)
+          index = expected_order.index(classify(node))
+
+          movable_span(node).find do |sibling|
+            classification = classify(sibling)
+
+            !ignore?(sibling, classification) && expected_order.index(classification) > index
+          end
+        end
+
+        # The node together with the contiguous same-category right siblings,
+        # so that the whole group moves in a single pass while the offense is
+        # reported only on its first element.
+        def movable_group(node)
+          classification = classify(node)
+          group = [node]
+
+          node.right_siblings.each do |sibling|
+            break unless classify(sibling) == classification
+            break if ignore?(sibling, classification) || dynamic_constant?(sibling)
+
+            group << sibling
+          end
+
+          group
+        end
+
+        # Left siblings the node may be reordered with: those after the last barrier.
+        # Ignored elements within the span are simply jumped over.
+        def movable_span(node)
+          left_siblings = node.left_siblings
+          barrier_index = left_siblings.rindex { |sibling| barrier?(node, sibling) }
+
+          barrier_index ? left_siblings[(barrier_index + 1)..] : left_siblings
+        end
+
+        # A dynamic constant blocks every element: the cop does not move such constants,
+        # and letting other elements jump over one would change execution order just the same.
+        # A bare visibility modifier blocks only the elements whose meaning depends on
+        # the visibility section they appear in.
+        def barrier?(node, sibling)
+          dynamic_constant?(sibling) || (visibility_dependent?(node) && visibility_block?(sibling))
+        end
+
+        # Whether moving the node across a bare visibility modifier would change its meaning.
+        # This is the case for `def` nodes and for macros whose category is classified by visibility
+        # (e.g. `attr_accessor` when the expected order lists `private_attribute_macros`).
+        # Inline visibility (`private def foo`, `def self.foo`) travels with the node.
+        def visibility_dependent?(node)
+          return true if node.def_type?
+          return false if !node.send_type? || node.def_modifier?
+
+          key = find_category(node.method_name) || node.method_name.to_s
+
+          VISIBILITY_SCOPES.any? { |visibility| expected_order.include?("#{visibility}_#{key}") }
+        end
+
+        def private_constant?(node)
+          return false unless node.casgn_type? && node.namespace.nil?
+          return false unless (parent = node.parent)
+
+          parent.each_child_node(:send) do |child_node|
+            return true if marked_as_private_constant?(child_node, node.name)
+          end
+          false
+        end
+
+        def marked_as_private_constant?(node, name)
+          return false unless node.method?(:private_constant)
+
+          node.arguments.any? { |arg| arg.type?(:sym, :str) && arg.value == name }
         end
 
         def end_position_for(node)
-          heredoc = find_heredoc(node)
-          return heredoc.location.heredoc_end.end_pos + 1 if heredoc
+          if node.casgn_type?
+            heredoc = find_heredoc(node)
+            return heredoc.location.heredoc_end.end_pos + 1 if heredoc
+          end
 
-          end_line = buffer.line_for_position(node.loc.expression.end_pos)
+          end_line = buffer.line_for_position(node.source_range.end_pos)
           buffer.line_range(end_line).end_pos
         end
 
@@ -305,7 +450,7 @@ module RuboCop
         end
 
         def find_heredoc(node)
-          node.each_node(:str, :dstr, :xstr).find(&:heredoc?)
+          node.each_node(:any_str).find(&:heredoc?)
         end
 
         def buffer

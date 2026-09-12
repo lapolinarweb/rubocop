@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Lint
-      # This cop checks for classes and metaclasses without a body.
+      # Checks for classes and metaclasses without a body.
       # Such empty classes and metaclasses are typically an oversight or we should provide a comment
       # to be clearer what we're aiming for.
       #
@@ -85,7 +85,9 @@ module RuboCop
         private
 
         def body_or_allowed_comment_lines?(node)
-          node.body || (cop_config['AllowComments'] && comment_lines?(node))
+          return true if node.body
+
+          cop_config['AllowComments'] && processed_source.contains_comment?(node.source_range)
         end
       end
     end

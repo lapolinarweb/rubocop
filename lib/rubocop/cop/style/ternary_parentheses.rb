@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for the presence of parentheses around ternary
+      # Checks for the presence of parentheses around ternary
       # conditions. It is configurable to enforce inclusion or omission of
       # parentheses using `EnforcedStyle`. Omission is only enforced when
       # removing the parentheses won't cause a different behavior.
@@ -67,21 +67,35 @@ module RuboCop
         MSG_COMPLEX = '%<command>s parentheses for ternary expressions with complex conditions.'
 
         def on_if(node)
-          return if only_closing_parenthesis_is_last_line?(node.condition)
-          return unless node.ternary? && !infinite_loop? && offense?(node)
+          condition = node.condition
+
+          return if only_closing_parenthesis_is_last_line?(condition)
+          return if condition_as_parenthesized_one_line_pattern_matching?(condition)
+          return unless node.ternary? && offense?(node)
 
           message = message(node)
 
-          add_offense(node.source_range, message: message) do |corrector|
+          add_offense(node, message: message) do |corrector|
             autocorrect(corrector, node)
           end
         end
+
+        private
 
         def only_closing_parenthesis_is_last_line?(condition)
           condition.source.split("\n").last == ')'
         end
 
-        private
+        def condition_as_parenthesized_one_line_pattern_matching?(condition)
+          return false unless condition.parenthesized_call?
+          return false unless (first_child = condition.children.first)
+
+          if target_ruby_version >= 3.0
+            first_child.match_pattern_p_type?
+          else
+            first_child.match_pattern_type? # For Ruby 2.7's one line pattern matching AST.
+          end
+        end
 
         def autocorrect(corrector, node)
           condition = node.condition
@@ -98,6 +112,10 @@ module RuboCop
 
         def offense?(node)
           condition = node.condition
+
+          # A modifier `if`/`unless` requires the parentheses, e.g. `(a if b) ? x : y`,
+          # so removing them would change the meaning. Don't flag it.
+          return false if parenthesized_modifier_condition?(condition)
 
           if safe_assignment?(condition)
             !safe_assignment_allowed?
@@ -152,27 +170,19 @@ module RuboCop
           style == :require_parentheses_when_complex
         end
 
-        def redundant_parentheses_enabled?
-          @config.for_cop('Style/RedundantParentheses').fetch('Enabled')
-        end
-
         def parenthesized?(node)
           node.begin_type?
         end
 
-        # When this cop is configured to enforce parentheses and the
-        # `RedundantParentheses` cop is enabled, it will cause an infinite loop
-        # as they compete to add and remove the parentheses respectively.
-        def infinite_loop?
-          (require_parentheses? || require_parentheses_when_complex?) &&
-            redundant_parentheses_enabled?
+        def unsafe_autocorrect?(condition)
+          condition.children.any? { |child| below_ternary_precedence?(child) }
         end
 
-        def unsafe_autocorrect?(condition)
-          condition.children.any? do |child|
-            unparenthesized_method_call?(child) ||
-              below_ternary_precedence?(child)
-          end
+        def parenthesized_modifier_condition?(condition)
+          return false unless condition.begin_type?
+
+          inner = condition.children.first
+          inner&.if_type? && inner.modifier_form?
         end
 
         def unparenthesized_method_call?(child)
@@ -191,7 +201,7 @@ module RuboCop
         # @!method method_name(node)
         def_node_matcher :method_name, <<~PATTERN
           {($:defined? _ ...)
-           (send {_ nil?} $_ _ ...)}
+           (call {_ nil?} $_ _ ...)}
         PATTERN
 
         def correct_parenthesized(corrector, condition)
@@ -202,15 +212,38 @@ module RuboCop
           # If we remove the parentheses, we need to add a space or we'll
           # generate invalid code.
           corrector.insert_after(condition.loc.end, ' ') unless whitespace_after?(condition)
+
+          if (send_node = condition.child_nodes.last) && node_args_need_parens?(send_node)
+            parenthesize_condition_arguments(corrector, send_node)
+          end
         end
 
         def correct_unparenthesized(corrector, condition)
           corrector.wrap(condition, '(', ')')
         end
 
+        def parenthesize_condition_arguments(corrector, send_node)
+          range_start = send_node.defined_type? ? send_node.loc.keyword : send_node.loc.selector
+          opening_range = range_start.end.join(send_node.first_argument.source_range.begin)
+
+          corrector.replace(opening_range, '(')
+          corrector.insert_after(send_node.last_argument, ')')
+        end
+
         def whitespace_after?(node)
           last_token = processed_source.last_token_of(node)
           last_token.space_after?
+        end
+
+        def node_args_need_parens?(send_node)
+          return false unless node_with_args?(send_node)
+          return false if send_node.arguments.none? || send_node.parenthesized?
+
+          send_node.dot? || send_node.safe_navigation? || unparenthesized_method_call?(send_node)
+        end
+
+        def node_with_args?(node)
+          node.type?(:call, :defined?)
         end
       end
     end

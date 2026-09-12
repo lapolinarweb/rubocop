@@ -63,6 +63,14 @@ RSpec.describe RuboCop::Cop::Lint::OutOfRangeRegexpRef, :config do
     RUBY
   end
 
+  it 'does not register offense to a regexp with encoding option and valid references for numbered captures' do
+    expect_no_offenses(<<~RUBY)
+      /(foo)(bar)/u =~ "foobar"
+      puts $1
+      puts $2
+    RUBY
+  end
+
   # RuboCop does not know a value of variables that it will contain in the regexp literal.
   # For example, `/(?<foo>#{var}*)` is interpreted as `/(?<foo>*)`.
   # So it does not offense when variables are used in regexp literals.
@@ -130,6 +138,47 @@ RSpec.describe RuboCop::Cop::Lint::OutOfRangeRegexpRef, :config do
     RUBY
   end
 
+  it 'registers an offense for a reference following `match?` on an element access with a symbol key' do
+    expect_offense(<<~RUBY)
+      foo[:bar].match?(/(baz)/) && $1
+                                   ^^ $1 is out of range (no regexp capture groups detected).
+    RUBY
+  end
+
+  it 'registers an offense when an element access with a symbol key follows a regexp match' do
+    expect_offense(<<~RUBY)
+      /(foo)/ =~ bar
+      baz[:qux]
+      puts $2
+           ^^ $2 is out of range (1 regexp capture group detected).
+    RUBY
+  end
+
+  it 'registers an offense when an element access with an integer index follows a regexp match' do
+    expect_offense(<<~RUBY)
+      /(foo)/ =~ bar
+      baz[0]
+      puts $2
+           ^^ $2 is out of range (1 regexp capture group detected).
+    RUBY
+  end
+
+  it 'does not register an offense when an element access with a non-literal argument follows a regexp match' do
+    expect_no_offenses(<<~RUBY)
+      /(foo)/ =~ bar
+      baz[qux]
+      puts $2
+    RUBY
+  end
+
+  it 'does not register an offense when an element access with a string argument follows a regexp match' do
+    expect_no_offenses(<<~RUBY)
+      /(foo)/ =~ bar
+      baz['qux']
+      puts $2
+    RUBY
+  end
+
   it 'does not register an offense when in range references are used inside a when clause' do
     expect_no_offenses(<<~RUBY)
       case "foobar"
@@ -183,6 +232,198 @@ RSpec.describe RuboCop::Cop::Lint::OutOfRangeRegexpRef, :config do
         ^^ $3 is out of range (2 regexp capture groups detected).
       end
     RUBY
+  end
+
+  context 'pattern matching', :ruby27 do
+    context 'matching variable' do
+      it 'does not register an offense when in range references are used' do
+        expect_no_offenses(<<~RUBY)
+          case "foobar"
+          in /(foo)(bar)/
+            $2
+          end
+        RUBY
+      end
+
+      it 'registers an offense when out of range references are used' do
+        expect_offense(<<~RUBY)
+          case "foobar"
+          in /(foo)(bar)/
+            $3
+            ^^ $3 is out of range (2 regexp capture groups detected).
+          end
+        RUBY
+      end
+    end
+
+    context 'matching arrays' do
+      it 'uses the maximum number of captures with multiple patterns' do
+        expect_no_offenses(<<~RUBY)
+          case array
+          in [/(foo)(bar)/, /(bar)baz/]
+            $2
+          end
+        RUBY
+
+        expect_offense(<<~RUBY)
+          case array
+          in [/(foo)(bar)/, /(bar)baz/]
+            $3
+            ^^ $3 is out of range (2 regexp capture groups detected).
+          end
+        RUBY
+      end
+    end
+
+    context 'matching hashes' do
+      it 'does not register an offense when in range references are used' do
+        expect_no_offenses(<<~RUBY)
+          case hash
+          in a: /(foo)(bar)/
+            $2
+          end
+        RUBY
+      end
+
+      it 'registers an offense when out of range references are used' do
+        expect_offense(<<~RUBY)
+          case hash
+          in a: /(foo)(bar)/, b: /(bar)baz/
+            $3
+            ^^ $3 is out of range (2 regexp capture groups detected).
+          end
+        RUBY
+      end
+    end
+
+    context 'matching pins' do
+      it 'does not register an offense when in range references are used' do
+        expect_no_offenses(<<~RUBY)
+          a = 1
+          case array
+          in [^a, /(foo)(bar)/]
+            $2
+          end
+        RUBY
+      end
+
+      it 'registers an offense when out of range references are used' do
+        expect_offense(<<~RUBY)
+          a = 1
+          case array
+          in [^a, /(foo)(bar)/, /(foo)bar/]
+            $3
+            ^^ $3 is out of range (2 regexp capture groups detected).
+          end
+        RUBY
+      end
+    end
+
+    context 'matching with aliases' do
+      context 'variable aliases' do
+        it 'does not register an offense when in range references are used' do
+          expect_no_offenses(<<~RUBY)
+            case "foobar"
+            in /(foo)(bar)/ => x
+              $2
+            end
+          RUBY
+        end
+
+        it 'registers an offense when out of range references are used' do
+          expect_offense(<<~RUBY)
+            case "foobar"
+            in /(foo)(bar)/ => x
+              $3
+              ^^ $3 is out of range (2 regexp capture groups detected).
+            end
+          RUBY
+        end
+      end
+
+      context 'array aliases' do
+        it 'uses the maximum number of captures with multiple patterns' do
+          expect_no_offenses(<<~RUBY)
+            case array
+            in [/(foo)(bar)/, /(bar)baz/] => x
+              $2
+            end
+          RUBY
+
+          expect_offense(<<~RUBY)
+            case array
+            in [/(foo)(bar)/, /(bar)baz/] => x
+              $3
+              ^^ $3 is out of range (2 regexp capture groups detected).
+            end
+          RUBY
+        end
+      end
+    end
+
+    context 'matching alternatives' do
+      it 'does not register an offense when in range references are used' do
+        expect_no_offenses(<<~RUBY)
+          case "foobar"
+          in /(foo)(bar)/ | "foo"
+            $2
+          end
+        RUBY
+
+        expect_no_offenses(<<~RUBY)
+          case "foobar"
+          in /(foo)(bar)/ | "foo" => x
+            $2
+          end
+        RUBY
+      end
+
+      it 'registers an offense when out of range references are used' do
+        expect_offense(<<~RUBY)
+          case "foobar"
+          in /(foo)(bar)/ | "foo"
+            $3
+            ^^ $3 is out of range (2 regexp capture groups detected).
+          end
+        RUBY
+      end
+
+      it 'uses the maximum number of captures with multiple patterns' do
+        expect_no_offenses(<<~RUBY)
+          case "foobar"
+          in /(foo)baz/ | /(foo)(bar)/
+            $2
+          end
+        RUBY
+
+        expect_offense(<<~RUBY)
+          case "foobar"
+          in /(foo)baz/ | /(foo)(bar)/
+            $3
+            ^^ $3 is out of range (2 regexp capture groups detected).
+          end
+        RUBY
+      end
+    end
+
+    it 'only registers an offense when the regexp is matched as a literal' do
+      expect_no_offenses(<<~RUBY)
+        case some_string
+        in some_regexp
+          $2
+        end
+      RUBY
+    end
+
+    it 'ignores regexp when clause conditions contain interpolations' do
+      expect_offense(<<~'RUBY')
+        case array
+        in [/(foo)(bar)/, /#{var}/]
+          $3
+          ^^ $3 is out of range (2 regexp capture groups detected).
+        end
+      RUBY
+    end
   end
 
   context 'matching with `grep`' do
@@ -318,6 +559,30 @@ RSpec.describe RuboCop::Cop::Lint::OutOfRangeRegexpRef, :config do
       it 'only registers an offense when the regexp is matched as a literal' do
         expect_no_offenses(<<~RUBY)
           "foobar".#{method}(some_regexp)
+          puts $3
+        RUBY
+      end
+    end
+
+    context "matching with #{method} using safe navigation" do
+      it 'does not register an offense when in range references are used' do
+        expect_no_offenses(<<~RUBY)
+          "foobar"&.#{method}(/(foo)(bar)/)
+          puts $2
+        RUBY
+      end
+
+      it 'registers an offense when out of range references are used' do
+        expect_offense(<<~RUBY)
+          "foobar"&.#{method}(/(foo)(bar)/)
+          puts $3
+               ^^ $3 is out of range (2 regexp capture groups detected).
+        RUBY
+      end
+
+      it 'only registers an offense when the regexp is matched as a literal' do
+        expect_no_offenses(<<~RUBY)
+          "foobar"&.#{method}(some_regexp)
           puts $3
         RUBY
       end

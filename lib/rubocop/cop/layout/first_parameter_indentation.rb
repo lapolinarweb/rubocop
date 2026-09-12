@@ -3,12 +3,12 @@
 module RuboCop
   module Cop
     module Layout
-      # This cop checks the indentation of the first parameter in a method
+      # Checks the indentation of the first parameter in a method
       # definition. Parameters after the first one are checked by
-      # Layout/ParameterAlignment, not by this cop.
+      # `Layout/ParameterAlignment`, not by this cop.
       #
       # For indenting the first argument of method _calls_, check out
-      # Layout/FirstArgumentIndentation, which supports options related to
+      # `Layout/FirstArgumentIndentation`, which supports options related to
       # nesting that are irrelevant for method _definitions_.
       #
       # @example
@@ -53,12 +53,18 @@ module RuboCop
         def on_def(node)
           return if node.arguments.empty?
           return if node.arguments.loc.begin.nil?
+          return if autocorrect_incompatible_with_other_cops?(node)
 
           check(node)
         end
         alias on_defs on_def
 
         private
+
+        def autocorrect_incompatible_with_other_cops?(node)
+          node.arguments.size >= 2 &&
+            style == :align_parentheses && enforce_parameter_with_fixed_indentation?
+        end
 
         def autocorrect(corrector, node)
           AlignmentCorrector.correct(corrector, processed_source, node, @column_delta)
@@ -72,9 +78,9 @@ module RuboCop
           return if ignored_node?(def_node)
 
           left_parenthesis = def_node.arguments.loc.begin
-          first_elem = def_node.arguments.first
+          first_elem = def_node.first_argument
           return unless first_elem
-          return if first_elem.source_range.line == left_parenthesis.line
+          return if same_line?(first_elem, left_parenthesis)
 
           check_first(first_elem, left_parenthesis, nil, 0)
         end
@@ -94,6 +100,11 @@ module RuboCop
             configured_indentation_width: configured_indentation_width,
             base_description: base_description
           )
+        end
+
+        def enforce_parameter_with_fixed_indentation?
+          parameter_alignment_config = config.for_enabled_cop('Layout/ParameterAlignment')
+          parameter_alignment_config['EnforcedStyle'] == 'with_fixed_indentation'
         end
       end
     end

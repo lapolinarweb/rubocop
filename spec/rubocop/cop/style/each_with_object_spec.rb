@@ -24,6 +24,64 @@ RSpec.describe RuboCop::Cop::Style::EachWithObject, :config do
     RUBY
   end
 
+  it 'finds inject is safe navigation called with passed in and returned hash' do
+    expect_offense(<<~RUBY)
+      []&.inject({}) { |a, e| a }
+          ^^^^^^ Use `each_with_object` instead of `inject`.
+    RUBY
+
+    expect_correction(<<~RUBY)
+      []&.each_with_object({}) { |e, a|  }
+    RUBY
+  end
+
+  context 'Ruby 2.7', :ruby27 do
+    it 'finds inject and reduce with passed in and returned hash and numblock' do
+      expect_offense(<<~RUBY)
+        [].reduce({}) do
+           ^^^^^^ Use `each_with_object` instead of `reduce`.
+          _1[_2] = 1
+          _1
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        [].each_with_object({}) do
+          _2[_1] = 1
+          _2
+        end
+      RUBY
+    end
+
+    it 'finds `reduce` is called with passed in and returned hash and numblock' do
+      expect_offense(<<~RUBY)
+        []&.reduce({}) do
+            ^^^^^^ Use `each_with_object` instead of `reduce`.
+          _1[_2] = 1
+          _1
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        []&.each_with_object({}) do
+          _2[_1] = 1
+          _2
+        end
+      RUBY
+    end
+  end
+
+  context 'Ruby 3.4', :ruby34 do
+    it 'does not register an offense when using itblock with inject' do
+      expect_no_offenses(<<~RUBY)
+        [].inject({}) do
+          it[foo] = bar
+          it
+        end
+      RUBY
+    end
+  end
+
   it 'correctly autocorrects' do
     expect_offense(<<~RUBY)
       [1, 2, 3].inject({}) do |h, i|
@@ -50,6 +108,28 @@ RSpec.describe RuboCop::Cop::Style::EachWithObject, :config do
 
     expect_correction(<<~RUBY)
       [1, 2, 3].each_with_object({}) do |i, h|
+      end
+    RUBY
+  end
+
+  it 'ignores inject and reduce with block without arguments' do
+    expect_no_offenses(<<~RUBY)
+      [].inject({}) { $GLOBAL[rand] = rand; $GLOBAL }
+
+      [].reduce({}) do
+         $GLOBAL[rand] = rand
+         $GLOBAL
+      end
+    RUBY
+  end
+
+  it 'ignores inject and reduce with block with single argument' do
+    expect_no_offenses(<<~RUBY)
+      [].inject({}) { |h| h[rand] = rand; h }
+
+      [].reduce({}) do |h|
+         h[rand] = rand
+         h
       end
     RUBY
   end

@@ -1,10 +1,20 @@
 # frozen_string_literal: true
 
+# Lint/RedundantCopDisableDirective needs to be disabled so as
+# to be able to provide examples of rubocop:disable comments.
+# rubocop:disable-next Lint/RedundantCopDisableDirective -- the examples below read as real directives
 module RuboCop
   module Cop
     module Migration
-      # Check that cop names in rubocop:disable comments are given with
+      # Checks that cop names in rubocop:disable comments are given with
       # department name.
+      #
+      # @example
+      #   # bad
+      #   # rubocop:disable AbcSize
+      #
+      #   # good
+      #   # rubocop:disable Metrics/AbcSize
       class DepartmentName < Base
         include RangeHelp
         extend AutoCorrector
@@ -16,7 +26,7 @@ module RuboCop
         # The token that makes up a disable comment.
         # The allowed specification for comments after `# rubocop: disable` is
         # `DepartmentName/CopName` or` all`.
-        DISABLING_COPS_CONTENT_TOKEN = %r{[A-z]+/[A-z]+|all}.freeze
+        DISABLING_COPS_CONTENT_TOKEN = %r{[A-Za-z]+/[A-Za-z]+|all}.freeze
 
         def on_new_investigation
           processed_source.comments.each do |comment|
@@ -40,12 +50,8 @@ module RuboCop
 
         private
 
-        def disable_comment_offset
-          Regexp.last_match(1).length
-        end
-
         def check_cop_name(name, comment, offset)
-          start = comment.location.expression.begin_pos + offset
+          start = comment.source_range.begin_pos + offset
           range = range_between(start, start + name.length)
 
           add_offense(range) do |corrector|
@@ -67,7 +73,7 @@ module RuboCop
         end
 
         def contain_unexpected_character_for_department_name?(name)
-          name.match?(%r{[^A-z/, ]})
+          name.match?(%r{[^A-Za-z/, ]})
         end
 
         def qualified_legacy_cop_name(cop_name)

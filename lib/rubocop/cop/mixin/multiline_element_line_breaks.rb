@@ -1,8 +1,5 @@
 # frozen_string_literal: true
 
-# TEAM: backend_infra
-# WATCHERS: maxh
-
 module RuboCop
   module Cop
     # Common functionality for checking for a line break before each
@@ -10,8 +7,8 @@ module RuboCop
     module MultilineElementLineBreaks
       private
 
-      def check_line_breaks(_node, children)
-        return if all_on_same_line?(children)
+      def check_line_breaks(_node, children, ignore_last: false)
+        return if all_on_same_line?(children, ignore_last: ignore_last)
 
         last_seen_line = -1
         children.each do |child|
@@ -23,8 +20,10 @@ module RuboCop
         end
       end
 
-      def all_on_same_line?(nodes)
+      def all_on_same_line?(nodes, ignore_last: false)
         return true if nodes.empty?
+
+        return same_line?(nodes.first, nodes.last) if ignore_last
 
         nodes.first.first_line == nodes.last.last_line
       end

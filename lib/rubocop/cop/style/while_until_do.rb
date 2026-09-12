@@ -17,8 +17,6 @@ module RuboCop
       #     do_something(x.pop)
       #   end
       #
-      # @example
-      #
       #   # bad
       #   until x.empty? do
       #     do_something(x.pop)
@@ -35,6 +33,7 @@ module RuboCop
 
         def on_while(node)
           return unless node.multiline? && node.do?
+          return if same_line_body?(node)
 
           add_offense(node.loc.begin, message: format(MSG, keyword: node.keyword)) do |corrector|
             do_range = node.condition.source_range.end.join(node.loc.begin)
@@ -43,6 +42,12 @@ module RuboCop
           end
         end
         alias on_until on_while
+
+        private
+
+        def same_line_body?(node)
+          node.body && same_line?(node.loc.begin, node.body)
+        end
       end
     end
   end

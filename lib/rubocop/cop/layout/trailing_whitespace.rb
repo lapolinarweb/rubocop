@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Layout
-      # This cop looks for trailing whitespace in the source code.
+      # Looks for trailing whitespace in the source code.
       #
       # @example
       #   # The line in this example contains spaces after the 0.
@@ -47,9 +47,8 @@ module RuboCop
         MSG = 'Trailing whitespace detected.'
 
         def on_new_investigation
-          @heredocs = extract_heredocs(processed_source.ast)
           processed_source.lines.each_with_index do |line, index|
-            next unless line.end_with?(' ', "\t")
+            next unless line.match?(/[[:blank:]]\z/)
 
             process_line(line, index + 1)
           end
@@ -85,16 +84,16 @@ module RuboCop
         end
 
         def whitespace_is_indentation?(range, level)
-          range.source[/ +/].length <= level
+          range.source[/[[:blank:]]+/].length <= level
         end
 
         def whitespace_only?(range)
-          source = range_with_surrounding_space(range: range).source
+          source = range_with_surrounding_space(range).source
           source.start_with?("\n") && source.end_with?("\n")
         end
 
         def static?(heredoc)
-          heredoc.loc.expression.source.end_with? "'"
+          heredoc.source.end_with? "'"
         end
 
         def skip_heredoc?
@@ -102,21 +101,31 @@ module RuboCop
         end
 
         def find_heredoc(line_number)
-          @heredocs.each { |node, r| return node if r.include?(line_number) }
+          heredocs.each { |node, r| return node if r.include?(line_number) }
           nil
+        end
+
+        def heredocs
+          @heredocs ||= extract_heredocs(processed_source.ast)
         end
 
         def extract_heredocs(ast)
           return [] unless ast
 
-          ast.each_node(:str, :dstr, :xstr).select(&:heredoc?).map do |node|
+          heredocs = []
+          ast.each_node(:any_str) do |node|
+            next unless node.heredoc?
+
             body = node.location.heredoc_body
-            [node, body.first_line...body.last_line]
+            heredocs << [node, body.first_line...body.last_line]
           end
+          heredocs
         end
 
         def offense_range(lineno, line)
-          source_range(processed_source.buffer, lineno, (line.rstrip.length)...(line.length))
+          source_range(
+            processed_source.buffer, lineno, (line.sub(/[[:blank:]]+\z/, '').length)...(line.length)
+          )
         end
       end
     end

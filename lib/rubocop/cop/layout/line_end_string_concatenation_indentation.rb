@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Layout
-      # This cop checks the indentation of the next line after a line that ends with a string
+      # Checks the indentation of the next line after a line that ends with a string
       # literal and a backslash.
       #
       # If `EnforcedStyle: aligned` is set, the concatenated string parts shall be aligned with the
@@ -84,6 +84,8 @@ module RuboCop
           return unless strings_concatenated_with_backslash?(node)
 
           children = node.children
+          return if children.empty?
+
           if style == :aligned && !always_indented?(node)
             check_aligned(children, 1)
           else
@@ -100,7 +102,7 @@ module RuboCop
 
         def strings_concatenated_with_backslash?(dstr_node)
           dstr_node.multiline? &&
-            dstr_node.children.all? { |c| c.str_type? || c.dstr_type? } &&
+            dstr_node.children.all? { |c| c.type?(:str, :dstr) } &&
             dstr_node.children.none?(&:multiline?)
         end
 
@@ -110,7 +112,7 @@ module RuboCop
 
         def check_aligned(children, start_index)
           base_column = children[start_index - 1].loc.column
-          children[start_index..-1].each do |child|
+          children[start_index..].each do |child|
             @column_delta = base_column - child.loc.column
             add_offense_and_correction(child, MSG_ALIGN) if @column_delta != 0
             base_column = child.loc.column
@@ -125,7 +127,7 @@ module RuboCop
 
         def base_column(child)
           grandparent = child.parent.parent
-          if grandparent&.type == :pair
+          if grandparent&.pair_type?
             grandparent.loc.column
           else
             child.source_range.source_line =~ /\S/

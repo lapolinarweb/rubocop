@@ -2,32 +2,42 @@
 
 require 'digest/sha1'
 require 'find'
-require 'etc'
 require 'zlib'
+require_relative 'cache_config'
 
 module RuboCop
-  # Provides functionality for caching rubocop runs.
+  # Provides functionality for caching RuboCop runs.
   # @api private
   class ResultCache
-    NON_CHANGING = %i[color format formatters out debug fail_level auto_correct
+    NON_CHANGING = %i[color format formatters out debug display_time fail_level
+                      fix_layout autocorrect safe_autocorrect autocorrect_all
                       cache fail_fast stdin parallel].freeze
+
+    DL_EXTENSIONS = ::RbConfig::CONFIG
+                    .values_at('DLEXT', 'DLEXT2')
+                    .reject { |ext| !ext || ext.empty? }
+                    .map    { |ext| ".#{ext}" }
+                    .freeze
 
     # Remove old files so that the cache doesn't grow too big. When the
     # threshold MaxFilesInCache has been exceeded, the oldest 50% of all the
     # files in the cache are removed. The reason for removing so much is that
-    # cleaning should be done relatively seldom, since there is a slight risk
+    # removing should be done relatively seldom, since there is a slight risk
     # that some other RuboCop process was just about to read the file, when
     # there's parallel execution and the cache is shared.
-    def self.cleanup(config_store, verbose, cache_root = nil)
+    def self.cleanup(config_store, verbose, cache_root_override = nil)
       return if inhibit_cleanup # OPTIMIZE: For faster testing
+      return unless config_store.for_pwd.for_all_cops['MaxFilesInCache']
 
-      cache_root ||= cache_root(config_store)
-      return unless File.exist?(cache_root)
+      rubocop_cache_dir = cache_root(config_store, cache_root_override)
+      return unless File.exist?(rubocop_cache_dir)
 
-      files, dirs = Find.find(cache_root).partition { |path| File.file?(path) }
+      # We know the cache entries are 3 level deep, so globing
+      # for `*/*/*` only returns files.
+      files = Dir[File.join(rubocop_cache_dir, '*/*/*')]
       return unless requires_file_removal?(files.length, config_store)
 
-      remove_oldest_files(files, dirs, cache_root, verbose)
+      remove_oldest_files(files, rubocop_cache_dir, verbose)
     end
 
     class << self
@@ -42,55 +52,66 @@ module RuboCop
         file_count > 1 && file_count > config_store.for_pwd.for_all_cops['MaxFilesInCache']
       end
 
-      def remove_oldest_files(files, dirs, cache_root, verbose)
+      def remove_oldest_files(files, rubocop_cache_dir, verbose)
         # Add 1 to half the number of files, so that we remove the file if
         # there's only 1 left.
-        remove_count = 1 + (files.length / 2)
-        puts "Removing the #{remove_count} oldest files from #{cache_root}" if verbose
+        remove_count = (files.length / 2) + 1
+        puts "Removing the #{remove_count} oldest files from #{rubocop_cache_dir}" if verbose
         sorted = files.sort_by { |path| File.mtime(path) }
-        remove_files(sorted, dirs, remove_count)
+        remove_files(sorted, remove_count)
       rescue Errno::ENOENT
         # This can happen if parallel RuboCop invocations try to remove the
         # same files. No problem.
         puts $ERROR_INFO if verbose
       end
 
-      def remove_files(files, dirs, remove_count)
+      def remove_files(files, remove_count)
         # Batch file deletions, deleting over 130,000+ files will crash
         # File.delete.
         files[0, remove_count].each_slice(10_000).each do |files_slice|
           File.delete(*files_slice)
         end
-        dirs.each { |dir| Dir.rmdir(dir) if Dir["#{dir}/*"].empty? }
+
+        dirs = files.map { |f| File.dirname(f) }.uniq
+        until dirs.empty?
+          dirs.select! do |dir|
+            Dir.rmdir(dir)
+            true
+          rescue SystemCallError # ENOTEMPTY etc
+            false
+          end
+          dirs = dirs.map { |f| File.dirname(f) }.uniq
+        end
       end
     end
 
-    def self.cache_root(config_store)
-      root = ENV['RUBOCOP_CACHE_ROOT']
-      root ||= config_store.for_pwd.for_all_cops['CacheRootDirectory']
-      root ||= if ENV.key?('XDG_CACHE_HOME')
-                 # Include user ID in the path to make sure the user has write
-                 # access.
-                 File.join(ENV['XDG_CACHE_HOME'], Process.uid.to_s)
-               else
-                 File.join(ENV['HOME'], '.cache')
-               end
-      File.join(root, 'rubocop_cache')
+    def self.cache_root(config_store, cache_root_override = nil)
+      return @cache_root if @cache_root && !cache_root_override
+
+      result = CacheConfig.root_dir do
+        cache_root_override || config_store.for_pwd.for_all_cops['CacheRootDirectory']
+      end
+      @cache_root = result unless cache_root_override
+      result
     end
 
     def self.allow_symlinks_in_cache_location?(config_store)
       config_store.for_pwd.for_all_cops['AllowSymlinksInCacheRootDirectory']
     end
 
-    attr :path
+    def self.reset_config_cache
+      @cache_root = nil
+    end
 
-    def initialize(file, team, options, config_store, cache_root = nil)
-      cache_root ||= options[:cache_root]
-      cache_root ||= ResultCache.cache_root(config_store)
+    attr_reader :path
+
+    def initialize(file, team, options, config_store, cache_root_override = nil)
+      cache_root_override ||= options[:cache_root] if options[:cache_root]
+      rubocop_cache_dir = ResultCache.cache_root(config_store, cache_root_override)
       @allow_symlinks_in_cache_location =
         ResultCache.allow_symlinks_in_cache_location?(config_store)
-      @path = File.join(cache_root,
-                        rubocop_checksum,
+      @path = File.join(rubocop_cache_dir,
+                        self.class.source_checksum,
                         context_checksum(team, options),
                         file_checksum(file, config_store))
       @cached_data = CachedData.new(file)
@@ -102,7 +123,7 @@ module RuboCop
     end
 
     def valid?
-      File.exist?(@path)
+      !@checksum_unavailable && File.exist?(@path)
     end
 
     def load
@@ -111,6 +132,8 @@ module RuboCop
     end
 
     def save(offenses)
+      return if @checksum_unavailable
+
       dir = File.dirname(@path)
 
       begin
@@ -155,64 +178,86 @@ module RuboCop
     end
 
     def file_checksum(file, config_store)
+      stat = File.stat(file)
+      return unavailable_checksum unless stat.file?
+
       digester = Digest::SHA1.new
-      mode = File.stat(file).mode
-      digester.update("#{file}#{mode}#{config_store.for_file(file).signature}")
+      digester.update("#{file}#{stat.mode}#{config_store.for_file(file).signature}")
       digester.file(file)
       digester.hexdigest
     rescue Errno::ENOENT
-      # Spurious files that come and go should not cause a crash, at least not
-      # here.
+      # Spurious files that come and go should not cause a crash, at least not here.
+      unavailable_checksum
+    end
+
+    # Every file that fails to checksum shares this sentinel value, so the cache entry
+    # must be neither saved nor considered valid, or one file's cached results could be
+    # served as another's.
+    def unavailable_checksum
+      @checksum_unavailable = true
       '_'
     end
 
     class << self
-      attr_accessor :source_checksum, :inhibit_cleanup
-    end
+      attr_accessor :inhibit_cleanup
 
-    # The checksum of the rubocop program running the inspection.
-    def rubocop_checksum
-      ResultCache.source_checksum ||=
-        begin
+      # The checksum of the RuboCop program running the inspection.
+      def source_checksum
+        @source_checksum ||= begin
           digest = Digest::SHA1.new
           rubocop_extra_features
             .select { |path| File.file?(path) }
             .sort!
             .each do |path|
-              content = File.open(path, 'rb', &:read)
-              digest << Zlib.crc32(content).to_s # mtime not reliable
+              digest << digest(path)
             end
           digest << RuboCop::Version::STRING << RuboCop::AST::Version::STRING
           digest.hexdigest
         end
-    end
+      end
 
-    def rubocop_extra_features
-      lib_root = File.join(File.dirname(__FILE__), '..')
-      exe_root = File.join(lib_root, '..', 'exe')
+      # Return a hash of the options given at invocation, minus the ones that have
+      # no effect on which offenses and disabled line ranges are found, and thus
+      # don't affect caching.
+      def relevant_options_digest(options)
+        @relevant_options_digest ||= {}
+        @relevant_options_digest[options] ||= begin
+          options = options.reject { |key, _| NON_CHANGING.include?(key) }
+          options.to_s.gsub(/[^a-z]+/i, '_')
+        end
+      end
 
-      # These are all the files we have `require`d plus everything in the
-      # exe directory. A change to any of them could affect the cop output
-      # so we include them in the cache hash.
-      source_files = $LOADED_FEATURES + Find.find(exe_root).to_a
-      source_files -= ResultCache.rubocop_required_features # Rely on gem versions
+      private
 
-      source_files
-    end
+      def digest(path)
+        content = if path.end_with?(*DL_EXTENSIONS)
+                    # Shared libraries often contain timestamps of when
+                    # they were compiled and other non-stable data.
+                    File.basename(path)
+                  else
+                    File.binread(path) # mtime not reliable
+                  end
+        Zlib.crc32(content).to_s
+      end
 
-    # Return a hash of the options given at invocation, minus the ones that have
-    # no effect on which offenses and disabled line ranges are found, and thus
-    # don't affect caching.
-    def relevant_options_digest(options)
-      options = options.reject { |key, _| NON_CHANGING.include?(key) }
-      options.to_s.gsub(/[^a-z]+/i, '_')
-    end
+      def rubocop_extra_features
+        lib_root = File.join(File.dirname(__FILE__), '..')
+        exe_root = File.join(lib_root, '..', 'exe')
 
-    # The external dependency checksums are cached per RuboCop team so that
-    # the checksums don't need to be recomputed for each file.
-    def team_checksum(team)
-      @checksum_by_team ||= {}.compare_by_identity
-      @checksum_by_team[team] ||= team.external_dependency_checksum
+        # Make sure to use an absolute path to prevent errors on Windows
+        # when traversing the relative paths with symlinks.
+        exe_root = File.absolute_path(exe_root)
+
+        # These are all the files we have `require`d, all of RuboCop's own files whether loaded
+        # or not (cops are loaded lazily, so which of them are in `$LOADED_FEATURES` varies from
+        # run to run), plus everything in the exe directory. A change to any of them could affect
+        # the cop output so we include them in the cache hash.
+        rubocop_lib_files = Dir[File.join(File.absolute_path(lib_root), 'rubocop', '**', '*.rb')]
+        source_files = $LOADED_FEATURES | rubocop_lib_files | Find.find(exe_root).to_a
+        source_files -= ResultCache.rubocop_required_features # Rely on gem versions
+
+        source_files
+      end
     end
 
     # We combine team and options into a single "context" checksum to avoid
@@ -220,7 +265,8 @@ module RuboCop
     # This context is for anything that's not (1) the RuboCop executable
     # checksum or (2) the inspected file checksum.
     def context_checksum(team, options)
-      Digest::SHA1.hexdigest([team_checksum(team), relevant_options_digest(options)].join)
+      keys = [team.external_dependency_checksum, self.class.relevant_options_digest(options)]
+      Digest::SHA1.hexdigest(keys.join)
     end
   end
 end

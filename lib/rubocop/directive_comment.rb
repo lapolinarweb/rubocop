@@ -6,19 +6,50 @@ module RuboCop
   # cops it contains.
   class DirectiveComment
     # @api private
-    REDUNDANT_DIRECTIVE_COP_DEPARTMENT = 'Lint'
+    LINT_DEPARTMENT = 'Lint'
     # @api private
-    REDUNDANT_DIRECTIVE_COP = "#{REDUNDANT_DIRECTIVE_COP_DEPARTMENT}/RedundantCopDisableDirective"
+    LINT_REDUNDANT_DIRECTIVE_COP = "#{LINT_DEPARTMENT}/RedundantCopDisableDirective"
     # @api private
-    COP_NAME_PATTERN = '([A-Z]\w+/)*(?:[A-Z]\w+)'
+    LINT_SYNTAX_COP = "#{LINT_DEPARTMENT}/Syntax"
+    # @api private
+    STYLE_DISABLE_COPS_DIRECTIVE_COP = 'Style/DisableCopsWithinSourceCodeDirective'
+    # @api private
+    COP_NAME_PATTERN = '([A-Za-z]\w+/)*(?:[A-Za-z]\w+)'
+    # @api private
+    COP_NAME_PATTERN_NC = '(?:[A-Za-z]\w+/)*[A-Za-z]\w+'
+    # @api private
+    COP_NAMES_PATTERN_NC = "(?:#{COP_NAME_PATTERN_NC} , )*#{COP_NAME_PATTERN_NC}"
     # @api private
     COP_NAMES_PATTERN = "(?:#{COP_NAME_PATTERN} , )*#{COP_NAME_PATTERN}"
     # @api private
     COPS_PATTERN = "(all|#{COP_NAMES_PATTERN})"
     # @api private
+    PUSH_POP_ARGS_PATTERN = "([+\\-]#{COP_NAME_PATTERN_NC}(?:\\s+[+\\-]#{COP_NAME_PATTERN_NC})*)"
+    # @api private
+    AVAILABLE_MODES = %w[disable enable todo push pop disable-next todo-next enable-next
+                         next].freeze
+    # @api private
+    # Longest first, so a `-next` mode is not matched as its prefix
+    # (`-` is a word boundary).
+    MODES_PATTERN = AVAILABLE_MODES.sort_by { |mode| -mode.length }.join('|').freeze
+    # @api private
+    DIRECTIVE_MARKER_PATTERN = '# rubocop : '
+    # @api private
+    DIRECTIVE_MARKER_REGEXP = Regexp.new(DIRECTIVE_MARKER_PATTERN.gsub(' ', '\s*'))
+    # @api private
+    DIRECTIVE_HEADER_PATTERN = "#{DIRECTIVE_MARKER_PATTERN}((?:#{MODES_PATTERN}))\\b"
+    # @api private
     DIRECTIVE_COMMENT_REGEXP = Regexp.new(
-      "# rubocop : ((?:disable|enable|todo))\\b #{COPS_PATTERN}"
+      "#{DIRECTIVE_HEADER_PATTERN}(?:\\s+#{COPS_PATTERN}|\\s+#{PUSH_POP_ARGS_PATTERN})?"
         .gsub(' ', '\s*')
+    )
+    # @api private
+    SIGNED_OPERATIONS = %w[+ -].freeze
+    # @api private
+    TRAILING_COMMENT_MARKER = '--'
+    # @api private
+    MALFORMED_DIRECTIVE_WITHOUT_COP_NAME_REGEXP = Regexp.new(
+      "\\A#{DIRECTIVE_HEADER_PATTERN}\\s*\\z".gsub(' ', '\s*')
     )
 
     def self.before_comment(line)
@@ -30,12 +61,57 @@ module RuboCop
     def initialize(comment, cop_registry = Cop::Registry.global)
       @comment = comment
       @cop_registry = cop_registry
+      match_data = comment.text.match(DIRECTIVE_COMMENT_REGEXP)
+      @match_data = match_data&.pre_match&.match?(/\A#\s*\z/) ? nil : match_data
       @mode, @cops = match_captures
+    end
+
+    # Checks if the comment starts with `# rubocop:` marker
+    def start_with_marker?
+      comment.text.start_with?(DIRECTIVE_MARKER_REGEXP)
+    end
+
+    # Checks if the comment is malformed as a `# rubocop:` directive
+    def malformed?
+      return true if !start_with_marker? || @match_data.nil?
+      return true if missing_cop_name? || invalid_signed_args?
+
+      tail = @match_data.post_match.lstrip
+      !(tail.empty? || tail.start_with?(TRAILING_COMMENT_MARKER))
+    end
+
+    # Checks if the directive comment is missing a cop name
+    def missing_cop_name?
+      return false if push? || pop?
+
+      MALFORMED_DIRECTIVE_WITHOUT_COP_NAME_REGEXP.match?(comment.text)
+    end
+
+    # `push` and `next` arguments must be `+`/`-` prefixed cop names, and
+    # `pop` takes no arguments at all.
+    def invalid_signed_args?
+      return cops ? !cops.empty? : false if pop?
+      return false unless push? || next?
+      return false unless cops
+
+      cops.split.any? { |cop_spec| !cop_spec.start_with?('+', '-') }
+    end
+
+    # The text of the directive's optional `--` trailing comment, or `nil`
+    # when there is none.
+    def reason
+      return unless @match_data
+
+      tail = @match_data.post_match.lstrip
+      return unless tail.start_with?(TRAILING_COMMENT_MARKER)
+
+      reason = tail.delete_prefix(TRAILING_COMMENT_MARKER).strip
+      reason unless reason.empty?
     end
 
     # Checks if this directive relates to single line
     def single_line?
-      !self.class.before_comment(comment.text).empty?
+      !comment.text.start_with?(DIRECTIVE_COMMENT_REGEXP)
     end
 
     # Checks if this directive contains all the given cop names
@@ -45,26 +121,77 @@ module RuboCop
 
     def range
       match = comment.text.match(DIRECTIVE_COMMENT_REGEXP)
-      begin_pos = comment.loc.expression.begin_pos
+      begin_pos = comment.source_range.begin_pos
       Parser::Source::Range.new(
-        comment.loc.expression.source_buffer, begin_pos + match.begin(0), begin_pos + match.end(0)
+        comment.source_range.source_buffer, begin_pos + match.begin(0), begin_pos + match.end(0)
       )
+    end
+
+    # `#range` stops at the cop list, so a `--` reason sits outside it. The reason documents the
+    # directive and means nothing once the directive is gone, so removal has to cover both. Any
+    # other trailing text is an ordinary comment and is left alone.
+    def range_with_reason
+      directive_range = range
+      trailing = Parser::Source::Range.new(
+        comment.source_range.source_buffer, directive_range.end_pos, comment.source_range.end_pos
+      )
+      return directive_range unless trailing.source.lstrip.start_with?(TRAILING_COMMENT_MARKER)
+
+      directive_range.with(end_pos: comment.source_range.end_pos)
     end
 
     # Returns match captures to directive comment pattern
     def match_captures
-      @match_captures ||= comment.text.match(DIRECTIVE_COMMENT_REGEXP)&.captures
+      @match_captures ||= @match_data && begin
+        captures = @match_data.captures
+        mode = captures[0]
+        # COPS_PATTERN is at captures[1], PUSH_POP_ARGS_PATTERN is at captures[4]
+        cops = captures[1] || captures[4]
+        [mode, cops]
+      end
     end
 
     # Checks if this directive disables cops
     def disabled?
-      %w[disable todo].include?(mode)
+      %w[disable todo].include?(mode) || disable_next?
+    end
+
+    # Checks if this directive disables cops for the next statement only
+    def disable_next?
+      %w[disable-next todo-next].include?(mode)
     end
 
     # Checks if this directive enables cops
     def enabled?
-      mode == 'enable'
+      mode == 'enable' || enable_next?
     end
+
+    # Checks if this directive enables cops for the next statement only
+    def enable_next?
+      mode == 'enable-next'
+    end
+
+    # Checks if this directive is a push
+    def push?
+      mode == 'push'
+    end
+
+    # Checks if this directive is a pop
+    def pop?
+      mode == 'pop'
+    end
+
+    # Checks if this directive toggles cops for the next statement only
+    def next?
+      mode == 'next'
+    end
+
+    # Returns the `+`/`-` arguments of a `push` or `next` directive as a hash
+    # of operations to cop names
+    def signed_args
+      @signed_args ||= parse_signed_args
+    end
+    alias push_args signed_args
 
     # Checks if this directive enables all cops
     def enabled_all?
@@ -86,10 +213,15 @@ module RuboCop
       @cop_names ||= all_cops? ? all_cop_names : parsed_cop_names
     end
 
+    # Returns an array of cops for this directive comment, without resolving departments
+    def raw_cop_names
+      @raw_cop_names ||= (cops || '').split(/,\s*/)
+    end
+
     # Returns array of specified in this directive department names
     # when all department disabled
     def department_names
-      splitted_cops_string.select { |cop| department?(cop) }
+      raw_cop_names.select { |cop| department?(cop) }
     end
 
     # Checks if directive departments include cop
@@ -99,28 +231,27 @@ module RuboCop
 
     # Checks if cop department has already used in directive comment
     def overridden_by_department?(cop)
-      in_directive_department?(cop) && splitted_cops_string.include?(cop)
+      in_directive_department?(cop) && raw_cop_names.include?(cop)
     end
 
     def directive_count
-      splitted_cops_string.count
+      return signed_args.values.sum(&:count) if push? || next?
+
+      raw_cop_names.count
     end
 
     # Returns line number for directive
     def line_number
-      comment.loc.expression.line
+      comment.source_range.line
     end
 
     private
 
-    def splitted_cops_string
-      (cops || '').split(/,\s*/)
-    end
-
     def parsed_cop_names
-      splitted_cops_string.map do |name|
+      cops = raw_cop_names.map do |name|
         department?(name) ? cop_names_for_department(name) : name
       end.flatten
+      cops - [LINT_SYNTAX_COP]
     end
 
     def department?(name)
@@ -128,17 +259,31 @@ module RuboCop
     end
 
     def all_cop_names
-      exclude_redundant_directive_cop(cop_registry.names)
+      exclude_lint_department_cops(cop_registry.names)
     end
 
     def cop_names_for_department(department)
       names = cop_registry.names_for_department(department)
-      has_redundant_directive_cop = department == REDUNDANT_DIRECTIVE_COP_DEPARTMENT
-      has_redundant_directive_cop ? exclude_redundant_directive_cop(names) : names
+      department == LINT_DEPARTMENT ? exclude_lint_department_cops(names) : names
     end
 
-    def exclude_redundant_directive_cop(cops)
-      cops - [REDUNDANT_DIRECTIVE_COP]
+    def exclude_lint_department_cops(cops)
+      cops - [LINT_REDUNDANT_DIRECTIVE_COP, LINT_SYNTAX_COP]
+    end
+
+    def parse_signed_args
+      return {} unless (push? || next?) && cops
+
+      args = {}
+      cops.split.each do |cop_spec|
+        op = cop_spec[0]
+        cop_name = cop_spec[1..]
+        next unless SIGNED_OPERATIONS.include?(op)
+
+        args[op] ||= []
+        args[op] << cop_name
+      end
+      args
     end
   end
 end

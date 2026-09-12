@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-return unless RUBY_VERSION >= '2.6'
-
 require_relative '../../tasks/changelog'
 
 RSpec.describe Changelog do
@@ -9,6 +7,15 @@ RSpec.describe Changelog do
     list = entries.to_h { |e| [e.path, e.content] }
     described_class.new(content: <<~CHANGELOG, entries: list)
       # Change log
+
+      <!---
+        Do NOT edit this CHANGELOG.md file by hand directly, as it is automatically updated.
+
+        Please add an entry file to the https://github.com/rubocop/rubocop/blob/master/changelog/
+        named `{change_type}_{change_description}.md` if the new code introduces user-observable changes.
+
+        See https://github.com/rubocop/rubocop/blob/master/CONTRIBUTING.md#changelog-entry-format for details.
+      -->
 
       ## master (unreleased)
 
@@ -40,11 +47,18 @@ RSpec.describe Changelog do
     CHANGELOG
   end
 
+  let(:duplicate_entry) do
+    described_class::Entry.new(
+      type: :fix, body: 'Duplicate contributor name entry', user: 'johndoe'
+    )
+  end
+
   let(:entries) do
     %i[fix new fix].map.with_index do |type, i|
-      Changelog::Entry.new(type: type,
-                           body: "Do something cool#{'x' * i}", user: "johndoe#{'x' * i}")
-    end
+      described_class::Entry.new(
+        type: type, body: "Do something cool#{'x' * i}", user: "johndoe#{'x' * i}"
+      )
+    end << duplicate_entry
   end
 
   describe Changelog::Entry do
@@ -130,6 +144,27 @@ RSpec.describe Changelog do
         it { is_expected.to eq('Fix something') }
       end
     end
+
+    describe '#path' do
+      it 'generates correct file name' do
+        body = 'Add new `Lint/UselessRescue` cop'
+        entry = described_class.new(type: :new, body: body, user: github_user)
+        expect(entry.path).to match(%r{\Achangelog/new_add_new_lint_useless_rescue_cop_\d+.md\z})
+      end
+
+      it 'does not repeat the type when the body starts with it' do
+        body = 'Fix a false positive for `Lint/FloatComparison`'
+        entry = described_class.new(type: :fix, body: body, user: github_user)
+        expect(entry.path).to include('fix_a_false_positive_for_lint_float_comparison')
+        expect(entry.path).not_to include('fix_fix')
+      end
+
+      it 'keeps the cop name even when it appears after a long description' do
+        body = 'Fix a false positive for `Layout/EmptyLinesAroundExceptionHandlingKeywords`'
+        entry = described_class.new(type: :fix, body: body, user: github_user)
+        expect(entry.path).to include('layout_empty_lines_around_exception_handling_keywords')
+      end
+    end
   end
 
   it 'parses correctly' do
@@ -148,6 +183,7 @@ RSpec.describe Changelog do
 
       * [#x](https://github.com/rubocop/rubocop/pull/x): Do something cool. ([@johndoe][])
       * [#x](https://github.com/rubocop/rubocop/pull/x): Do something coolxx. ([@johndoexx][])
+      * [#x](https://github.com/rubocop/rubocop/pull/x): Duplicate contributor name entry. ([@johndoe][])
     CHANGELOG
 
     expect(changelog.new_contributor_lines).to eq(

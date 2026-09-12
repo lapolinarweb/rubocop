@@ -3,30 +3,44 @@
 module RuboCop
   module Cop
     module Lint
-      # This cop checks for top level return with arguments. If there is a
+      # Checks for top level return with arguments. If there is a
       # top-level return statement with an argument, then the argument is
       # always ignored. This is detected automatically since Ruby 2.7.
       #
       # @example
+      #   # bad
+      #   return 1
       #
-      #   # Detected since Ruby 2.7
-      #   return 1 # 1 is always ignored.
+      #   # good
+      #   return
       class TopLevelReturnWithArgument < Base
-        # This cop works by validating the ancestors of the return node. A
-        # top-level return node's ancestors should not be of block, def, or
-        # defs type.
+        extend AutoCorrector
 
         MSG = 'Top level return with argument detected.'
 
         def on_return(return_node)
-          add_offense(return_node) if return_node.arguments? && ancestors_valid?(return_node)
+          return unless top_level_return_with_any_argument?(return_node)
+
+          add_offense(return_node) do |corrector|
+            remove_arguments(corrector, return_node)
+          end
         end
 
         private
 
-        def ancestors_valid?(return_node)
-          prohibited_ancestors = return_node.each_ancestor(:block, :def, :defs)
-          prohibited_ancestors.none?
+        def top_level_return_with_any_argument?(return_node)
+          top_level_return?(return_node) && return_node.arguments?
+        end
+
+        def remove_arguments(corrector, return_node)
+          corrector.replace(return_node, 'return')
+        end
+
+        # This cop works by validating the ancestors of the return node. A
+        # top-level return node's ancestors should not be of block, def, or
+        # defs type.
+        def top_level_return?(return_node)
+          return_node.each_ancestor(:any_block, :any_def).none?
         end
       end
     end

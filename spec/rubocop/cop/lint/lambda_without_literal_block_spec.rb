@@ -47,4 +47,21 @@ RSpec.describe RuboCop::Cop::Lint::LambdaWithoutLiteralBlock, :config do
       lambda.call
     RUBY
   end
+
+  it 'does not register an offense when using lambda with a symbol proc' do
+    expect_no_offenses(<<~RUBY)
+      lambda(&:do_something)
+    RUBY
+  end
+
+  it 'registers an offense and keeps safe navigation in the block argument when correcting' do
+    expect_offense(<<~RUBY)
+      lambda(&obj&.foo)
+      ^^^^^^^^^^^^^^^^^ lambda without a literal block is deprecated; use the proc without lambda instead.
+    RUBY
+
+    expect_correction(<<~RUBY)
+      obj&.foo
+    RUBY
+  end
 end

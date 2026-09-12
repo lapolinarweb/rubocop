@@ -3,13 +3,30 @@
 module RuboCop
   module Cop
     module Lint
-      # This cop checks for the presence of constructors and lifecycle callbacks
+      # Checks for the presence of constructors and lifecycle callbacks
       # without calls to `super`.
       #
       # This cop does not consider `method_missing` (and `respond_to_missing?`)
       # because in some cases it makes sense to overtake what is considered a
       # missing method. In other cases, the theoretical ideal handling could be
       # challenging or verbose for no actual gain.
+      #
+      # Autocorrection is not supported because the position of `super` cannot be
+      # determined automatically.
+      #
+      # `Object` and `BasicObject` are allowed by this cop because of their
+      # stateless nature. However, sometimes you might want to allow other parent
+      # classes from this cop, for example in the case of an abstract class that is
+      # not meant to be called with `super`. In those cases, you can use the
+      # `AllowedParentClasses` option to specify which classes should be allowed
+      # *in addition to* `Object` and `BasicObject`.
+      #
+      # When `AllCops/UseProjectIndex` is enabled and the `rubydex` gem is installed,
+      # the constructor check additionally consults the project-wide index: if the
+      # class' entire ancestry is resolvable and no ancestor defines `initialize`,
+      # no offense is registered, since `super` would only reach the no-op
+      # `Object#initialize`. Classes whose ancestry contains an unresolvable
+      # superclass or mixin (e.g. one defined in a gem) are still reported.
       #
       # @example
       #   # bad
@@ -21,6 +38,21 @@ module RuboCop
       #
       #   # good
       #   class Employee < Person
+      #     def initialize(name, salary)
+      #       super(name)
+      #       @salary = salary
+      #     end
+      #   end
+      #
+      #   # bad
+      #   Employee = Class.new(Person) do
+      #     def initialize(name, salary)
+      #       @salary = salary
+      #     end
+      #   end
+      #
+      #   # good
+      #   Employee = Class.new(Person) do
       #     def initialize(name, salary)
       #       super(name)
       #       @salary = salary
@@ -42,7 +74,24 @@ module RuboCop
       #     end
       #   end
       #
+      #   # good
+      #   class ClassWithNoParent
+      #     def initialize
+      #       do_something
+      #     end
+      #   end
+      #
+      # @example AllowedParentClasses: [MyAbstractClass]
+      #   # good
+      #   class MyConcreteClass < MyAbstractClass
+      #     def initialize
+      #       do_something
+      #     end
+      #   end
+      #
       class MissingSuper < Base
+        include ProjectIndexHelp
+
         CONSTRUCTOR_MSG = 'Call `super` to initialize state of the parent class.'
         CALLBACK_MSG    = 'Call `super` to invoke callback defined in the parent class.'
 
@@ -54,6 +103,13 @@ module RuboCop
                                          singleton_method_undefined].freeze
 
         CALLBACKS = (CLASS_LIFECYCLE_CALLBACKS + METHOD_LIFECYCLE_CALLBACKS).to_set.freeze
+
+        # @!method class_new_block(node)
+        def_node_matcher :class_new_block, <<~RUBY
+          (any_block
+            (send
+              (const {nil? cbase} :Class) :new $_) ...)
+        RUBY
 
         def on_def(node)
           return unless offender?(node)
@@ -78,7 +134,7 @@ module RuboCop
         end
 
         def callback_method_def?(node)
-          return unless CALLBACKS.include?(node.method_name)
+          return false unless CALLBACKS.include?(node.method_name)
 
           node.each_ancestor(:class, :sclass, :module).first
         end
@@ -88,12 +144,44 @@ module RuboCop
         end
 
         def inside_class_with_stateful_parent?(node)
-          class_node = node.each_ancestor(:class).first
-          class_node&.parent_class && !stateless_class?(class_node.parent_class)
+          if (block_node = node.each_ancestor(:any_block).first)
+            return false unless (super_class = class_new_block(block_node))
+
+            !allowed_class?(super_class)
+          elsif (class_node = node.each_ancestor(:class).first)
+            class_node.parent_class && !allowed_class?(class_node.parent_class) &&
+              !index_verified_stateless_ancestry?(class_node)
+          else
+            false
+          end
         end
 
-        def stateless_class?(node)
-          STATELESS_CLASSES.include?(node.const_name)
+        def allowed_class?(node)
+          allowed_classes.include?(node.const_name)
+        end
+
+        def allowed_classes
+          @allowed_classes ||= STATELESS_CLASSES + cop_config.fetch('AllowedParentClasses', [])
+        end
+
+        # With the project index, the offense is skipped when the class' whole ancestry
+        # is resolvable and none of the inherited ancestors defines `initialize` —
+        # `super` would only reach the no-op `Object#initialize`. An unresolvable
+        # superclass or mixin anywhere in the chain (e.g. a class from a gem) means
+        # the ancestry cannot be verified and the offense is kept.
+        def index_verified_stateless_ancestry?(class_node)
+          return false unless project_index
+
+          declaration = resolve_constant_in_index(class_node.identifier)
+          return false unless declaration.is_a?(Rubydex::Class)
+
+          ancestors = declaration.ancestors.to_a
+          inherited = ancestors.reject { |ancestor| ancestor.name == declaration.name }
+          return false if inherited.any? { |ancestor| ancestor.member('initialize()') }
+
+          # `extend` affects the singleton class and cannot introduce an
+          # inherited `initialize`, so unresolved extends are tolerated.
+          fully_resolved_index_ancestry?(declaration, ignore_extend: true)
         end
       end
     end

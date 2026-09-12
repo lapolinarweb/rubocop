@@ -3,7 +3,9 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for uses of the keyword `not` instead of `!`.
+      # Checks for uses of the keyword `not` instead of `!`.
+      # The `not` keyword has lower precedence than `!`, which can
+      # lead to surprising behavior and often requires parentheses.
       #
       # @example
       #
@@ -33,7 +35,7 @@ module RuboCop
           return unless node.prefix_not?
 
           add_offense(node.loc.selector) do |corrector|
-            range = range_with_surrounding_space(range: node.loc.selector, side: :right)
+            range = range_with_surrounding_space(node.loc.selector, side: :right)
 
             if opposite_method?(node.receiver)
               correct_opposite_method(corrector, range, node.receiver)
@@ -52,9 +54,11 @@ module RuboCop
         end
 
         def requires_parens?(child)
-          child.and_type? || child.or_type? ||
+          child.operator_keyword? ||
             (child.send_type? && child.binary_operation?) ||
-            (child.if_type? && child.ternary?)
+            (child.if_type? && child.ternary?) ||
+            child.type?(:range, :iflipflop, :eflipflop) ||
+            child.assignment?
         end
 
         def correct_opposite_method(corrector, range, child)

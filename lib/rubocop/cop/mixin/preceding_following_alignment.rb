@@ -4,7 +4,12 @@ module RuboCop
   module Cop
     # Common functionality for checking whether an AST node/token is aligned
     # with something on a preceding or following line
+    # rubocop:disable-next Metrics/ModuleLength
     module PrecedingFollowingAlignment
+      # Tokens that end with an `=`, as well as `<<`, that can be aligned together:
+      # `=`, `==`, `===`, `!=`, `<=`, `>=`, `<<` and operator assignment (`+=`, etc).
+      ASSIGNMENT_OR_COMPARISON_TOKENS = %i[tEQL tEQ tEQQ tNEQ tLEQ tGEQ tOP_ASGN tLSHFT].freeze
+
       private
 
       def allow_for_alignment?
@@ -19,16 +24,20 @@ module RuboCop
         aligned_with_adjacent_line?(range, method(:aligned_operator?))
       end
 
-      def aligned_with_preceding_assignment(token)
+      # Allows alignment with a preceding operator that ends with an `=`,
+      # including assignment and comparison operators.
+      def aligned_with_preceding_equals_operator(token)
         preceding_line_range = token.line.downto(1)
 
-        aligned_with_assignment(token, preceding_line_range)
+        aligned_with_equals_sign(token, preceding_line_range)
       end
 
-      def aligned_with_subsequent_assignment(token)
+      # Allows alignment with a subsequent operator that ends with an `=`,
+      # including assignment and comparison operators.
+      def aligned_with_subsequent_equals_operator(token)
         subsequent_line_range = token.line.upto(processed_source.lines.length)
 
-        aligned_with_assignment(token, subsequent_line_range)
+        aligned_with_equals_sign(token, subsequent_line_range)
       end
 
       def aligned_with_adjacent_line?(range, predicate)
@@ -60,9 +69,17 @@ module RuboCop
           line = processed_source.lines[lineno]
           index = line =~ /\S/
           next unless index
-          next if indent && indent != index
 
-          return yield(range, line)
+          if indent
+            # When searching for the nearest line with the same indentation,
+            # more deeply indented lines are nested content of the current group
+            # and are skipped, but a less deeply indented line ends the enclosing block:
+            # an alignment anchor beyond it would be coincidental.
+            break if index < indent
+            next if index > indent
+          end
+
+          return yield(range, line, lineno + 1)
         end
         false
       end
@@ -74,41 +91,58 @@ module RuboCop
           end.map(&:line)
       end
 
-      def aligned_token?(range, line)
-        aligned_words?(range, line) ||
-          aligned_char?(range, line) ||
-          aligned_assignment?(range, line)
+      def aligned_token?(range, line, lineno)
+        aligned_words?(range, line) || aligned_equals_operator?(range, lineno)
       end
 
-      def aligned_operator?(range, line)
-        (aligned_identical?(range, line) || aligned_assignment?(range, line))
+      def aligned_operator?(range, line, lineno)
+        aligned_identical?(range, line) || aligned_equals_operator?(range, lineno)
       end
 
       def aligned_words?(range, line)
-        /\s\S/.match?(line[range.column - 1, 2])
+        left_edge = range.column
+        return true if /\s\S/.match?(line[left_edge - 1, 2])
+
+        token = range.source
+        token == line[left_edge, token.length]
       end
 
-      def aligned_char?(range, line)
-        line[range.column] == range.source[0]
+      def aligned_equals_operator?(range, lineno)
+        # Check that the operator is aligned with a previous assignment or comparison operator
+        # ie. an equals sign, an operator assignment (eg. `+=`), a comparison (`==`, `<=`, etc.).
+        # Since append operators (`<<`) are a type of assignment, they are allowed as well,
+        # despite not ending with a literal equals character.
+        line_range = processed_source.buffer.line_range(lineno)
+        return false unless line_range
+
+        # Find the specific token to avoid matching up to operators inside strings
+        operator_token = processed_source.tokens_within(line_range).detect do |token|
+          ASSIGNMENT_OR_COMPARISON_TOKENS.include?(token.type)
+        end
+
+        aligned_with_preceding_equals?(range, operator_token) ||
+          aligned_with_append_operator?(range, operator_token)
       end
 
-      def aligned_assignment?(range, line)
-        (range.source[-1] == '=' && line[range.last_column - 1] == '=') ||
-          aligned_with_append_operator?(range, line)
+      def aligned_with_preceding_equals?(range, token)
+        return false unless token
+
+        range.source[-1] == '=' && range.last_column == token.pos.last_column
       end
 
-      def aligned_with_append_operator?(range, line)
-        last_column = range.last_column
+      def aligned_with_append_operator?(range, token)
+        return false unless token
 
-        (range.source == '<<' && line[last_column - 1] == '=') ||
-          (range.source[-1] == '=' && line[(last_column - 2)..(last_column - 1)] == '<<')
+        ((range.source == '<<' && token.equal_sign?) ||
+          (range.source[-1] == '=' && token.type == :tLSHFT)) &&
+          token && range.last_column == token.pos.last_column
       end
 
       def aligned_identical?(range, line)
         range.source == line[range.column, range.size]
       end
 
-      def aligned_with_assignment(token, line_range)
+      def aligned_with_equals_sign(token, line_range)
         token_line_indent    = processed_source.line_indentation(token.line)
         assignment_lines     = relevant_assignment_lines(line_range)
         relevant_line_number = assignment_lines[1]
@@ -118,12 +152,9 @@ module RuboCop
         relevant_indent = processed_source.line_indentation(relevant_line_number)
 
         return :none if relevant_indent < token_line_indent
+        return :none unless processed_source.lines[relevant_line_number - 1]
 
-        assignment_line = processed_source.lines[relevant_line_number - 1]
-
-        return :none unless assignment_line
-
-        aligned_assignment?(token.pos, assignment_line) ? :yes : :no
+        aligned_equals_operator?(token.pos, relevant_line_number) ? :yes : :no
       end
 
       def assignment_lines
@@ -134,10 +165,14 @@ module RuboCop
         @assignment_tokens ||= begin
           tokens = processed_source.tokens.select(&:equal_sign?)
 
-          # we don't want to operate on equals signs which are part of an
-          #   optarg in a method definition
-          # e.g.: def method(optarg = default_val); end
-          tokens = remove_optarg_equals(tokens, processed_source)
+          # We don't want to operate on equals signs which are part of an `optarg` in a
+          # method definition, or the separator of an endless method definition.
+          # For example (the equals sign to ignore is highlighted with ^):
+          #     def method(optarg = default_val); end
+          #                       ^
+          #     def method = foo
+          #                ^
+          tokens = remove_equals_in_def(tokens, processed_source)
 
           # Only attempt to align the first = on each line
           Set.new(tokens.uniq(&:line))
@@ -147,20 +182,69 @@ module RuboCop
       # rubocop:disable Metrics/AbcSize, Metrics/CyclomaticComplexity
       # rubocop:disable Metrics/PerceivedComplexity, Metrics/MethodLength
       def relevant_assignment_lines(line_range)
+        relevant_lines(line_range, interrupting_operator_lines) do |line_number|
+          assignment_lines.include?(line_number)
+        end
+      end
+
+      def interrupting_operator_lines
+        @interrupting_operator_lines ||=
+          processed_source.tokens.each_with_object(Set.new) do |token, lines|
+            next unless ASSIGNMENT_OR_COMPARISON_TOKENS.include?(token.type)
+
+            lines << token.line unless assignment_lines.include?(token.line)
+          end
+      end
+
+      def alignment_lines(line_number)
+        @alignment_lines_by_line ||= {}
+        return @alignment_lines_by_line[line_number] if @alignment_lines_by_line.key?(line_number)
+
+        lines = alignment_line_ranges(line_number).flatten.uniq.sort.freeze
+
+        lines.each { |line| @alignment_lines_by_line[line] = lines }
+      end
+
+      def alignment_line_ranges(line_number)
+        last_line = processed_source.lines.length
+
+        [
+          relevant_lines(line_number.downto(1), definition_boundary_lines) do |line|
+            !aligned_comment_lines.include?(line)
+          end,
+          relevant_lines(line_number.upto(last_line), definition_boundary_lines) do |line|
+            !aligned_comment_lines.include?(line)
+          end
+        ]
+      end
+
+      def definition_boundary_lines
+        @definition_boundary_lines ||= begin
+          nodes = processed_source.ast&.each_node(:any_def) || []
+
+          nodes.each_with_object(Set.new) do |node, lines|
+            lines << node.first_line << node.last_line
+          end
+        end
+      end
+
+      def relevant_lines(line_range, boundary_lines = [])
         result                        = []
-        original_line_indent          = processed_source.line_indentation(line_range.first)
+        original_line                 = line_range.first
+        original_line_indent          = processed_source.line_indentation(original_line)
         relevant_line_indent_at_level = true
 
         line_range.each do |line_number|
           current_line_indent = processed_source.line_indentation(line_number)
           blank_line          = processed_source.lines[line_number - 1].blank?
 
-          if (current_line_indent < original_line_indent && !blank_line) ||
+          if (line_number != original_line && boundary_lines.include?(line_number)) ||
+             (current_line_indent < original_line_indent && !blank_line) ||
              (relevant_line_indent_at_level && blank_line)
             break
           end
 
-          result << line_number if assignment_lines.include?(line_number) &&
+          result << line_number if yield(line_number) &&
                                    current_line_indent == original_line_indent
 
           unless blank_line
@@ -173,10 +257,18 @@ module RuboCop
       # rubocop:enable Metrics/AbcSize, Metrics/CyclomaticComplexity
       # rubocop:enable Metrics/PerceivedComplexity, Metrics/MethodLength
 
-      def remove_optarg_equals(asgn_tokens, processed_source)
-        optargs    = processed_source.ast.each_node(:optarg)
-        optarg_eql = optargs.map { |o| o.loc.operator.begin_pos }.to_set
-        asgn_tokens.reject { |t| optarg_eql.include?(t.begin_pos) }
+      def remove_equals_in_def(asgn_tokens, processed_source)
+        nodes = processed_source.ast.each_node(:optarg, :def)
+        eqls_to_ignore = nodes.with_object([]) do |node, arr|
+          loc = if node.def_type?
+                  node.loc.assignment if node.endless?
+                else
+                  node.loc.operator
+                end
+          arr << loc.begin_pos if loc
+        end
+
+        asgn_tokens.reject { |t| eqls_to_ignore.include?(t.begin_pos) }
       end
     end
   end

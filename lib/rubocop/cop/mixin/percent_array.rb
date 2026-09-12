@@ -15,7 +15,7 @@ module RuboCop
         parent = node.parent
 
         parent&.send_type? && parent.arguments.include?(node) &&
-          !parent.parenthesized? && parent&.block_literal?
+          !parent.parenthesized? && parent.block_literal?
       end
 
       # Override to determine values that are invalid in a percent array
@@ -36,14 +36,32 @@ module RuboCop
       def check_percent_array(node)
         array_style_detected(:percent, node.values.size)
 
-        return unless style == :brackets || invalid_percent_array_contents?(node)
+        brackets_required = invalid_percent_array_contents?(node)
+        return unless style == :brackets || brackets_required
+
+        # If in percent style but brackets are required due to
+        # string content, the file should be excluded in auto-gen-config
+        no_acceptable_style! if brackets_required
 
         bracketed_array = build_bracketed_array(node)
-        message = format(self.class::ARRAY_MSG, prefer: bracketed_array)
+        message = build_message_for_bracketed_array(bracketed_array)
 
         add_offense(node, message: message) do |corrector|
           corrector.replace(node, bracketed_array)
         end
+      end
+
+      # @param [String] preferred_array_code
+      # @return [String]
+      def build_message_for_bracketed_array(preferred_array_code)
+        format(
+          self.class::ARRAY_MSG,
+          prefer: if preferred_array_code.include?("\n")
+                    'an array literal `[...]`'
+                  else
+                    "`#{preferred_array_code}`"
+                  end
+        )
       end
 
       def check_bracketed_array(node, literal_prefix)
@@ -57,6 +75,50 @@ module RuboCop
           percent_literal_corrector = PercentLiteralCorrector.new(@config, @preferred_delimiters)
           percent_literal_corrector.correct(corrector, node, literal_prefix)
         end
+      end
+
+      # @param [RuboCop::AST::ArrayNode] node
+      # @param [Array<String>] elements
+      # @return [String]
+      def build_bracketed_array_with_appropriate_whitespace(elements:, node:)
+        [
+          '[',
+          whitespace_leading(node),
+          elements.join(",#{whitespace_between(node)}"),
+          whitespace_trailing(node),
+          ']'
+        ].join
+      end
+
+      # Provides whitespace between elements for building a bracketed array.
+      #   %w[  a   b   c    ]
+      #         ^^^
+      # @param [RuboCop::AST::ArrayNode] node
+      # @return [String]
+      def whitespace_between(node)
+        if node.children.length >= 2
+          node.children[0].source_range.end.join(node.children[1].source_range.begin).source
+        else
+          ' '
+        end
+      end
+
+      # Provides leading whitespace for building a bracketed array.
+      #   %w[  a   b   c    ]
+      #      ^^
+      # @param [RuboCop::AST::ArrayNode] node
+      # @return [String]
+      def whitespace_leading(node)
+        node.loc.begin.end.join(node.children[0].source_range.begin).source
+      end
+
+      # Provides trailing whitespace for building a bracketed array.
+      #   %w[  a   b   c    ]
+      #                 ^^^^
+      # @param [RuboCop::AST::ArrayNode] node
+      # @return [String]
+      def whitespace_trailing(node)
+        node.children[-1].source_range.end.join(node.loc.end.begin).source
       end
     end
   end

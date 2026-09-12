@@ -25,13 +25,18 @@ module RuboCop
       @validated = true
     end
 
+    def apply_options!(options)
+      self.options_config = options[:config] if options[:config]
+      force_default_config! if options[:force_default_config]
+    end
+
     def options_config=(options_config)
       loaded_config = ConfigLoader.load_file(options_config)
       @options_config = ConfigLoader.merge_with_default(loaded_config, options_config)
     end
 
     def force_default_config!
-      @options_config = ConfigLoader.default_configuration
+      @options_config = ConfigLoader.apply_default_overrides(ConfigLoader.default_configuration)
     end
 
     def unvalidated
@@ -44,7 +49,7 @@ module RuboCop
     end
 
     def for_pwd
-      for_dir(Dir.pwd)
+      for_dir(PathUtil.pwd)
     end
 
     # If type (file/dir) is known beforehand,

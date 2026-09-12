@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Layout
-      # This cop checks the indentation of hanging closing parentheses in
+      # Checks the indentation of hanging closing parentheses in
       # method calls, method definitions, and grouped expressions. A hanging
       # closing parenthesis means `)` preceded by a line break.
       #
@@ -144,7 +144,7 @@ module RuboCop
         def expected_column(left_paren, elements)
           if line_break_after_left_paren?(left_paren, elements)
             source_indent = processed_source.line_indentation(first_argument_line(elements))
-            new_indent    = source_indent - indentation_width
+            new_indent    = source_indent - configured_indentation_width
 
             new_indent.negative? ? 0 : new_indent
           elsif all_elements_aligned?(elements)
@@ -155,13 +155,13 @@ module RuboCop
         end
 
         def all_elements_aligned?(elements)
-          elements.flat_map do |e|
-            if e.hash_type?
-              e.each_pair.map { |pair| pair.loc.column }
-            else
+          if elements.first.hash_type?
+            elements.first.each_child_node.map { |child| child.loc.column }
+          else
+            elements.flat_map do |e|
               e.loc.column
             end
-          end.uniq.count == 1
+          end.uniq.one?
         end
 
         def first_argument_line(elements)
@@ -182,10 +182,6 @@ module RuboCop
           else
             format(MSG_INDENT, expected: correct_column, actual: right_paren.column)
           end
-        end
-
-        def indentation_width
-          @config.for_cop('Layout/IndentationWidth')['Width'] || 2
         end
 
         def line_break_after_left_paren?(left_paren, elements)

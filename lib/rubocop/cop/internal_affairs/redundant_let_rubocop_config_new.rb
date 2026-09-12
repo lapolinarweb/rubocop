@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module InternalAffairs
-      # This cop checks that `let` is `RuboCop::Config.new` with no arguments.
+      # Checks that `let` is `RuboCop::Config.new` with no arguments.
       #
       # @example
       #   # bad
@@ -31,15 +31,22 @@ module RuboCop
             (send nil? :let
               (sym :config))
             (args)
-            (send
-              (const
-                (const nil? :RuboCop) :Config) :new))
+            {
+              (send
+                (const
+                  (const nil? :RuboCop) :Config) :new)
+              (send
+                (const
+                  (const nil? :RuboCop) :Config) :new
+                    (hash (pair (send (send (send nil? :described_class) :badge) :to_s)
+                      (send nil? :cop_config))))
+            }
+          )
         PATTERN
 
         def on_block(node)
           return unless let_rubocop_config_new?(node)
-
-          describe = find_describe_method_node(node)
+          return unless (describe = find_describe_method_node(node))
 
           unless (exist_config = describe.last_argument.source == ':config')
             additional_message = ' and specify `:config` in `describe`'
@@ -57,7 +64,10 @@ module RuboCop
         private
 
         def find_describe_method_node(block_node)
-          block_node.ancestors.find { |node| node.block_type? && node.method?(:describe) }.send_node
+          describe = block_node.ancestors.find do |ancestor|
+            ancestor.block_type? && ancestor.method?(:describe)
+          end
+          describe&.send_node
         end
       end
     end

@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks hash literal syntax.
+      # Checks hash literal syntax.
       #
       # It can enforce either the use of the class hash rocket syntax or
       # the use of the newer Ruby 1.9 syntax (when applicable).
@@ -18,6 +18,19 @@ module RuboCop
       # * no_mixed_keys - simply checks for hashes with mixed syntaxes
       # * ruby19_no_mixed_keys - forces use of ruby 1.9 syntax and forbids mixed
       # syntax hashes
+      #
+      # This cop has `EnforcedShorthandSyntax` option.
+      # It can enforce either the use of the explicit hash value syntax or
+      # the use of Ruby 3.1's hash value shorthand syntax.
+      #
+      # The supported styles are:
+      #
+      # * always - forces use of the 3.1 syntax (e.g. {foo:})
+      # * never - forces use of explicit hash literal value
+      # * either - accepts both shorthand and explicit use of hash literal value
+      # * consistent - forces use of the 3.1 syntax only if all values can be omitted in the hash
+      # * either_consistent - accepts both shorthand and explicit use of hash literal value,
+      #                       but they must be consistent
       #
       # @example EnforcedStyle: ruby19 (default)
       #   # bad
@@ -54,19 +67,87 @@ module RuboCop
       #   # good
       #   {a: 1, b: 2}
       #   {:c => 3, 'd' => 4}
+      #
+      # @example EnforcedShorthandSyntax: always
+      #
+      #   # bad
+      #   {foo: foo, bar: bar}
+      #
+      #   # good
+      #   {foo:, bar:}
+      #
+      #   # good - allowed to mix syntaxes
+      #   {foo:, bar: baz}
+      #
+      # @example EnforcedShorthandSyntax: never
+      #
+      #   # bad
+      #   {foo:, bar:}
+      #
+      #   # good
+      #   {foo: foo, bar: bar}
+      #
+      # @example EnforcedShorthandSyntax: either (default)
+      #
+      #   # good
+      #   {foo: foo, bar: bar}
+      #
+      #   # good
+      #   {foo: foo, bar:}
+      #
+      #   # good
+      #   {foo:, bar:}
+      #
+      # @example EnforcedShorthandSyntax: consistent
+      #
+      #   # bad - `foo` and `bar` values can be omitted
+      #   {foo: foo, bar: bar}
+      #
+      #   # bad - `bar` value can be omitted
+      #   {foo:, bar: bar}
+      #
+      #   # bad - mixed syntaxes
+      #   {foo:, bar: baz}
+      #
+      #   # good
+      #   {foo:, bar:}
+      #
+      #   # good - can't omit `baz`
+      #   {foo: foo, bar: baz}
+      #
+      # @example EnforcedShorthandSyntax: either_consistent
+      #
+      #   # good - `foo` and `bar` values can be omitted, but they are consistent, so it's accepted
+      #   {foo: foo, bar: bar}
+      #
+      #   # bad - `bar` value can be omitted
+      #   {foo:, bar: bar}
+      #
+      #   # bad - mixed syntaxes
+      #   {foo:, bar: baz}
+      #
+      #   # good
+      #   {foo:, bar:}
+      #
+      #   # good - can't omit `baz`
+      #   {foo: foo, bar: baz}
       class HashSyntax < Base
         include ConfigurableEnforcedStyle
+        include HashShorthandSyntax
         include RangeHelp
         extend AutoCorrector
 
         MSG_19 = 'Use the new Ruby 1.9 hash syntax.'
         MSG_NO_MIXED_KEYS = "Don't mix styles in the same hash."
         MSG_HASH_ROCKETS = 'Use hash rockets syntax.'
+        NO_MIXED_KEYS_STYLES = %i[ruby19_no_mixed_keys no_mixed_keys].freeze
 
         def on_hash(node)
           pairs = node.pairs
 
           return if pairs.empty?
+
+          on_hash_for_mixed_shorthand(node)
 
           if style == :hash_rockets || force_hash_rockets?(pairs)
             hash_rockets_check(pairs)
@@ -119,7 +200,7 @@ module RuboCop
         def autocorrect(corrector, node)
           if style == :hash_rockets || force_hash_rockets?(node.parent.pairs)
             autocorrect_hash_rockets(corrector, node)
-          elsif style == :ruby19_no_mixed_keys || style == :no_mixed_keys
+          elsif NO_MIXED_KEYS_STYLES.include?(style)
             autocorrect_no_mixed_keys(corrector, node)
           else
             autocorrect_ruby19(corrector, node)
@@ -131,11 +212,12 @@ module RuboCop
         end
 
         def word_symbol_pair?(pair)
-          return false unless pair.key.sym_type? || pair.key.dsym_type?
+          return false unless pair.key.any_sym_type?
 
           acceptable_19_syntax_symbol?(pair.key.source)
         end
 
+        # rubocop:disable-next Metrics/CyclomaticComplexity
         def acceptable_19_syntax_symbol?(sym_name)
           sym_name.delete_prefix!(':')
 
@@ -150,8 +232,10 @@ module RuboCop
           # Most hash keys can be matched against a simple regex.
           return true if /\A[_a-z]\w*[?!]?\z/i.match?(sym_name)
 
-          # For more complicated hash keys, let the parser validate the syntax.
-          ProcessedSource.new("{ #{sym_name}: :foo }", target_ruby_version).valid_syntax?
+          return false if target_ruby_version <= 2.1
+
+          (sym_name.start_with?("'") && sym_name.end_with?("'")) ||
+            (sym_name.start_with?('"') && sym_name.end_with?('"'))
         end
 
         def check(pairs, delim, msg)
@@ -178,6 +262,8 @@ module RuboCop
 
           hash_node = pair_node.parent
           return unless hash_node.parent&.return_type? && !hash_node.braces?
+          # This runs once per pair, but the hash must only be wrapped once.
+          return unless pair_node.equal?(hash_node.pairs.first)
 
           corrector.wrap(hash_node, '{', '}')
         end
@@ -187,19 +273,22 @@ module RuboCop
           operator = pair_node.loc.operator
 
           range = key.join(operator)
-          range_with_surrounding_space(range: range, side: :right)
+          range_with_surrounding_space(range, side: :right)
         end
 
         def argument_without_space?(node)
-          node.argument? && node.loc.expression.begin_pos == node.parent.loc.selector.end_pos
+          return false if !node.argument? || !node.parent.loc.selector
+
+          node.source_range.begin_pos == node.parent.loc.selector.end_pos
         end
 
         def autocorrect_hash_rockets(corrector, pair_node)
           op = pair_node.loc.operator
 
           key_with_hash_rocket = ":#{pair_node.key.source}#{pair_node.inverse_delimiter(true)}"
+          key_with_hash_rocket += pair_node.key.source if pair_node.value_omission?
           corrector.replace(pair_node.key, key_with_hash_rocket)
-          corrector.remove(range_with_surrounding_space(range: op))
+          corrector.remove(range_with_surrounding_space(op))
         end
 
         def autocorrect_no_mixed_keys(corrector, pair_node)

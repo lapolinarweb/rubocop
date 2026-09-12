@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Lint
-      # This cop checks for redundant `with_index`.
+      # Checks for redundant `with_index`.
       #
       # @example
       #   # bad
@@ -33,17 +33,10 @@ module RuboCop
         MSG_EACH_WITH_INDEX = 'Use `each` instead of `each_with_index`.'
         MSG_WITH_INDEX = 'Remove redundant `with_index`.'
 
-        # @!method redundant_with_index?(node)
-        def_node_matcher :redundant_with_index?, <<~PATTERN
-          (block
-            $(send
-              _ {:each_with_index :with_index} ...)
-            (args
-              (arg _))
-            ...)
-        PATTERN
-
+        # rubocop:disable-next Metrics/AbcSize
         def on_block(node)
+          return unless node.receiver
+          return if node.method?(:with_index) && !node.receiver.receiver
           return unless (send = redundant_with_index?(node))
 
           range = with_index_range(send)
@@ -58,7 +51,23 @@ module RuboCop
           end
         end
 
+        alias on_numblock on_block
+        alias on_itblock on_block
+
         private
+
+        # @!method redundant_with_index?(node)
+        def_node_matcher :redundant_with_index?, <<~PATTERN
+          {
+            (block
+              $(call _ {:each_with_index :with_index} ...)
+              {(args (arg _)) (args)} ...)
+            (numblock
+              $(call _ {:each_with_index :with_index} ...) 1 ...)
+            (itblock
+              $(call _ {:each_with_index :with_index} ...) _ ...)
+          }
+        PATTERN
 
         def message(node)
           if node.method?(:each_with_index)
@@ -69,7 +78,7 @@ module RuboCop
         end
 
         def with_index_range(send)
-          range_between(send.loc.selector.begin_pos, send.loc.expression.end_pos)
+          range_between(send.loc.selector.begin_pos, send.source_range.end_pos)
         end
       end
     end

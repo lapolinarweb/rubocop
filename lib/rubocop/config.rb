@@ -1,10 +1,8 @@
 # frozen_string_literal: true
 
-require 'pathname'
-
 # FIXME: Moving Rails department code to RuboCop Rails will remove
 # the following rubocop:disable comment.
-# rubocop:disable Metrics/ClassLength
+# rubocop:disable-next Metrics/ClassLength
 module RuboCop
   # This class represents the configuration of the RuboCop application
   # and all its cops. A Config is associated with a YAML configuration
@@ -14,30 +12,69 @@ module RuboCop
   class Config
     include PathUtil
     include FileFinder
-    extend Forwardable
+    extend SimpleForwardable
 
     CopConfig = Struct.new(:name, :metadata)
 
+    EMPTY_CONFIG = {}.freeze
     DEFAULT_RAILS_VERSION = 5.0
     attr_reader :loaded_path
-
-    def initialize(hash = {}, loaded_path = nil)
-      @loaded_path = loaded_path
-      @for_cop = Hash.new do |h, cop|
-        qualified_cop_name = Cop::Registry.qualified_cop_name(cop, loaded_path)
-        cop_options = self[qualified_cop_name] || {}
-        cop_options['Enabled'] = enable_cop?(qualified_cop_name, cop_options)
-        h[cop] = cop_options
-      end
-      @hash = hash
-      @validator = ConfigValidator.new(self)
-    end
 
     def self.create(hash, path, check: true)
       config = new(hash, path)
       config.check if check
 
       config
+    end
+
+    # rubocop:disable-next Metrics/AbcSize, Metrics/MethodLength
+    def initialize(hash = RuboCop::ConfigLoader.default_configuration, loaded_path = nil)
+      @loaded_path = loaded_path
+      @for_cop = Hash.new do |h, cop|
+        cop_name = cop.respond_to?(:cop_name) ? cop.cop_name : cop
+
+        if ConfigObsoletion.deprecated_cop_name?(cop)
+          # Since a deprecated cop will no longer have a qualified name (as the badge is no
+          # longer valid), and since we do not want to automatically enable the cop, we just
+          # set the configuration to an empty hash if it is unset.
+          # This is necessary to allow a renamed cop have its old configuration merged in
+          # before being used (which is necessary to allow it to be disabled via config).
+          cop_options = self[cop_name].dup || {}
+        else
+          qualified_cop_name = Cop::Registry.qualified_cop_name(cop_name, loaded_path, warn: false)
+          cop_options = self[qualified_cop_name].dup || {}
+          cop_options['Enabled'] = enable_cop?(qualified_cop_name, cop_options)
+
+          # If the cop has deprecated names (ie. it has been renamed), it is possible that
+          # users will still have old configuration for the cop's old name. In this case,
+          # if `ConfigObsoletion` is configured to warn rather than error (and therefore
+          # RuboCop runs), we want to respect the old configuration, so merge it in.
+          #
+          # NOTE: If there is configuration for both the cop and a deprecated names, the old
+          # configuration will be merged on top of the new configuration!
+          ConfigObsoletion.deprecated_names_for(cop).each do |deprecated_cop_name|
+            deprecated_config = @for_cop[deprecated_cop_name]
+            next if deprecated_config.empty?
+
+            warn Rainbow(<<~WARNING).yellow
+              Warning: Using `#{deprecated_cop_name}` configuration in #{loaded_path} for `#{cop}`.
+            WARNING
+
+            cop_options.merge!(@for_cop[deprecated_cop_name])
+          end
+        end
+
+        h[cop] = h[cop_name] = cop_options
+      end
+      @hash = hash
+      @validator = ConfigValidator.new(self)
+
+      @badge_config_cache = {}.compare_by_identity
+      @clusivity_config_exists_cache = {}
+    end
+
+    def loaded_plugins
+      @loaded_plugins ||= ConfigLoader.loaded_plugins
     end
 
     def loaded_features
@@ -76,10 +113,7 @@ module RuboCop
 
     def make_excludes_absolute
       each_key do |key|
-        @validator.validate_section_presence(key)
-        next unless self[key]['Exclude']
-
-        self[key]['Exclude'].map! do |exclude_elem|
+        dig(key, 'Exclude')&.map! do |exclude_elem|
           if exclude_elem.is_a?(String) && !absolute?(exclude_elem)
             File.expand_path(File.join(base_dir_for_path_parameters, exclude_elem))
           else
@@ -116,14 +150,42 @@ module RuboCop
     # Note: the 'Enabled' attribute is calculated according to the department's
     # and 'AllCops' configuration; other attributes are not inherited.
     def for_cop(cop)
-      @for_cop[cop.respond_to?(:cop_name) ? cop.cop_name : cop]
+      @for_cop[cop]
+    end
+
+    # @return [Config, Hash] for the given cop / cop name.
+    # If the given cop is enabled, returns its configuration hash.
+    # Otherwise, returns an empty hash.
+    def for_enabled_cop(cop)
+      cop_enabled?(cop) ? for_cop(cop) : EMPTY_CONFIG
     end
 
     # @return [Config] for the given cop merged with that of its department (if any)
     # Note: the 'Enabled' attribute is same as that returned by `for_cop`
     def for_badge(badge)
-      cop_config = for_cop(badge.to_s)
-      fetch(badge.department.to_s) { return cop_config }.merge(cop_config)
+      @badge_config_cache[badge] ||= begin
+        department_config = self[badge.department_name]
+        cop_config = for_cop(badge.to_s)
+        if department_config
+          merged_config = department_config.merge(cop_config)
+          if department_config['Exclude'] && cop_config['Exclude']
+            merged_config['Exclude'] = department_config['Exclude'] | cop_config['Exclude']
+          end
+          merged_config
+        else
+          cop_config
+        end
+      end
+    end
+
+    # @return [Boolean] whether config for this badge has 'Include' or 'Exclude' keys
+    # @api private
+    def clusivity_config_for_badge?(badge)
+      exists = @clusivity_config_exists_cache[badge.to_s]
+      return exists unless exists.nil?
+
+      cop_config = for_badge(badge)
+      @clusivity_config_exists_cache[badge.to_s] = cop_config['Include'] || cop_config['Exclude']
     end
 
     # @return [Config] for the given department name.
@@ -138,6 +200,10 @@ module RuboCop
       @for_all_cops ||= self['AllCops'] || {}
     end
 
+    def cop_enabled?(name)
+      !!for_cop(name)['Enabled']
+    end
+
     def disabled_new_cops?
       for_all_cops['NewCops'] == 'disable'
     end
@@ -146,6 +212,41 @@ module RuboCop
       for_all_cops['NewCops'] == 'enable'
     end
 
+    # Whether the given pending cop should be enabled, based on the `NewCops` setting of
+    # its department (if any) or of `AllCops`. A department may set `NewCops` to `enable`,
+    # `disable`, `pending`, or a version, in which case pending cops added in that version
+    # or earlier are enabled.
+    def enabled_new_cop?(qualified_cop_name)
+      setting = new_cops_setting_for(qualified_cop_name)
+
+      case setting.to_s
+      when 'enable' then true
+      when '', 'pending', 'disable' then false
+      else new_cops_version_covers?(setting, qualified_cop_name)
+      end
+    end
+
+    # Whether preview behavior is on, for cops that gate an unstable change
+    # behind it and for cops that are themselves `Enabled: preview`.
+    # `--preview` / `--no-preview` win over `AllCops: Preview`.
+    def preview?(options = {})
+      preview = options[:preview]
+      return preview unless preview.nil?
+
+      for_all_cops['Preview'] == true
+    end
+
+    def active_support_extensions_enabled?
+      for_all_cops['ActiveSupportExtensionsEnabled']
+    end
+
+    def string_literals_frozen_by_default?
+      for_all_cops['StringLiteralsFrozenByDefault']
+    end
+
+    # Returns true if the file matches any include pattern. If a block is given, the block is called
+    # to determine if the pattern is relevant (true returned by the block) or should be skipped
+    # (false returned).
     def file_to_include?(file)
       relative_file_path = path_relative_to_config(file)
 
@@ -157,11 +258,9 @@ module RuboCop
       absolute_file_path = File.expand_path(file)
 
       patterns_to_include.any? do |pattern|
-        if block_given?
-          yield pattern, relative_file_path, absolute_file_path
-        else
-          match_path?(pattern, relative_file_path) || match_path?(pattern, absolute_file_path)
-        end
+        next if block_given? && !yield(pattern)
+
+        match_relative_or_absolute_path?(pattern, relative_file_path, absolute_file_path)
       end
     end
 
@@ -171,10 +270,7 @@ module RuboCop
       # `bundler-console` conveys `Bundler::Console`).
       return true if File.extname(file) == '.gemspec'
 
-      file_to_include?(file) do |pattern, relative_path, absolute_path|
-        /[A-Z]/.match?(pattern.to_s) &&
-          (match_path?(pattern, relative_path) || match_path?(pattern, absolute_path))
-      end
+      file_to_include?(file) { |pattern| /[A-Z]/.match?(pattern.to_s) }
     end
 
     # Returns true if there's a chance that an Include pattern matches hidden
@@ -211,12 +307,16 @@ module RuboCop
     # directory since that wouldn't work.
     def base_dir_for_path_parameters
       @base_dir_for_path_parameters ||=
-        if File.basename(loaded_path).start_with?('.rubocop') &&
+        if loaded_path && File.basename(loaded_path).start_with?('.rubocop') &&
            loaded_path != File.join(Dir.home, ConfigLoader::DOTFILE)
           File.expand_path(File.dirname(loaded_path))
         else
-          Dir.pwd
+          PathUtil.pwd
         end
+    end
+
+    def parser_engine
+      @parser_engine ||= for_all_cops.fetch('ParserEngine', :default).to_sym
     end
 
     def target_rails_version
@@ -234,11 +334,12 @@ module RuboCop
       PathUtil.smart_path(@loaded_path)
     end
 
+    # @return [String, nil]
     def bundler_lock_file_path
       return nil unless loaded_path
 
       base_path = base_dir_for_path_parameters
-      ['gems.locked', 'Gemfile.lock'].each do |file_name|
+      ['Gemfile.lock', 'gems.locked'].each do |file_name|
         path = find_file_upwards(file_name, base_path)
         return path if path
       end
@@ -252,32 +353,81 @@ module RuboCop
 
         cop_metadata = self[qualified_cop_name]
         next unless cop_metadata['Enabled'] == 'pending'
+        next if new_cops_covered?(qualified_cop_name)
 
         pending_cops << CopConfig.new(qualified_cop_name, cop_metadata)
       end
     end
 
+    # Returns target's locked gem versions (i.e. from Gemfile.lock or gems.locked)
+    # @returns [Hash{String => Gem::Version}] The locked gem versions, keyed by the gems' names.
+    def gem_versions_in_target
+      @gem_versions_in_target ||= read_gem_versions_from_target_lockfile
+    end
+
+    # Returns the names of the target's gems that are sourced from a local path
+    # (i.e. `path:` dependencies and the project's own gem when the `Gemfile`
+    # uses `gemspec`), whose code therefore lives in the project itself.
+    # @returns [Array<String>, nil] The gem names, or nil without a lockfile.
+    def path_sourced_gems_in_target
+      @path_sourced_gems_in_target ||= read_path_sourced_gems_from_target_lockfile
+    end
+
+    def inspect # :nodoc:
+      "#<#{self.class.name}:#{object_id} @loaded_path=#{loaded_path}>"
+    end
+
     private
 
+    def match_relative_or_absolute_path?(pattern, relative_file_path, absolute_file_path)
+      should_use_absolute_path = absolute?(pattern.to_s) || pattern.to_s.start_with?('..') ||
+                                 relative_file_path.start_with?('..')
+      match_path?(pattern, should_use_absolute_path ? absolute_file_path : relative_file_path)
+    end
+
+    # @return [Float, nil] The Rails version as a `major.minor` Float.
     def target_rails_version_from_bundler_lock_file
       @target_rails_version_from_bundler_lock_file ||= read_rails_version_from_bundler_lock_file
     end
 
+    # @return [Float, nil] The Rails version as a `major.minor` Float.
     def read_rails_version_from_bundler_lock_file
-      lock_file_path = bundler_lock_file_path
-      return nil unless lock_file_path
+      return nil unless gem_versions_in_target
 
-      File.foreach(lock_file_path) do |line|
-        # If rails is in Gemfile.lock or gems.lock, there should be a line like:
-        #         rails (X.X.X)
-        result = line.match(/^\s+rails\s+\((\d+\.\d+)/)
-        return result.captures.first.to_f if result
-      end
+      # Look for `railties` instead of `rails`, to support apps that only use a subset of `rails`
+      # See https://github.com/rubocop/rubocop/pull/11289
+      rails_version_in_target = gem_versions_in_target['railties']
+      return nil unless rails_version_in_target
+
+      gem_version_to_major_minor_float(rails_version_in_target)
+    end
+
+    # @param [Gem::Version] gem_version an object like `Gem::Version.new("7.1.2.3")`
+    # @return [Float] The major and minor version, like `7.1`
+    def gem_version_to_major_minor_float(gem_version)
+      segments = gem_version.segments
+      Float("#{segments[0]}.#{segments[1]}")
+    end
+
+    # @returns [Hash{String => Gem::Version}] The locked gem versions, keyed by the gems' names.
+    def read_gem_versions_from_target_lockfile
+      lockfile_path = bundler_lock_file_path
+      return nil unless lockfile_path
+
+      Lockfile.new(lockfile_path).gem_versions
+    end
+
+    # @returns [Array<String>, nil] The names of the gems sourced from a local path.
+    def read_path_sourced_gems_from_target_lockfile
+      lockfile_path = bundler_lock_file_path
+      return nil unless lockfile_path
+
+      Lockfile.new(lockfile_path).path_sourced_gem_names
     end
 
     def enable_cop?(qualified_cop_name, cop_options)
-      # If the cop is explicitly enabled, the other checks can be skipped.
-      return true if cop_options['Enabled'] == true
+      # If the cop is explicitly enabled or `Lint/Syntax`, the other checks can be skipped.
+      return true if cop_options['Enabled'] == true || qualified_cop_name == 'Lint/Syntax'
 
       department = department_of(qualified_cop_name)
       cop_enabled = cop_options.fetch('Enabled') { !for_all_cops['DisabledByDefault'] }
@@ -293,6 +443,43 @@ module RuboCop
 
       self[cop_department.join('/')]
     end
+
+    # The effective `NewCops` setting for the given cop: the department-level
+    # setting if present, otherwise the `AllCops` setting.
+    def new_cops_setting_for(qualified_cop_name)
+      department = department_of(qualified_cop_name)
+      setting = department['NewCops'] if department
+
+      setting || for_all_cops['NewCops']
+    end
+
+    # Whether the cop's pending status is resolved by a `NewCops` setting,
+    # so that it should not appear in the pending cops warning.
+    # Unlike `enabled_new_cop?`, `disable` counts as covered.
+    def new_cops_covered?(qualified_cop_name)
+      setting = new_cops_setting_for(qualified_cop_name)
+
+      case setting.to_s
+      when 'enable', 'disable' then true
+      when '', 'pending' then false
+      else new_cops_version_covers?(setting, qualified_cop_name)
+      end
+    end
+
+    def new_cops_version_covers?(new_cops_version, qualified_cop_name)
+      cop_metadata = self[qualified_cop_name]
+      version_added = comparable_version(cop_metadata['VersionAdded']) if cop_metadata
+      pinned_version = comparable_version(new_cops_version)
+      return false if version_added.nil? || pinned_version.nil?
+
+      version_added <= pinned_version
+    end
+
+    # Returns a `Gem::Version` for values like `'1.19'` or `1.19`, and `nil`
+    # for non-version values like `'N/A'` or `'<<next>>'`.
+    def comparable_version(value)
+      value = value.to_s
+      Gem::Version.new(value) if value.match?(/\A\d/) && Gem::Version.correct?(value)
+    end
   end
 end
-# rubocop:enable Metrics/ClassLength

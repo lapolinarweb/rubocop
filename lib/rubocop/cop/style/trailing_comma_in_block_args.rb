@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks whether trailing commas in block arguments are
+      # Checks whether trailing commas in block arguments are
       # required. Blocks with only one argument and a trailing comma require
       # that comma to be present. Blocks with more than one argument never
       # require a trailing comma.
@@ -64,7 +64,7 @@ module RuboCop
 
         MSG = 'Useless trailing comma present in block arguments.'
 
-        def on_block(node)
+        def on_block(node) # rubocop:disable InternalAffairs/NumblockHandler, InternalAffairs/ItblockHandler -- a trailing comma needs an explicit parameter list
           # lambda literal (`->`) never has block arguments.
           return if node.send_node.lambda_literal?
           return unless useless_trailing_comma?(node)
@@ -97,7 +97,7 @@ module RuboCop
           pipes = tokens.select { |token| token.type == :tPIPE }
           begin_pos, end_pos = pipes.map { |pipe| tokens.index(pipe) }
 
-          tokens[begin_pos + 1..end_pos - 1]
+          tokens[(begin_pos + 1)..(end_pos - 1)]
         end
       end
     end

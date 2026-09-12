@@ -74,7 +74,7 @@ module RuboCop
           def parent
             return @parent if instance_variable_defined?(:@parent)
 
-            @branch = Branch.of(control_node, scope: scope)
+            @parent = Branch.of(control_node, scope: scope)
           end
 
           def each_ancestor(include_self: false, &block)
@@ -127,7 +127,7 @@ module RuboCop
           alias_method :eql?, :==
 
           def hash
-            control_node.object_id.hash ^ child_node.object_id.hash
+            [control_node.object_id, control_node.object_id].hash
           end
 
           private
@@ -254,8 +254,8 @@ module RuboCop
           end
         end
 
-        # Mix-in module for logical operator control structures.
-        module LogicalOperator
+        # Mix-in module for operator control structures.
+        module Operator
           def always_run?
             left_body?
           end
@@ -263,7 +263,15 @@ module RuboCop
 
         # left_body && right_body
         class And < Base
-          include LogicalOperator
+          include Operator
+
+          define_predicate :left_body?,  child_index: 0
+          define_predicate :right_body?, child_index: 1
+        end
+
+        # left_body &&= right_body
+        class AndAsgn < Base
+          include Operator
 
           define_predicate :left_body?,  child_index: 0
           define_predicate :right_body?, child_index: 1
@@ -271,7 +279,23 @@ module RuboCop
 
         # left_body || right_body
         class Or < Base
-          include LogicalOperator
+          include Operator
+
+          define_predicate :left_body?,  child_index: 0
+          define_predicate :right_body?, child_index: 1
+        end
+
+        # left_body ||= right_body
+        class OrAsgn < Base
+          include Operator
+
+          define_predicate :left_body?,  child_index: 0
+          define_predicate :right_body?, child_index: 1
+        end
+
+        # e.g. left_body += right_body
+        class OpAsgn < Base
+          include Operator
 
           define_predicate :left_body?,  child_index: 0
           define_predicate :right_body?, child_index: 1
@@ -322,8 +346,8 @@ module RuboCop
           end
         end
 
-        CLASSES_BY_TYPE = Base.classes.each_with_object({}) do |klass, classes|
-          classes[klass.type] = klass
+        CLASSES_BY_TYPE = Base.classes.to_h do |klass|
+          [klass.type, klass]
         end
       end
     end

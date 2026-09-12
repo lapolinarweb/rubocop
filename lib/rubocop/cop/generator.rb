@@ -8,13 +8,7 @@ module RuboCop
     # and spec file when given a valid qualified cop name.
     # @api private
     class Generator
-      # NOTE: RDoc 5.1.0 or lower has the following issue.
-      # https://github.com/rubocop/rubocop/issues/7043
-      #
-      # The following `String#gsub` can be replaced with
-      # squiggly heredoc when RuboCop supports Ruby 2.5 or higher
-      # (RDoc 6.0 or higher).
-      SOURCE_TEMPLATE = <<-RUBY.gsub(/^ {8}/, '')
+      SOURCE_TEMPLATE = <<~RUBY
         # frozen_string_literal: true
 
         module RuboCop
@@ -68,15 +62,26 @@ module RuboCop
                 # For example
                 MSG = 'Use `#good_method` instead of `#bad_method`.'
 
+                # TODO: Don't call `on_send` unless the method name is in this list
+                # If you don't need `on_send` in the cop you created, remove it.
+                RESTRICT_ON_SEND = %%i[bad_method].freeze
+
+                # @!method bad_method?(node)
                 def_node_matcher :bad_method?, <<~PATTERN
                   (send nil? :bad_method ...)
                 PATTERN
 
+                # Called on every `send` node (method call) while walking the AST.
+                # TODO: remove this method if inspecting `send` nodes is unneeded for your cop.
+                # By default, this is aliased to `on_csend` as well to handle method calls
+                # with safe navigation, remove the alias if this is unnecessary.
+                # If kept, ensure your tests cover safe navigation as well!
                 def on_send(node)
                   return unless bad_method?(node)
 
                   add_offense(node)
                 end
+                alias on_csend on_send
               end
             end
           end
@@ -131,6 +136,10 @@ module RuboCop
         RequireFileInjector.new(source_path: source_path, root_file_path: root_file_path).inject
       end
 
+      def inject_registration
+        RegistrationInjector.new(source_path: source_path, badge: badge).inject
+      end
+
       def inject_config(config_file_path: 'config/default.yml',
                         version_added: '<<next>>')
         injector =
@@ -138,7 +147,7 @@ module RuboCop
                                     badge: badge,
                                     version_added: version_added)
 
-        injector.inject do # rubocop:disable Lint/UnexpectedBlockArity
+        injector.inject do # rubocop:disable Lint/UnexpectedBlockArity -- this `inject` is the injector API, not `Enumerable#inject`
           output.puts(format(CONFIGURATION_ADDED_MESSAGE,
                              configuration_file_path: config_file_path))
         end
@@ -150,7 +159,7 @@ module RuboCop
             1. Modify the description of #{badge} in config/default.yml
             2. Implement your new cop in the generated file!
             3. Commit your new cop with a message such as
-               e.g. "Add new `#{badge}` cop."
+               e.g. "Add new `#{badge}` cop"
             4. Run `bundle exec rake changelog:new` to generate a changelog entry
                for your new cop.
         TODO
@@ -167,7 +176,7 @@ module RuboCop
         end
 
         dir = File.dirname(path)
-        FileUtils.mkdir_p(dir) unless File.exist?(dir)
+        FileUtils.mkdir_p(dir)
 
         File.write(path, contents)
         output.puts "[create] #{path}"
@@ -182,7 +191,8 @@ module RuboCop
       end
 
       def generate(template)
-        format(template, department: badge.department, cop_name: badge.cop_name)
+        format(template, department: badge.department.to_s.gsub('/', '::'),
+                         cop_name: badge.cop_name)
       end
 
       def spec_path
@@ -206,11 +216,10 @@ module RuboCop
       end
 
       def snake_case(camel_case_string)
-        return 'rspec' if camel_case_string == 'RSpec'
-
         camel_case_string
-          .gsub(/([^A-Z])([A-Z]+)/, '\1_\2')
-          .gsub(/([A-Z])([A-Z][^A-Z\d]+)/, '\1_\2')
+          .gsub('RSpec', 'Rspec')
+          .gsub(%r{([^A-Z/])([A-Z]+)}, '\1_\2')
+          .gsub(%r{([A-Z])([A-Z][^A-Z\d/]+)}, '\1_\2')
           .downcase
       end
     end

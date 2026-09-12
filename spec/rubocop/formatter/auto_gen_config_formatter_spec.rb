@@ -89,8 +89,8 @@ RSpec.describe RuboCop::Formatter::AutoGenConfigFormatter do
 
       it 'outputs report summary' do
         formatter.finished(files)
-        expect(output.string).to include <<~OUTPUT
-          3 files inspected, 1 offense detected, 1 offense auto-correctable
+        expect(output.string).to include(<<~OUTPUT)
+          3 files inspected, 1 offense detected, 1 offense autocorrectable
         OUTPUT
       end
     end
@@ -111,7 +111,7 @@ RSpec.describe RuboCop::Formatter::AutoGenConfigFormatter do
 
     it 'calls #report_summary' do
       formatter.finished(files)
-      expect(output.string).to include <<~OUTPUT
+      expect(output.string).to include(<<~OUTPUT)
         3 files inspected, no offenses detected
       OUTPUT
     end

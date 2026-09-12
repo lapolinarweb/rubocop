@@ -3,9 +3,9 @@
 module RuboCop
   module Cop
     module Style
-      # This cop looks for uses of Perl-style regexp match
+      # Looks for uses of Perl-style regexp match
       # backreferences and their English versions like
-      # $1, $2, $&, &+, $MATCH, $PREMATCH, etc.
+      # $1, $2, $&, $MATCH, $PREMATCH, etc.
       #
       # @example
       #   # bad
@@ -69,6 +69,10 @@ module RuboCop
         # @return [String, nil]
         def preferred_expression_to(node)
           first = node.to_a.first
+          # NOTE: `$+` / `$LAST_PAREN_MATCH` is deliberately not converted. It
+          # refers to the last group that actually matched, which has no concise
+          # `Regexp.last_match` equivalent (`Regexp.last_match(-1)` is the last
+          # group in the pattern, which may be `nil`).
           case first
           when ::Integer
             "Regexp.last_match(#{first})"
@@ -78,15 +82,34 @@ module RuboCop
             'Regexp.last_match.pre_match'
           when :$', :$POSTMATCH
             'Regexp.last_match.post_match'
-          when :$+, :$LAST_PAREN_MATCH
-            'Regexp.last_match(-1)'
+          end
+        end
+
+        # @private
+        # @param [RuboCop::AST::Node] node
+        # @return [String, nil]
+        def preferred_expression_to_node_with_constant_prefix(node)
+          expression = preferred_expression_to(node)
+          return unless expression
+
+          "#{constant_prefix(node)}#{expression}"
+        end
+
+        # @private
+        # @param [RuboCop::AST::Node] node
+        # @return [String]
+        def constant_prefix(node)
+          if node.each_ancestor(:class, :module).any?
+            '::'
+          else
+            ''
           end
         end
 
         # @private
         # @param [RuboCop::AST::Node] node
         def on_back_ref_or_gvar_or_nth_ref(node)
-          preferred_expression = preferred_expression_to(node)
+          preferred_expression = preferred_expression_to_node_with_constant_prefix(node)
           return unless preferred_expression
 
           add_offense(

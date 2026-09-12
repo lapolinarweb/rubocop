@@ -3,7 +3,20 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for unnecessary conditional expressions.
+      # Checks for unnecessary conditional expressions.
+      #
+      # NOTE: Since the intention of the comment cannot be automatically determined,
+      # autocorrection is not applied when a comment is used, as shown below:
+      #
+      # [source,ruby]
+      # -----
+      # if b
+      #   # Important note.
+      #   b
+      # else
+      #   c
+      # end
+      # -----
       #
       # @example
       #   # bad
@@ -12,7 +25,6 @@ module RuboCop
       #   # good
       #   a = b || c
       #
-      # @example
       #   # bad
       #   if b
       #     b
@@ -30,56 +42,92 @@ module RuboCop
       #     c
       #   end
       #
+      #   # bad
+      #   a.nil? ? true : a
+      #
+      #   # good
+      #   a.nil? || a
+      #
+      #   # bad
+      #   if a.nil?
+      #     true
+      #   else
+      #     a
+      #   end
+      #
+      #   # good
+      #   a.nil? || a
+      #
+      # @example AllowedMethods: ['infinite?', 'nonzero?'] (default)
+      #   # good
+      #   num.infinite? ? true : false
+      #
+      #   # good
+      #   num.nonzero? ? true : false
+      #
       class RedundantCondition < Base
+        include AllowedMethods
+        include CommentsHelp
         include RangeHelp
         extend AutoCorrector
 
         MSG = 'Use double pipes `||` instead.'
         REDUNDANT_CONDITION = 'This condition is not needed.'
+        ARGUMENT_WITH_OPERATOR_TYPES = %i[
+          splat block_pass forwarded_restarg forwarded_kwrestarg forwarded_args
+        ].freeze
 
         def on_if(node)
-          return if node.elsif_conditional?
-          return unless offense?(node)
+          return if node.modifier_form? || node.elsif_conditional? || !offense?(node)
 
           message = message(node)
 
           add_offense(range_of_offense(node), message: message) do |corrector|
-            if node.ternary?
-              correct_ternary(corrector, node)
-            elsif node.modifier_form? || !node.else_branch
-              corrector.replace(node, node.if_branch.source)
-            else
-              corrected = make_ternary_form(node)
-
-              corrector.replace(node, corrected)
-            end
+            autocorrect(corrector, node)
           end
         end
 
         private
 
         def message(node)
-          if node.modifier_form? || !node.else_branch
+          if redundant_condition?(node)
             REDUNDANT_CONDITION
           else
             MSG
           end
         end
 
+        def autocorrect(corrector, node)
+          return if node.each_descendant.any? { |descendant| contains_comments?(descendant) }
+
+          if node.ternary? && !branches_have_method?(node)
+            correct_ternary(corrector, node)
+          elsif redundant_condition?(node)
+            corrector.replace(node, node.if_branch.source)
+          else
+            corrected = make_ternary_form(node)
+
+            corrector.replace(node, corrected)
+          end
+        end
+
         def range_of_offense(node)
-          return node.loc.expression unless node.ternary?
+          return node.source_range unless node.ternary?
+          return node.source_range if node.ternary? && branches_have_method?(node)
 
           range_between(node.loc.question.begin_pos, node.loc.colon.end_pos)
         end
 
         def offense?(node)
-          condition, if_branch, else_branch = *node
-
+          _condition, _if_branch, else_branch = *node # rubocop:disable InternalAffairs/NodeDestructuring -- takes all three branches in one step
           return false if use_if_branch?(else_branch) || use_hash_key_assignment?(else_branch)
 
-          condition == if_branch && !node.elsif? && (
-            node.ternary? || !else_branch.instance_of?(AST::Node) || else_branch.single_line?
-          )
+          synonymous_condition_and_branch?(node) && !node.elsif? &&
+            (node.ternary? || !else_branch.instance_of?(AST::Node) || else_branch.single_line?)
+        end
+
+        def redundant_condition?(node)
+          node.modifier_form? || !node.else_branch
         end
 
         def use_if_branch?(else_branch)
@@ -87,22 +135,173 @@ module RuboCop
         end
 
         def use_hash_key_assignment?(else_branch)
-          else_branch&.send_type? && else_branch&.method?(:[]=)
+          else_branch&.send_type? && else_branch.method?(:[]=)
         end
 
-        def else_source(else_branch)
-          if require_parentheses?(else_branch)
+        def use_hash_key_access?(node)
+          node.send_type? && node.method?(:[])
+        end
+
+        def synonymous_condition_and_branch?(node)
+          condition, if_branch, _else_branch = *node # rubocop:disable InternalAffairs/NodeDestructuring -- takes all three branches in one step
+          # e.g.
+          #   if var
+          #     var
+          #   else
+          #     'foo'
+          #   end
+          return true if condition == if_branch
+
+          # e.g.
+          #   a.nil? ? true : a
+          # or
+          #   if a.nil?
+          #     true
+          #   else
+          #     a
+          #   end
+          return true if if_branch_is_true_type_and_else_is_not?(node)
+
+          # e.g.
+          #   if foo
+          #     @value = foo
+          #   else
+          #     @value = another_value?
+          #   end
+          return true if branches_have_assignment?(node) && condition == if_branch.expression
+
+          # e.g.
+          #   if foo
+          #     test.value = foo
+          #   else
+          #     test.value = another_value?
+          #   end
+          branches_have_method?(node) && condition == if_branch.first_argument &&
+            !use_hash_key_access?(if_branch)
+        end
+
+        # rubocop:disable-next Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
+        def if_branch_is_true_type_and_else_is_not?(node)
+          return false unless node.ternary? || node.if?
+
+          cond = node.condition
+          return false unless cond.call_type?
+          return false if !cond.predicate_method? || allowed_method?(cond.method_name)
+
+          node.if_branch&.true_type? && node.else_branch && !node.else_branch.true_type?
+        end
+
+        def branches_have_assignment?(node)
+          _condition, if_branch, else_branch = *node # rubocop:disable InternalAffairs/NodeDestructuring -- takes all three branches in one step
+
+          return false unless if_branch && else_branch
+
+          asgn_type?(if_branch) && (if_branch_variable_name = if_branch.name) &&
+            asgn_type?(else_branch) && (else_branch_variable_name = else_branch.name) &&
+            if_branch_variable_name == else_branch_variable_name
+        end
+
+        def asgn_type?(node)
+          node.type?(:lvasgn, :ivasgn, :cvasgn, :gvasgn, :casgn)
+        end
+
+        def branches_have_method?(node)
+          return false unless node.if_branch && node.else_branch
+
+          single_argument_method?(node.if_branch) && single_argument_method?(node.else_branch) &&
+            same_method?(node.if_branch, node.else_branch)
+        end
+
+        def single_argument_method?(node)
+          return false if !node.send_type? || node.method?(:[]) || !node.arguments.one?
+
+          !argument_with_operator?(node.first_argument)
+        end
+
+        def same_method?(if_branch, else_branch)
+          if_branch.method?(else_branch.method_name) && if_branch.receiver == else_branch.receiver
+        end
+
+        # If the argument is using an operator, it is an invalid syntax.
+        # e.g. `foo || *bar`, `foo || **bar`, and `foo || &bar`.
+        def argument_with_operator?(argument)
+          return true if ARGUMENT_WITH_OPERATOR_TYPES.include?(argument.type)
+          return false unless argument.hash_type?
+          return false unless (node = argument.children.first)
+
+          node.type?(:kwsplat, :forwarded_kwrestarg)
+        end
+
+        def wrap_arguments_with_parens(condition)
+          method = condition.source_range.begin.join(condition.loc.selector.end)
+          arguments = condition.first_argument.source_range.begin.join(condition.source_range.end)
+
+          "#{method.source}(#{arguments.source})"
+        end
+
+        # rubocop:disable-next Metrics/AbcSize
+        def if_source(if_branch, arithmetic_operation)
+          if branches_have_method?(if_branch.parent) && if_branch.parenthesized?
+            if_branch.source.delete_suffix(')')
+          elsif arithmetic_operation
+            argument_source = if_branch.first_argument.source
+
+            "#{if_branch.receiver.source} #{if_branch.method_name} (#{argument_source}"
+          elsif if_branch.true_type?
+            condition = if_branch.parent.condition
+            return condition.source if condition.arguments.empty? || condition.parenthesized?
+
+            wrap_arguments_with_parens(condition)
+          else
+            if_branch.source
+          end
+        end
+
+        def else_source(else_branch, arithmetic_operation) # rubocop:disable Metrics/AbcSize
+          if arithmetic_operation
+            "#{else_branch.first_argument.source})"
+          elsif branches_have_method?(else_branch.parent)
+            else_source_if_has_method(else_branch)
+          elsif require_parentheses?(else_branch)
             "(#{else_branch.source})"
           elsif without_argument_parentheses_method?(else_branch)
             "#{else_branch.method_name}(#{else_branch.arguments.map(&:source).join(', ')})"
+          elsif branches_have_assignment?(else_branch.parent)
+            else_source_if_has_assignment(else_branch)
           else
             else_branch.source
           end
         end
 
+        def else_source_if_has_method(else_branch)
+          if require_parentheses?(else_branch.first_argument)
+            "(#{else_branch.first_argument.source})"
+          elsif require_braces?(else_branch.first_argument)
+            "{ #{else_branch.first_argument.source} }"
+          else
+            else_branch.first_argument.source
+          end
+        end
+
+        def else_source_if_has_assignment(else_branch)
+          if require_parentheses?(else_branch.expression)
+            "(#{else_branch.expression.source})"
+          elsif require_braces?(else_branch.expression)
+            "{ #{else_branch.expression.source} }"
+          else
+            else_branch.expression.source
+          end
+        end
+
         def make_ternary_form(node)
-          _condition, if_branch, else_branch = *node
-          ternary_form = [if_branch.source, else_source(else_branch)].join(' || ')
+          _condition, if_branch, else_branch = *node # rubocop:disable InternalAffairs/NodeDestructuring -- takes all three branches in one step
+          arithmetic_operation = use_arithmetic_operation?(if_branch)
+
+          ternary_form = [
+            if_source(if_branch, arithmetic_operation),
+            else_source(else_branch, arithmetic_operation)
+          ].join(' || ')
+          ternary_form += ')' if branches_have_method?(node) && if_branch.parenthesized?
 
           if node.parent&.send_type?
             "(#{ternary_form})"
@@ -126,9 +325,17 @@ module RuboCop
             (node.respond_to?(:semantic_operator?) && node.semantic_operator?)
         end
 
+        def require_braces?(node)
+          node.hash_type? && !node.braces?
+        end
+
+        def use_arithmetic_operation?(node)
+          node.respond_to?(:arithmetic_operation?) && node.arithmetic_operation?
+        end
+
         def without_argument_parentheses_method?(node)
-          node.send_type? &&
-            !node.arguments.empty? && !node.parenthesized? && !node.operator_method?
+          node.send_type? && !node.arguments.empty? &&
+            !node.parenthesized? && !node.operator_method? && !node.assignment_method?
         end
       end
     end

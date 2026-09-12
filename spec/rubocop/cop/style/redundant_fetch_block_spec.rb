@@ -3,11 +3,7 @@
 RSpec.describe RuboCop::Cop::Style::RedundantFetchBlock, :config do
   context 'with SafeForConstants: true' do
     let(:config) do
-      RuboCop::Config.new(
-        'Style/RedundantFetchBlock' => {
-          'SafeForConstants' => true
-        }
-      )
+      RuboCop::Config.new('Style/RedundantFetchBlock' => { 'SafeForConstants' => true })
     end
 
     it 'registers an offense and corrects when using `#fetch` with Integer in the block' do
@@ -18,6 +14,17 @@ RSpec.describe RuboCop::Cop::Style::RedundantFetchBlock, :config do
 
       expect_correction(<<~RUBY)
         hash.fetch(:key, 5)
+      RUBY
+    end
+
+    it 'registers an offense and corrects when using `&.fetch` with Integer in the block' do
+      expect_offense(<<~RUBY)
+        hash&.fetch(:key) { 5 }
+              ^^^^^^^^^^^^^^^^^ Use `fetch(:key, 5)` instead of `fetch(:key) { 5 }`.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        hash&.fetch(:key, 5)
       RUBY
     end
 
@@ -129,11 +136,7 @@ RSpec.describe RuboCop::Cop::Style::RedundantFetchBlock, :config do
 
   context 'with SafeForConstants: false' do
     let(:config) do
-      RuboCop::Config.new(
-        'Style/RedundantFetchBlock' => {
-          'SafeForConstants' => false
-        }
-      )
+      RuboCop::Config.new('Style/RedundantFetchBlock' => { 'SafeForConstants' => false })
     end
 
     it 'does not register an offense when using `#fetch` with constant in the block' do

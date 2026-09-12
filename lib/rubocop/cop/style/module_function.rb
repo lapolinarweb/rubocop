@@ -3,13 +3,15 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for use of `extend self` or `module_function` in a
-      # module.
+      # Checks for use of `extend self` or `module_function` in a module.
       #
-      # Supported styles are: module_function, extend_self, forbidden. `forbidden`
-      # style prohibits the usage of both styles.
+      # Supported styles are: `module_function` (default), `extend_self` and `forbidden`.
       #
-      # NOTE: the cop won't be activated when the module contains any private methods.
+      # A couple of things to keep in mind:
+      #
+      # - `forbidden` style prohibits the usage of both styles
+      # - in default mode (`module_function`), the cop won't be activated when the module
+      #   contains any private methods
       #
       # @safety
       #   Autocorrection is unsafe (and is disabled by default) because `extend self`
@@ -28,13 +30,19 @@ module RuboCop
       #     # ...
       #   end
       #
-      # @example EnforcedStyle: module_function (default)
       #   # good
       #   module Test
       #     extend self
       #     # ...
       #     private
       #     # ...
+      #   end
+      #
+      #   # good
+      #   module Test
+      #     class << self
+      #       # ...
+      #     end
       #   end
       #
       # @example EnforcedStyle: extend_self
@@ -48,6 +56,13 @@ module RuboCop
       #   module Test
       #     extend self
       #     # ...
+      #   end
+      #
+      #   # good
+      #   module Test
+      #     class << self
+      #       # ...
+      #     end
       #   end
       #
       # @example EnforcedStyle: forbidden
@@ -70,6 +85,13 @@ module RuboCop
       #     private
       #     # ...
       #   end
+      #
+      #   # good
+      #   module Test
+      #     class << self
+      #       # ...
+      #     end
+      #   end
       class ModuleFunction < Base
         include ConfigurableEnforcedStyle
         extend AutoCorrector
@@ -88,9 +110,11 @@ module RuboCop
         def_node_matcher :private_directive?, '(send nil? :private ...)'
 
         def on_module(node)
-          return unless node.body&.begin_type?
+          return unless node.body
 
-          each_wrong_style(node.body.children) do |child_node|
+          body_nodes = node.body.begin_type? ? node.body.children : [node.body]
+
+          each_wrong_style(body_nodes) do |child_node|
             add_offense(child_node) do |corrector|
               next if style == :forbidden
 
@@ -117,10 +141,10 @@ module RuboCop
         end
 
         def check_module_function(nodes)
-          private_directive = nodes.any? { |node| private_directive?(node) }
+          return if nodes.any? { |node| private_directive?(node) }
 
           nodes.each do |node|
-            yield node if extend_self_node?(node) && !private_directive
+            yield node if extend_self_node?(node)
           end
         end
 

@@ -1,25 +1,28 @@
 # frozen_string_literal: true
 
-require 'pathname'
-
 module RuboCop
   # Handles validation of configuration, for example cop names, parameter
   # names, and Ruby versions.
+  # rubocop:disable-next Metrics/ClassLength
   class ConfigValidator
-    extend Forwardable
+    extend SimpleForwardable
 
     # @api private
-    COMMON_PARAMS = %w[Exclude Include Severity inherit_mode AutoCorrect StyleGuide Details].freeze
+    COMMON_PARAMS = %w[Exclude Include Severity inherit_mode AutoCorrect StyleGuide Details
+                       Enabled Reference References Safe SafeAutoCorrect].freeze
     # @api private
-    INTERNAL_PARAMS = %w[Description StyleGuide
+    INTERNAL_PARAMS = %w[Description StyleGuide Preview
                          VersionAdded VersionChanged VersionRemoved
-                         Reference Safe SafeAutoCorrect].freeze
+                         Reference References Safe SafeAutoCorrect].freeze
     # @api private
     NEW_COPS_VALUES = %w[pending disable enable].freeze
+    # @api private
+    NEW_COPS_VERSION_PATTERN = /\A\d+(\.\d+)*\z/.freeze
 
     # @api private
-    CONFIG_CHECK_KEYS = %w[Enabled Safe SafeAutoCorrect AutoCorrect].to_set.freeze
-    CONFIG_CHECK_DEPARTMENTS = %w[pending override_department].freeze
+    CONFIG_CHECK_KEYS = %w[Enabled Safe SafeAutoCorrect AutoCorrect References].to_set.freeze
+    CONFIG_CHECK_DEPARTMENTS = %w[pending preview override_department].freeze
+    CONFIG_CHECK_AUTOCORRECTS = %w[always contextual disabled].freeze
     private_constant :CONFIG_CHECK_KEYS, :CONFIG_CHECK_DEPARTMENTS
 
     def_delegators :@config, :smart_loaded_path, :for_all_cops
@@ -41,10 +44,11 @@ module RuboCop
         ConfigLoader.default_configuration.key?(key)
       end
 
-      check_obsoletions
+      validate_parameter_shape(valid_cop_names)
 
+      check_obsoletions
       alert_about_unrecognized_cops(invalid_cop_names)
-      validate_new_cops_parameter
+      validate_all_cops_parameters
       validate_parameter_names(valid_cop_names)
       validate_enforced_styles(valid_cop_names)
       validate_syntax_cop
@@ -62,12 +66,6 @@ module RuboCop
 
     def target_ruby_version
       target_ruby.version
-    end
-
-    def validate_section_presence(name)
-      return unless @config.key?(name) && @config[name].nil?
-
-      raise ValidationError, "empty section #{name} found in #{smart_loaded_path}"
     end
 
     private
@@ -102,10 +100,27 @@ module RuboCop
     end
 
     def alert_about_unrecognized_cops(invalid_cop_names)
+      unknown_cops = list_unknown_cops(invalid_cop_names)
+
+      return if unknown_cops.empty?
+
+      if ConfigLoader.ignore_unrecognized_cops
+        warn Rainbow('The following cops or departments are not ' \
+                     'recognized and will be ignored:').yellow
+        warn unknown_cops.join("\n")
+
+        return
+      end
+
+      raise ValidationError, unknown_cops.join("\n")
+    end
+
+    def list_unknown_cops(invalid_cop_names)
       unknown_cops = []
       invalid_cop_names.each do |name|
         # There could be a custom cop with this name. If so, don't warn
         next if Cop::Registry.global.contains_cop_matching?([name])
+        next if ConfigObsoletion.deprecated_cop_name?(name)
 
         # Special case for inherit_mode, which is a directive that we keep in
         # the configuration (even though it's not a cop), because it's easier
@@ -119,7 +134,8 @@ module RuboCop
 
         unknown_cops << message
       end
-      raise ValidationError, unknown_cops.join("\n") if unknown_cops.any?
+
+      unknown_cops
     end
 
     def suggestion(name)
@@ -145,24 +161,84 @@ module RuboCop
       return unless syntax_config && default_config.merge(syntax_config) != default_config
 
       raise ValidationError,
-            "configuration for Syntax cop found in #{smart_loaded_path}\n" \
+            "configuration for Lint/Syntax cop found in #{smart_loaded_path}\n" \
             'It\'s not possible to disable this cop.'
     end
 
     def validate_new_cops_parameter
+      validate_all_cops_new_cops_parameter
+      validate_department_new_cops_parameters
+    end
+
+    def validate_all_cops_parameters
+      validate_new_cops_parameter
+      validate_fail_level_parameter
+    end
+
+    def validate_fail_level_parameter
+      fail_level = @config.for_all_cops['FailLevel']
+      return if fail_level.nil? || Cop::Severity::NAMES.include?(fail_level.to_sym)
+
+      message = "invalid #{fail_level} for `FailLevel` found in #{smart_loaded_path}\n" \
+                "Valid choices are: #{Cop::Severity::NAMES.join(', ')}"
+
+      raise ValidationError, message
+    end
+
+    def validate_all_cops_new_cops_parameter
       new_cop_parameter = @config.for_all_cops['NewCops']
       return if new_cop_parameter.nil? || NEW_COPS_VALUES.include?(new_cop_parameter)
 
-      message = "invalid #{new_cop_parameter} for `NewCops` found in" \
+      message = "invalid #{new_cop_parameter} for `NewCops` found in " \
                 "#{smart_loaded_path}\n" \
                 "Valid choices are: #{NEW_COPS_VALUES.join(', ')}"
 
       raise ValidationError, message
     end
 
+    def validate_department_new_cops_parameters
+      @config.each do |name, section|
+        value = new_cops_value_for_department(name, section)
+        next if value.nil? || NEW_COPS_VALUES.include?(value) || new_cops_version_value?(value)
+
+        raise ValidationError,
+              "invalid #{value} for `NewCops` found in #{smart_loaded_path}\n" \
+              "Valid choices for a department are: #{NEW_COPS_VALUES.join(', ')}, " \
+              "or a version string like '1.50'"
+      end
+    end
+
+    def new_cops_value_for_department(name, section)
+      return nil if name == 'AllCops' || !section.is_a?(Hash)
+      return nil unless Cop::Registry.global.department?(name)
+
+      section['NewCops']
+    end
+
+    def new_cops_version_value?(value)
+      case value
+      when Float, Integer then true
+      when String then NEW_COPS_VERSION_PATTERN.match?(value)
+      else false
+      end
+    end
+
+    def validate_parameter_shape(valid_cop_names)
+      valid_cop_names.each do |name|
+        if @config[name].nil?
+          raise ValidationError, "empty section #{name.inspect} found in #{smart_loaded_path}"
+        elsif !@config[name].is_a?(Hash)
+          raise ValidationError, <<~MESSAGE
+            The configuration for #{name.inspect} in #{smart_loaded_path} is not a Hash.
+
+            Found: #{@config[name].inspect}
+          MESSAGE
+        end
+      end
+    end
+
     def validate_parameter_names(valid_cop_names)
       valid_cop_names.each do |name|
-        validate_section_presence(name)
         each_invalid_parameter(name) do |param, supported_params|
           warn Rainbow(<<~MESSAGE).yellow
             Warning: #{name} does not support #{param} parameter.
@@ -180,6 +256,9 @@ module RuboCop
 
       @config[cop_name].each_key do |param|
         next if COMMON_PARAMS.include?(param) || default_config.key?(param)
+        # Departments shipped as top-level sections in an extension's default configuration accept
+        # `NewCops`, like any other department.
+        next if param == 'NewCops' && Cop::Registry.global.department?(cop_name)
 
         supported_params = default_config.keys - INTERNAL_PARAMS
 
@@ -227,29 +306,37 @@ module RuboCop
         next unless cop_config.is_a?(Hash)
         next unless cop_config['Safe'] == false && cop_config['SafeAutoCorrect'] == true
 
-        msg = 'Unsafe cops cannot have a safe auto-correction ' \
+        msg = 'Unsafe cops cannot have a safe autocorrection ' \
               "(section #{name} in #{smart_loaded_path})"
         raise ValidationError, msg
       end
     end
 
-    def check_cop_config_value(hash, parent = nil)
+    def check_cop_config_value(hash, parent = nil) # rubocop:disable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
       hash.each do |key, value|
         check_cop_config_value(value, key) if value.is_a?(Hash)
 
         next unless CONFIG_CHECK_KEYS.include?(key) && value.is_a?(String)
 
-        next if key == 'Enabled' && CONFIG_CHECK_DEPARTMENTS.include?(value)
+        if key == 'Enabled' && !CONFIG_CHECK_DEPARTMENTS.include?(value)
+          supposed_values = 'a boolean'
+        elsif key == 'AutoCorrect' && !CONFIG_CHECK_AUTOCORRECTS.include?(value)
+          supposed_values = '`always`, `contextual`, `disabled`, or a boolean'
+        elsif key == 'References'
+          supposed_values = 'an array of strings'
+        else
+          next
+        end
 
-        raise ValidationError, msg_not_boolean(parent, key, value)
+        raise ValidationError, param_error_message(parent, key, value, supposed_values)
       end
     end
 
     # FIXME: Handling colors in exception messages like this is ugly.
-    def msg_not_boolean(parent, key, value)
+    def param_error_message(parent, key, value, supposed_values)
       "#{Rainbow('').reset}" \
-        "Property #{Rainbow(key).yellow} of cop #{Rainbow(parent).yellow}" \
-        " is supposed to be a boolean and #{Rainbow(value).yellow} is not."
+        "Property #{Rainbow(key).yellow} of #{Rainbow(parent).yellow} cop " \
+        "is supposed to be #{supposed_values} and #{Rainbow(value).yellow} is not."
     end
   end
 end

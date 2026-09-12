@@ -7,7 +7,6 @@ RSpec.describe RuboCop::Runner, :isolated_environment do
     include_context 'cli spec behavior'
 
     let(:formatter) { instance_double(RuboCop::Formatter::BaseFormatter).as_null_object }
-    let(:output) { $stdout.string }
 
     before do
       create_file('2_offense.rb', '#' * 130)
@@ -25,12 +24,12 @@ RSpec.describe RuboCop::Runner, :isolated_environment do
     end
 
     describe 'invocation order' do
+      let(:invocation_order) { [] }
       let(:formatter) do
         formatter = instance_spy(RuboCop::Formatter::BaseFormatter)
-        %i[started file_started file_finished finished output]
-          .each do |message|
+        %i[started file_started file_finished finished output].each do |message|
           allow(formatter).to receive(message) do
-            puts message.to_s unless message == :output
+            invocation_order << message unless message == :output
           end
         end
         formatter
@@ -38,16 +37,18 @@ RSpec.describe RuboCop::Runner, :isolated_environment do
 
       it 'is called in the proper sequence' do
         run
-        expect(output).to eq(<<~OUTPUT)
-          started
-          file_started
-          file_finished
-          file_started
-          file_finished
-          file_started
-          file_finished
-          finished
-        OUTPUT
+        expect(invocation_order).to eq(
+          %i[
+            started
+            file_started
+            file_finished
+            file_started
+            file_finished
+            file_started
+            file_finished
+            finished
+          ]
+        )
       end
     end
 
@@ -69,7 +70,7 @@ RSpec.describe RuboCop::Runner, :isolated_environment do
       describe 'the passed files paths' do
         it 'is frozen' do
           expect(formatter).to receive(method_name) do |all_files|
-            all_files.each { |path| expect(path.frozen?).to be(true) }
+            expect(all_files).to all(be_frozen)
           end
 
           run
@@ -78,12 +79,12 @@ RSpec.describe RuboCop::Runner, :isolated_environment do
     end
 
     describe '#started' do
-      include_examples 'sends all file paths', :started
+      it_behaves_like 'sends all file paths', :started
     end
 
     describe '#finished' do
       context 'when RuboCop finished inspecting all files normally' do
-        include_examples 'sends all file paths', :started
+        it_behaves_like 'sends all file paths', :started
       end
 
       context 'when RuboCop is interrupted by user' do
@@ -131,7 +132,7 @@ RSpec.describe RuboCop::Runner, :isolated_environment do
       describe 'the passed path' do
         it 'is frozen' do
           expect(formatter).to receive(method_name).exactly(3).times do |path|
-            expect(path.frozen?).to be(true)
+            expect(path).to be_frozen
           end
 
           run
@@ -140,7 +141,7 @@ RSpec.describe RuboCop::Runner, :isolated_environment do
     end
 
     describe '#file_started' do
-      include_examples 'sends a file path', :file_started
+      it_behaves_like 'sends a file path', :file_started
 
       it 'sends file specific information hash' do
         expect(formatter).to receive(:file_started)
@@ -151,7 +152,7 @@ RSpec.describe RuboCop::Runner, :isolated_environment do
     end
 
     describe '#file_finished' do
-      include_examples 'sends a file path', :file_finished
+      it_behaves_like 'sends a file path', :file_finished
 
       it 'sends an array of detected offenses for the file' do
         expect(formatter).to receive(:file_finished).exactly(3).times do |file, offenses|
@@ -161,7 +162,7 @@ RSpec.describe RuboCop::Runner, :isolated_environment do
           when '5_offenses.rb'
             expect(offenses.size).to eq(5)
           when 'no_offense.rb'
-            expect(offenses.empty?).to be(true)
+            expect(offenses).to be_empty
           else
             raise
           end

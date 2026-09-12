@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Naming
-      # This cop checks for non-ascii characters in identifier and constant names.
+      # Checks for non-ascii characters in identifier and constant names.
       # Identifiers are always checked and whether constants are checked
       # can be controlled using AsciiConstants config.
       #
@@ -57,7 +57,7 @@ module RuboCop
         CONSTANT_MSG   = 'Use only ascii symbols in constants.'
 
         def on_new_investigation
-          processed_source.each_token do |token|
+          processed_source.tokens.each do |token|
             next if !should_check?(token) || token.text.ascii_only?
 
             message = token.type == :tIDENTIFIER ? IDENTIFIER_MSG : CONSTANT_MSG

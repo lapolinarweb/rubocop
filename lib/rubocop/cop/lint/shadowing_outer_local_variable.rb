@@ -3,23 +3,30 @@
 module RuboCop
   module Cop
     module Lint
-      # This cop checks for the use of local variable names from an outer scope
+      # Checks for the use of local variable names from an outer scope
       # in block arguments or block-local variables. This mirrors the warning
       # given by `ruby -cw` prior to Ruby 2.6:
       # "shadowing outer local variable - foo".
+      #
+      # The cop is now disabled by default to match the upstream Ruby behavior.
+      # It's useful, however, if you'd like to avoid shadowing variables from outer
+      # scopes, which some people consider an anti-pattern that makes it harder
+      # to keep track of what's going on in a program.
       #
       # NOTE: Shadowing of variables in block passed to `Ractor.new` is allowed
       # because `Ractor` should not access outer variables.
       # eg. following style is encouraged:
       #
-      #   worker_id, pipe = env
-      #   Ractor.new(worker_id, pipe) do |worker_id, pipe|
-      #   end
+      # [source,ruby]
+      # ----
+      # worker_id, pipe = env
+      # Ractor.new(worker_id, pipe) do |worker_id, pipe|
+      # end
+      # ----
       #
       # @example
       #
       #   # bad
-      #
       #   def some_method
       #     foo = 1
       #
@@ -28,10 +35,7 @@ module RuboCop
       #     end
       #   end
       #
-      # @example
-      #
       #   # good
-      #
       #   def some_method
       #     foo = 1
       #
@@ -57,9 +61,68 @@ module RuboCop
 
           outer_local_variable = variable_table.find_variable(variable.name)
           return unless outer_local_variable
+          return if variable_used_in_declaration_of_outer?(variable, outer_local_variable)
+          return if same_conditions_node_different_branch?(variable, outer_local_variable)
 
           message = format(MSG, variable: variable.name)
           add_offense(variable.declaration_node, message: message)
+        end
+
+        private
+
+        def variable_used_in_declaration_of_outer?(variable, outer_local_variable)
+          variable.scope.node.each_ancestor.any?(outer_local_variable.declaration_node)
+        end
+
+        def same_conditions_node_different_branch?(variable, outer_local_variable)
+          return true if different_case_in_branch?(variable, outer_local_variable)
+
+          variable_node = variable_node(variable)
+          return false unless node_or_its_ascendant_conditional?(variable_node)
+
+          outer_local_variable_node =
+            find_conditional_node_from_ascendant(outer_local_variable.declaration_node)
+          return false unless outer_local_variable_node
+          return false unless outer_local_variable_node.conditional?
+          return true if variable_node == outer_local_variable_node
+
+          outer_local_variable_node.if_type? &&
+            variable_node == outer_local_variable_node.else_branch
+        end
+
+        # `case ... in` binds variables in the pattern itself, so a block argument in one
+        # `in` branch does not shadow a pattern variable from a different `in` branch of the
+        # same `case` (the branches are mutually exclusive).
+        def different_case_in_branch?(variable, outer_local_variable)
+          inner_branch = variable.scope.node.each_ancestor(:in_pattern).first
+          outer_branch = outer_local_variable.declaration_node.each_ancestor(:in_pattern).first
+
+          return false unless inner_branch && outer_branch
+
+          inner_branch != outer_branch && inner_branch.parent == outer_branch.parent
+        end
+
+        def variable_node(variable)
+          parent_node = variable.scope.node.parent
+
+          if parent_node.when_type?
+            parent_node.parent
+          else
+            parent_node
+          end
+        end
+
+        def find_conditional_node_from_ascendant(node)
+          return unless (parent = node.parent)
+          return parent if parent.conditional?
+
+          find_conditional_node_from_ascendant(parent)
+        end
+
+        def node_or_its_ascendant_conditional?(node)
+          return true if node.conditional?
+
+          !!find_conditional_node_from_ascendant(node)
         end
       end
     end

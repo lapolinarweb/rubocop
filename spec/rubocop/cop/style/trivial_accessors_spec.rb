@@ -317,7 +317,20 @@ RSpec.describe RuboCop::Cop::Style::TrivialAccessors, :config do
     RUBY
   end
 
-  it 'accepts reader nested within an instance_eval calll' do
+  it 'accepts writer nested within an instance_eval numblock call' do
+    expect_no_offenses(<<~RUBY)
+      something.instance_eval do
+        _1
+        begin
+          def bar=(bar)
+            @bar = bar
+          end
+        end
+      end
+    RUBY
+  end
+
+  it 'accepts reader nested within an instance_eval call' do
     expect_no_offenses(<<~RUBY)
       something.instance_eval do
         begin
@@ -391,6 +404,19 @@ RSpec.describe RuboCop::Cop::Style::TrivialAccessors, :config do
       expect_offense(<<~RUBY)
         class Foo
           def foo?
+          ^^^ Use `attr_reader` to define trivial reader methods.
+            @foo
+          end
+        end
+      RUBY
+
+      expect_no_corrections
+    end
+
+    it 'does not accept predicate-like reader defined as a class method' do
+      expect_offense(<<~RUBY)
+        class Foo
+          def self.foo?
           ^^^ Use `attr_reader` to define trivial reader methods.
             @foo
           end

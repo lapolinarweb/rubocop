@@ -5,7 +5,7 @@ require 'resolv'
 module RuboCop
   module Cop
     module Style
-      # This cop checks for hardcoded IP addresses, which can make code
+      # Checks for hardcoded IP addresses, which can make code
       # brittle. IP addresses are likely to need to be changed when code
       # is deployed to a different server or environment, which may break
       # a deployment if forgotten. Prefer setting IP addresses in ENV or
@@ -32,7 +32,7 @@ module RuboCop
 
           # To try to avoid doing two regex checks on every string,
           # shortcut out if the string does not look like an IP address
-          return false unless could_be_ip?(contents)
+          return false unless potential_ip?(contents)
 
           ::Resolv::IPv4::Regex.match?(contents) || ::Resolv::IPv6::Regex.match?(contents)
         end
@@ -48,11 +48,10 @@ module RuboCop
         private
 
         def allowed_addresses
-          allowed_addresses = cop_config['AllowedAddresses']
-          Array(allowed_addresses).map(&:downcase)
+          @allowed_addresses ||= Array(cop_config['AllowedAddresses']).map(&:downcase).freeze
         end
 
-        def could_be_ip?(str)
+        def potential_ip?(str)
           # If the string is too long, it can't be an IP
           return false if too_long?(str)
 

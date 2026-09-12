@@ -58,6 +58,8 @@ RSpec.describe RuboCop::Cop::Layout::TrailingEmptyLines, :config do
         x = 0
              ^{} Final newline missing.
       RUBY
+
+      expect_correction("x = 0\n")
     end
 
     it 'registers an offense for no final newline after block comment' do
@@ -72,9 +74,20 @@ RSpec.describe RuboCop::Cop::Layout::TrailingEmptyLines, :config do
         =end
             ^{} Final newline missing.
       RUBY
+
+      expect_correction(<<~RUBY)
+        puts 'testing rubocop when final new line is missing
+                                  after block comments'
+
+        =begin
+        first line
+        second line
+        third line
+        =end
+      RUBY
     end
 
-    it 'auto-corrects even if some lines have space' do
+    it 'autocorrects even if some lines have space' do
       expect_offense(<<~RUBY)
         x = 0
 
@@ -86,6 +99,14 @@ RSpec.describe RuboCop::Cop::Layout::TrailingEmptyLines, :config do
 
       expect_correction("x = 0\n")
     end
+
+    it 'accepts the `%` form string `"%\n\n"` at the end of file' do
+      expect_no_offenses("%\n\n")
+    end
+
+    it 'accepts when assigning the `%` form string `"%\n\n"` to a variable at the end of file' do
+      expect_no_offenses("x = %\n\n")
+    end
   end
 
   context 'when EnforcedStyle is final_blank_line' do
@@ -96,6 +117,8 @@ RSpec.describe RuboCop::Cop::Layout::TrailingEmptyLines, :config do
         x = 0\n
         ^{} Trailing blank line missing.
       RUBY
+
+      expect_correction("x = 0\n\n")
     end
 
     it 'registers an offense for multiple trailing blank lines' do
@@ -133,24 +156,34 @@ RSpec.describe RuboCop::Cop::Layout::TrailingEmptyLines, :config do
         x = 0
              ^{} Final newline missing.
       RUBY
+
+      expect_correction("x = 0\n\n")
     end
 
     it 'accepts final blank line' do
       expect_no_offenses("x = 0\n\n")
     end
 
-    it 'auto-corrects missing blank line' do
+    it 'autocorrects missing blank line' do
       expect_correction(<<~RUBY, source: "x = 0\n")
         x = 0
 
       RUBY
     end
 
-    it 'auto-corrects missing newline' do
+    it 'autocorrects missing newline' do
       expect_correction(<<~RUBY, source: 'x = 0')
         x = 0
 
       RUBY
+    end
+
+    it 'accepts the `%` form string `"%\n\n"` at the end of file' do
+      expect_no_offenses("%\n\n")
+    end
+
+    it 'accepts when assigning the `%` form string `"%\n\n"` to a variable at the end of file' do
+      expect_no_offenses("x = %\n\n")
     end
   end
 end

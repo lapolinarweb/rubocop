@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Layout
-      # Here we check if the elements of a multi-line array literal are
+      # Checks that the elements of a multi-line array literal are
       # aligned.
       #
       # @example EnforcedStyle: with_first_element (default)
@@ -76,7 +76,7 @@ module RuboCop
         end
 
         def target_method_lineno(node)
-          node.loc.line
+          node.bracketed? ? node.loc.line : node.parent.loc.line
         end
       end
     end

@@ -3,22 +3,18 @@
 module RuboCop
   module Cop
     module Lint
-      # This cop checks for `rescue` blocks targeting the Exception class.
+      # Checks for `rescue` blocks targeting the `Exception` class.
       #
       # @example
       #
       #   # bad
-      #
       #   begin
       #     do_something
       #   rescue Exception
       #     handle_exception
       #   end
       #
-      # @example
-      #
       #   # good
-      #
       #   begin
       #     do_something
       #   rescue ArgumentError
@@ -28,10 +24,7 @@ module RuboCop
         MSG = 'Avoid rescuing the `Exception` class. Perhaps you meant to rescue `StandardError`?'
 
         def on_resbody(node)
-          return unless node.children.first
-
-          rescue_args = node.children.first.children
-          return unless rescue_args.any? { |a| targets_exception?(a) }
+          return unless node.exceptions.any? { |exception| targets_exception?(exception) }
 
           add_offense(node)
         end

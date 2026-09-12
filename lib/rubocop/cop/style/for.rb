@@ -3,10 +3,13 @@
 module RuboCop
   module Cop
     module Style
-      # This cop looks for uses of the `for` keyword or `each` method. The
+      # Looks for uses of the `for` keyword or `each` method. The
       # preferred alternative is set in the EnforcedStyle configuration
       # parameter. An `each` call with a block on a single line is always
       # allowed.
+      #
+      # NOTE: `each` is preferred in idiomatic Ruby because `for` leaks
+      # its loop variable into the surrounding scope.
       #
       # @example EnforcedStyle: each (default)
       #   # bad
@@ -38,9 +41,12 @@ module RuboCop
       #     end
       #   end
       #
+      # @safety
+      #   This cop's autocorrection is unsafe because the scope of
+      #   variables is different between `each` and `for`.
+      #
       class For < Base
         include ConfigurableEnforcedStyle
-        include RangeHelp
         extend AutoCorrector
 
         EACH_LENGTH = 'each'.length
@@ -62,6 +68,9 @@ module RuboCop
           return unless suspect_enumerable?(node)
 
           if style == :for
+            return unless node.receiver
+            return if rescue_or_ensure_body?(node)
+
             add_offense(node, message: PREFER_FOR) do |corrector|
               EachToForCorrector.new(node).call(corrector)
               opposite_style_detected
@@ -71,10 +80,17 @@ module RuboCop
           end
         end
 
+        alias on_numblock on_block
+        alias on_itblock on_block
+
         private
 
         def suspect_enumerable?(node)
-          node.multiline? && node.send_node.method?(:each) && !node.send_node.arguments?
+          node.multiline? && node.method?(:each) && !node.send_node.arguments?
+        end
+
+        def rescue_or_ensure_body?(node)
+          node.body&.type?(:rescue, :ensure)
         end
       end
     end

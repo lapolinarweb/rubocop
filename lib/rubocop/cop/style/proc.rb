@@ -3,8 +3,9 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for uses of Proc.new where Kernel#proc
-      # would be more appropriate.
+      # Checks for uses of `Proc.new` where `Kernel#proc`
+      # would be more appropriate. `proc` is the shorter and
+      # more idiomatic way to create procs in Ruby.
       #
       # @example
       #   # bad
@@ -19,7 +20,7 @@ module RuboCop
         MSG = 'Use `proc` instead of `Proc.new`.'
 
         # @!method proc_new?(node)
-        def_node_matcher :proc_new?, '(block $(send (const {nil? cbase} :Proc) :new) ...)'
+        def_node_matcher :proc_new?, '(any_block $(send (const {nil? cbase} :Proc) :new) ...)'
 
         def on_block(node)
           proc_new?(node) do |block_method|
@@ -28,6 +29,9 @@ module RuboCop
             end
           end
         end
+
+        alias on_numblock on_block
+        alias on_itblock on_block
       end
     end
   end

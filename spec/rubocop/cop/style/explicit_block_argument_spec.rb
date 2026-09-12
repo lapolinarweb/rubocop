@@ -236,4 +236,77 @@ RSpec.describe RuboCop::Cop::Style::ExplicitBlockArgument, :config do
       end
     RUBY
   end
+
+  it 'registers an offense when using arguments with zsuper in a method definition' do
+    expect_offense(<<~RUBY)
+      def my_method(x, y = 42, *args, **options)
+        super { yield }
+        ^^^^^^^^^^^^^^^ Consider using explicit block argument in the surrounding method's signature over `yield`.
+      end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      def my_method(x, y = 42, *args, **options, &block)
+        super(x, y, *args, **options, &block)
+      end
+    RUBY
+  end
+
+  it 'registers an offense when using arguments with zsuper in a singleton method definition' do
+    expect_offense(<<~RUBY)
+      def self.my_method(x, y = 42, *args, **options)
+        super { yield }
+        ^^^^^^^^^^^^^^^ Consider using explicit block argument in the surrounding method's signature over `yield`.
+      end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      def self.my_method(x, y = 42, *args, **options, &block)
+        super(x, y, *args, **options, &block)
+      end
+    RUBY
+  end
+
+  it 'registers an offense and corrects when there are two methods with the same implementation and name' do
+    expect_offense(<<~RUBY)
+      def foo
+        bar { |baz| yield baz }
+        ^^^^^^^^^^^^^^^^^^^^^^^ Consider using explicit block argument in the surrounding method's signature over `yield`.
+      end
+
+      def foo
+        bar { |baz| yield baz }
+        ^^^^^^^^^^^^^^^^^^^^^^^ Consider using explicit block argument in the surrounding method's signature over `yield`.
+      end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      def foo(&block)
+        bar(&block)
+      end
+
+      def foo(&block)
+        bar(&block)
+      end
+    RUBY
+  end
+
+  it 'registers an offense when there are nested method definitions' do
+    expect_offense(<<~RUBY)
+      def foo
+        def bar.baz
+          qux { |quux| yield quux }
+          ^^^^^^^^^^^^^^^^^^^^^^^^^ Consider using explicit block argument in the surrounding method's signature over `yield`.
+        end
+      end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      def foo
+        def bar.baz(&block)
+          qux(&block)
+        end
+      end
+    RUBY
+  end
 end

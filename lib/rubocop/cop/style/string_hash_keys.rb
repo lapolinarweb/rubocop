@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for the use of strings as keys in hashes. The use of
+      # Checks for the use of strings as keys in hashes. The use of
       # symbols is preferred instead.
       #
       # @safety
@@ -41,10 +41,14 @@ module RuboCop
 
         def on_pair(node)
           return unless string_hash_key?(node)
+          return if node.key.heredoc?
+
+          key_content = node.key.str_content
+          return unless key_content.valid_encoding?
           return if receive_environments_method?(node)
 
           add_offense(node.key) do |corrector|
-            symbol_content = node.key.str_content.to_sym.inspect
+            symbol_content = key_content.to_sym.inspect
 
             corrector.replace(node.key, symbol_content)
           end

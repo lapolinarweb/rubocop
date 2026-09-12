@@ -3,11 +3,13 @@
 module RuboCop
   module Cop
     module Style
-      # This cop identifies places where `fetch(key) { value }`
-      # can be replaced by `fetch(key, value)`.
+      # Identifies places where `fetch(key) { value }` can be replaced by `fetch(key, value)`.
       #
-      # In such cases `fetch(key, value)` method is faster
-      # than `fetch(key) { value }`.
+      # In such cases `fetch(key, value)` method is faster than `fetch(key) { value }`.
+      #
+      # NOTE: The block string `'value'` in `hash.fetch(:key) { 'value' }` is detected
+      # when frozen string literal magic comment is enabled (i.e. `# frozen_string_literal: true`),
+      # but not when disabled.
       #
       # @safety
       #   This cop is unsafe because it cannot be guaranteed that the receiver
@@ -45,12 +47,12 @@ module RuboCop
         # @!method redundant_fetch_block_candidate?(node)
         def_node_matcher :redundant_fetch_block_candidate?, <<~PATTERN
           (block
-            $(send _ :fetch _)
+            $(call _ :fetch _)
             (args)
-            ${nil? #basic_literal? #const_type?})
+            ${nil? basic_literal? const_type?})
         PATTERN
 
-        def on_block(node)
+        def on_block(node) # rubocop:disable InternalAffairs/NumblockHandler, InternalAffairs/ItblockHandler -- the matched body is a literal or a constant
           redundant_fetch_block_candidate?(node) do |send, body|
             return if should_not_check?(send, body)
 
@@ -59,23 +61,15 @@ module RuboCop
             bad = build_bad_method(send, body)
 
             add_offense(range, message: format(MSG, good: good, bad: bad)) do |corrector|
-              receiver, _, key = send.children
+              _, _, key = send.children
               default_value = body ? body.source : 'nil'
 
-              corrector.replace(node, "#{receiver.source}.fetch(#{key.source}, #{default_value})")
+              corrector.replace(range, "fetch(#{key.source}, #{default_value})")
             end
           end
         end
 
         private
-
-        def basic_literal?(node)
-          node&.basic_literal?
-        end
-
-        def const_type?(node)
-          node&.const_type?
-        end
 
         def should_not_check?(send, body)
           (body&.const_type? && !check_for_constant?) ||

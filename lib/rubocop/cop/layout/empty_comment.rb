@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Layout
-      # This cop checks empty comment.
+      # Checks empty comment.
       #
       # @example
       #   # bad
@@ -95,18 +95,19 @@ module RuboCop
         end
 
         def autocorrect(corrector, node)
-          previous_token = previous_token(node)
-          range = if previous_token && node.loc.line == previous_token.line
-                    range_with_surrounding_space(range: node.loc.expression, newlines: false)
+          range = if inline_comment?(node)
+                    range_with_surrounding_space(node.source_range, newlines: false)
                   else
-                    range_by_whole_lines(node.loc.expression, include_final_newline: true)
+                    range_by_whole_lines(node.source_range, include_final_newline: true)
                   end
 
           corrector.remove(range)
         end
 
         def concat_consecutive_comments(comments)
-          consecutive_comments = comments.chunk_while { |i, j| i.loc.line.succ == j.loc.line }
+          consecutive_comments = comments.chunk_while do |i, j|
+            i.loc.line.succ == j.loc.line && i.loc.column == j.loc.column
+          end
 
           consecutive_comments.map do |chunk|
             joined_text = chunk.map { |c| comment_text(c) }.join
@@ -136,14 +137,13 @@ module RuboCop
           cop_config['AllowMarginComment']
         end
 
-        def current_token(comment)
-          processed_source.find_token { |token| token.pos == comment.loc.expression }
-        end
-
-        def previous_token(node)
-          current_token = current_token(node)
-          index = processed_source.tokens.index(current_token)
-          index.zero? ? nil : processed_source.tokens[index - 1]
+        # A comment is inline when code precedes it on the same line. Detecting this
+        # from the source (rather than the token stream) is required because, for a
+        # comment trailing a heredoc opener, the preceding token is the heredoc end on
+        # a later line, which would wrongly trigger whole-line removal of the opener.
+        def inline_comment?(comment)
+          preceding_source = processed_source.lines[comment.loc.line - 1][0...comment.loc.column]
+          !preceding_source.strip.empty?
         end
       end
     end

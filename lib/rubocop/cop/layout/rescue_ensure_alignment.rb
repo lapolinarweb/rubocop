@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Layout
-      # This cop checks whether the rescue and ensure keywords are aligned
+      # Checks whether the rescue and ensure keywords are aligned
       # properly.
       #
       # @example
@@ -29,8 +29,7 @@ module RuboCop
         MSG = '`%<kw_loc>s` at %<kw_loc_line>d, %<kw_loc_column>d is not ' \
               'aligned with `%<beginning>s` at ' \
               '%<begin_loc_line>d, %<begin_loc_column>d.'
-        ANCESTOR_TYPES = %i[kwbegin def defs class module block].freeze
-        ANCESTOR_TYPES_WITH_ACCESS_MODIFIERS = %i[def defs].freeze
+        ANCESTOR_TYPES = %i[kwbegin any_def class module sclass any_block].freeze
         ALTERNATIVE_ACCESS_MODIFIERS = %i[public_class_method private_class_method].freeze
 
         def on_resbody(node)
@@ -61,7 +60,7 @@ module RuboCop
           alignment_loc = alignment_location(alignment_node)
           kw_loc        = node.loc.keyword
 
-          return if alignment_loc.column == kw_loc.column || alignment_loc.line == kw_loc.line
+          return if alignment_loc.column == kw_loc.column || same_line?(alignment_loc, kw_loc)
 
           add_offense(
             kw_loc, message: format_message(alignment_node, alignment_loc, kw_loc)
@@ -92,20 +91,22 @@ module RuboCop
           )
         end
 
+        # rubocop:disable-next Metrics/AbcSize, Metrics/MethodLength
         def alignment_source(node, starting_loc)
           ending_loc =
             case node.type
-            when :block, :kwbegin
+            when :block, :numblock, :itblock, :kwbegin
               node.loc.begin
             when :def, :defs, :class, :module,
                  :lvasgn, :ivasgn, :cvasgn, :gvasgn, :casgn
               node.loc.name
+            when :sclass
+              node.identifier.source_range
             when :masgn
-              mlhs_node, = *node
-              mlhs_node.loc.expression
+              node.lhs.source_range
             else
-              # It is a wrapper with access modifier.
-              node.child_nodes.first.loc.name
+              # It is a wrapper with receiver of object attribute or access modifier.
+              node.receiver&.source_range || node.child_nodes.first.loc.name
             end
 
           range_between(starting_loc.begin_pos, ending_loc.end_pos).source
@@ -143,7 +144,7 @@ module RuboCop
             return true
           end
 
-          do_keyword_line == selector.line && rescue_keyword_column == selector.column
+          do_keyword_line == selector&.line && rescue_keyword_column == selector.column
         end
 
         def aligned_with_leading_dot?(do_keyword_line, send_node_loc, rescue_keyword_column)
@@ -161,8 +162,7 @@ module RuboCop
         end
 
         def access_modifier_node(node)
-          return nil unless
-            ANCESTOR_TYPES_WITH_ACCESS_MODIFIERS.include?(node.type)
+          return nil unless node.any_def_type?
 
           access_modifier_node = node.ancestors.first
           return nil unless access_modifier?(access_modifier_node)
@@ -195,8 +195,16 @@ module RuboCop
         def alignment_location(alignment_node)
           if begin_end_alignment_style == 'start_of_line'
             start_line_range(alignment_node)
+          elsif alignment_node.any_block_type?
+            # If the alignment node is a block, the `rescue`/`ensure` keyword should
+            # be aligned to the start of the block. It is possible that the block's
+            # `send_node` spans multiple lines, in which case it should align to the
+            # start of the last line.
+            send_node = alignment_node.send_node
+            range = processed_source.buffer.line_range(send_node.last_line)
+            range.adjust(begin_pos: range.source =~ /\S/)
           else
-            alignment_node.loc.expression
+            alignment_node.source_range
           end
         end
 

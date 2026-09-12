@@ -3,16 +3,39 @@
 module RuboCop
   module Cop
     module Metrics
-      # This cop checks for excessive nesting of conditional and looping
-      # constructs.
+      # Checks for excessive nesting of conditional and looping constructs.
+      # Deeply nested code is harder to read, understand, and maintain.
+      # Extracting nested logic into methods improves clarity.
       #
-      # You can configure if blocks are considered using the `CountBlocks`
-      # option. When set to `false` (the default) blocks are not counted
-      # towards the nesting level. Set to `true` to count blocks as well.
+      # You can configure if blocks are considered using the `CountBlocks` and `CountModifierForms`
+      # options. When both are set to `false` (the default) blocks and modifier forms are not
+      # counted towards the nesting level. Set them to `true` to include these in the nesting level
+      # calculation as well.
       #
       # The maximum level of nesting allowed is configurable.
+      #
+      # @example Max: 3 (default)
+      #   # bad
+      #   if condition1
+      #     if condition2
+      #       if condition3
+      #         if condition4
+      #           do_something
+      #         end
+      #       end
+      #     end
+      #   end
+      #
+      #   # good
+      #   if condition1
+      #     if condition2
+      #       if condition3
+      #         do_something
+      #       end
+      #     end
+      #   end
       class BlockNesting < Base
-        NESTING_BLOCKS = %i[case if while while_post until until_post for resbody].freeze
+        NESTING_BLOCKS = %i[case case_match if while while_post until until_post for resbody].freeze
 
         exclude_limit 'Max'
 
@@ -27,7 +50,7 @@ module RuboCop
 
         def check_nesting_level(node, max, current_level)
           if consider_node?(node)
-            current_level += 1 unless node.if_type? && node.elsif?
+            current_level += 1 if count_if_block?(node)
             if current_level > max
               self.max = current_level
               unless part_of_ignored_node?(node)
@@ -41,10 +64,18 @@ module RuboCop
           end
         end
 
+        def count_if_block?(node)
+          return true unless node.if_type?
+          return false if node.elsif?
+          return count_modifier_forms? if node.modifier_form?
+
+          true
+        end
+
         def consider_node?(node)
           return true if NESTING_BLOCKS.include?(node.type)
 
-          count_blocks? && node.block_type?
+          count_blocks? && node.any_block_type?
         end
 
         def message(max)
@@ -52,7 +83,11 @@ module RuboCop
         end
 
         def count_blocks?
-          cop_config['CountBlocks']
+          cop_config.fetch('CountBlocks', false)
+        end
+
+        def count_modifier_forms?
+          cop_config.fetch('CountModifierForms', false)
         end
       end
     end

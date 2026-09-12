@@ -57,6 +57,14 @@ RSpec.describe RuboCop::Cop::Layout::ClosingParenthesisIndentation, :config do
         RUBY
       end
 
+      it 'does not register an offense when using keyword splat arguments' do
+        expect_no_offenses(<<~RUBY)
+          some_method(x,
+            **options
+          )
+        RUBY
+      end
+
       it 'accepts a correctly indented )' do
         expect_no_offenses(<<~RUBY)
           some_method(a,
@@ -104,6 +112,15 @@ RSpec.describe RuboCop::Cop::Layout::ClosingParenthesisIndentation, :config do
           b =
             some_method(a,
                        )
+        RUBY
+      end
+
+      it 'does not register offense for aligned parens when first parameter is a hash' do
+        expect_no_offenses(<<~RUBY)
+          some_method({ foo: 1, bar: 2 },
+            x: 1,
+            y: 2
+          )
         RUBY
       end
     end
@@ -507,5 +524,29 @@ RSpec.describe RuboCop::Cop::Layout::ClosingParenthesisIndentation, :config do
         y
       end
     RUBY
+  end
+
+  context 'when the cop is configured with `IndentationWidth`' do
+    let(:config) do
+      RuboCop::Config.new(
+        'Layout/ClosingParenthesisIndentation' => { 'IndentationWidth' => 1 },
+        'Layout/IndentationWidth' => { 'Width' => 2 }
+      )
+    end
+
+    it 'uses the per-cop `IndentationWidth` to determine the expected column' do
+      expect_offense(<<~RUBY)
+        some_method(
+          a
+        )
+        ^ Indent `)` to column 1 (not 0)
+      RUBY
+
+      expect_correction(<<~RUBY)
+        some_method(
+          a
+         )
+      RUBY
+    end
   end
 end

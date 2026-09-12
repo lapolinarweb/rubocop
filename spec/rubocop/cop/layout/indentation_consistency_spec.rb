@@ -11,7 +11,7 @@ RSpec.describe RuboCop::Cop::Layout::IndentationConsistency, :config do
     end
 
     it 'accepts when using access modifier at the top level' do
-      expect_no_offenses(<<~'RUBY')
+      expect_no_offenses(<<~RUBY)
         public
 
         def foo
@@ -19,9 +19,9 @@ RSpec.describe RuboCop::Cop::Layout::IndentationConsistency, :config do
       RUBY
     end
 
-    it 'registers and corrects an offense when using access modifier and dedented method definition ' \
+    it 'registers and corrects an offense when using access modifier and indented method definition ' \
        'at the top level' do
-      expect_offense(<<~'RUBY')
+      expect_offense(<<~RUBY)
         public
 
           def foo
@@ -29,7 +29,7 @@ RSpec.describe RuboCop::Cop::Layout::IndentationConsistency, :config do
           end
       RUBY
 
-      expect_correction(<<~'RUBY')
+      expect_correction(<<~RUBY)
         public
 
         def foo
@@ -808,7 +808,7 @@ RSpec.describe RuboCop::Cop::Layout::IndentationConsistency, :config do
       RUBY
     end
 
-    it 'does not auto-correct an offense within another offense' do # rubocop:disable InternalAffairs/ExampleDescription
+    it 'does not autocorrect an offense within another offense' do # rubocop:disable InternalAffairs/ExampleDescription -- the description names the offense twice on purpose
       expect_offense(<<~RUBY)
         require 'spec_helper'
         describe ArticlesController do

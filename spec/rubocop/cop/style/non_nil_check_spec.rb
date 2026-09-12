@@ -15,6 +15,17 @@ RSpec.describe RuboCop::Cop::Style::NonNilCheck, :config do
       RUBY
     end
 
+    it 'parenthesizes an operator-expression receiver' do
+      expect_offense(<<~RUBY)
+        a + b != nil
+        ^^^^^^^^^^^^ Prefer `!(a + b).nil?` over `a + b != nil`.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        !(a + b).nil?
+      RUBY
+    end
+
     it 'does not register an offense for != 0' do
       expect_no_offenses('x != 0')
     end
@@ -65,13 +76,15 @@ RSpec.describe RuboCop::Cop::Style::NonNilCheck, :config do
       expect_no_offenses('!nil?')
     end
 
-    it 'registers an offense but does not correct when the code was not modified' do
+    it 'registers an offense and corrects when receiver contains spaces' do
       expect_offense(<<~RUBY)
         return nil unless (line =~ //) != nil
                           ^^^^^^^^^^^^^^^^^^^ Prefer `!(line =~ //).nil?` over `(line =~ //) != nil`.
       RUBY
 
-      expect_no_corrections
+      expect_correction(<<~RUBY)
+        return nil unless !(line =~ //).nil?
+      RUBY
     end
   end
 

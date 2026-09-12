@@ -3,13 +3,17 @@
 module RuboCop
   module Cop
     module Security
-      # This cop checks for the use of `Kernel#open` and `URI.open`.
+      # Checks for the use of `Kernel#open` and `URI.open` with dynamic
+      # data.
       #
       # `Kernel#open` and `URI.open` enable not only file access but also process
       # invocation by prefixing a pipe symbol (e.g., `open("| ls")`).
       # So, it may lead to a serious security risk by using variable input to
       # the argument of `Kernel#open` and `URI.open`. It would be better to use
       # `File.open`, `IO.popen` or `URI.parse#open` explicitly.
+      #
+      # NOTE: `open` and `URI.open` with literal strings are not flagged by this
+      # cop.
       #
       # @safety
       #   This cop could register false positives if `open` is redefined
@@ -18,19 +22,26 @@ module RuboCop
       # @example
       #   # bad
       #   open(something)
+      #   open("| #{something}")
+      #   open("| foo")
       #   URI.open(something)
       #
       #   # good
       #   File.open(something)
       #   IO.popen(something)
       #   URI.parse(something).open
+      #
+      #   # good (literal strings)
+      #   open("foo.text")
+      #   URI.open("http://example.com")
+      #   URI.parse(url).open
       class Open < Base
         MSG = 'The use of `%<receiver>sopen` is a serious security risk.'
         RESTRICT_ON_SEND = %i[open].freeze
 
         # @!method open?(node)
         def_node_matcher :open?, <<~PATTERN
-          (send ${nil? (const {nil? cbase} :URI)} :open $!str ...)
+          (send ${nil? (const {nil? cbase} :URI)} :open $_ ...)
         PATTERN
 
         def on_send(node)

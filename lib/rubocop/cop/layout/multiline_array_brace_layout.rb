@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Layout
-      # This cop checks that the closing brace in an array literal is either
+      # Checks that the closing brace in an array literal is either
       # on the same line as the last array element or on a new line.
       #
       # When using the `symmetrical` (default) style:
@@ -27,67 +27,67 @@ module RuboCop
       # line as the last element of the array.
       #
       # @example EnforcedStyle: symmetrical (default)
-      #     # bad
-      #     [ :a,
-      #       :b
-      #     ]
+      #   # bad
+      #   [ :a,
+      #     :b
+      #   ]
       #
-      #     # bad
-      #     [
-      #       :a,
-      #       :b ]
+      #   # bad
+      #   [
+      #     :a,
+      #     :b ]
       #
-      #     # good
-      #     [ :a,
-      #       :b ]
+      #   # good
+      #   [ :a,
+      #     :b ]
       #
-      #     # good
-      #     [
-      #       :a,
-      #       :b
-      #     ]
+      #   # good
+      #   [
+      #     :a,
+      #     :b
+      #   ]
       #
       # @example EnforcedStyle: new_line
-      #     # bad
-      #     [
-      #       :a,
-      #       :b ]
+      #   # bad
+      #   [
+      #     :a,
+      #     :b ]
       #
-      #     # bad
-      #     [ :a,
-      #       :b ]
+      #   # bad
+      #   [ :a,
+      #     :b ]
       #
-      #     # good
-      #     [ :a,
-      #       :b
-      #     ]
+      #   # good
+      #   [ :a,
+      #     :b
+      #   ]
       #
-      #     # good
-      #     [
-      #       :a,
-      #       :b
-      #     ]
+      #   # good
+      #   [
+      #     :a,
+      #     :b
+      #   ]
       #
       # @example EnforcedStyle: same_line
-      #     # bad
-      #     [ :a,
-      #       :b
-      #     ]
+      #   # bad
+      #   [ :a,
+      #     :b
+      #   ]
       #
-      #     # bad
-      #     [
-      #       :a,
-      #       :b
-      #     ]
+      #   # bad
+      #   [
+      #     :a,
+      #     :b
+      #   ]
       #
-      #     # good
-      #     [
-      #       :a,
-      #       :b ]
+      #   # good
+      #   [
+      #     :a,
+      #     :b ]
       #
-      #     # good
-      #     [ :a,
-      #       :b ]
+      #   # good
+      #   [ :a,
+      #     :b ]
       class MultilineArrayBraceLayout < Base
         include MultilineLiteralBraceLayout
         extend AutoCorrector

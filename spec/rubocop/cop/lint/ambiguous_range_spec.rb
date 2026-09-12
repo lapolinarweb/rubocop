@@ -14,6 +14,17 @@ RSpec.describe RuboCop::Cop::Lint::AmbiguousRange, :config do
         RUBY
       end
 
+      it 'registers an offense and corrects when boundary is an operator expression' do
+        expect_offense(<<~RUBY)
+          x - 1#{operator}2
+          ^^^^^ Wrap complex range boundaries with parentheses to avoid ambiguity.
+        RUBY
+
+        expect_correction(<<~RUBY)
+          (x - 1)#{operator}2
+        RUBY
+      end
+
       it 'registers an offense and corrects when the entire range is parenthesized but contains complex boundaries' do
         expect_offense(<<~RUBY)
           (x || 1#{operator}2)
@@ -55,10 +66,21 @@ RSpec.describe RuboCop::Cop::Lint::AmbiguousRange, :config do
         RUBY
       end
 
-      it 'does not register an offense if the range is composed of basic literals' do
+      it 'does not register an offense when boundary is an element reference' do
+        expect_no_offenses(<<~RUBY)
+          x[1]#{operator}2
+        RUBY
+      end
+
+      it 'does not register an offense if the range is composed of literals' do
         expect_no_offenses(<<~RUBY)
           1#{operator}2
           'a'#{operator}'z'
+          "\#{foo}-\#{bar}"#{operator}'123-4567'
+          `date`#{operator}'foobar'
+          :"\#{foo}-\#{bar}"#{operator}:baz
+          /a/#{operator}/b/
+          42#{operator}nil
         RUBY
       end
 
@@ -71,6 +93,13 @@ RSpec.describe RuboCop::Cop::Lint::AmbiguousRange, :config do
       it 'does not register an offense for a constant' do
         expect_no_offenses(<<~RUBY)
           Foo::MIN#{operator}Foo::MAX
+        RUBY
+      end
+
+      it 'does not register an offense for `self`' do
+        expect_no_offenses(<<~RUBY)
+          self#{operator}42
+          42#{operator}self
         RUBY
       end
 
@@ -97,7 +126,7 @@ RSpec.describe RuboCop::Cop::Lint::AmbiguousRange, :config do
       end
 
       context 'method calls' do
-        shared_examples_for 'common behavior' do
+        shared_examples 'common behavior' do
           it 'does not register an offense for a non-chained method call' do
             expect_no_offenses(<<~RUBY)
               a#{operator}b
@@ -113,6 +142,12 @@ RSpec.describe RuboCop::Cop::Lint::AmbiguousRange, :config do
           it 'does not register an offense for a unary -' do
             expect_no_offenses(<<~RUBY)
               -a#{operator}10
+            RUBY
+          end
+
+          it 'does not register an offense for rational literals' do
+            expect_no_offenses(<<~RUBY)
+              1/10r#{operator}1/3r
             RUBY
           end
 

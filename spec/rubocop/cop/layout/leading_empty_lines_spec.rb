@@ -81,7 +81,7 @@ RSpec.describe RuboCop::Cop::Layout::LeadingEmptyLines, :config do
     RUBY
   end
 
-  context 'auto-correct' do
+  context 'autocorrect' do
     context 'in collaboration' do
       let(:config) do
         RuboCop::Config.new('Layout/SpaceAroundEqualsInParameterDefault' => {
@@ -90,11 +90,8 @@ RSpec.describe RuboCop::Cop::Layout::LeadingEmptyLines, :config do
                             })
       end
       let(:cops) do
-        cop_classes = [
-          described_class,
-          ::RuboCop::Cop::Layout::SpaceAroundEqualsInParameterDefault
-        ]
-        ::RuboCop::Cop::Registry.new(cop_classes)
+        cop_classes = [described_class, RuboCop::Cop::Layout::SpaceAroundEqualsInParameterDefault]
+        RuboCop::Cop::Registry.new(cop_classes)
       end
 
       it 'does not invoke conflicts with other cops' do
@@ -103,7 +100,7 @@ RSpec.describe RuboCop::Cop::Layout::LeadingEmptyLines, :config do
           def bar(arg =1); end
         RUBY
 
-        options = { auto_correct: true, stdin: true }
+        options = { autocorrect: true, stdin: true }
         team = RuboCop::Cop::Team.mobilize(cops, config, options)
         team.inspect_file(parse_source(source_with_offenses, nil))
         new_source = options[:stdin]

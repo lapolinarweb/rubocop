@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Style
-      # This cop enforces the use of consistent method names
+      # Enforces the use of consistent method names
       # from the Enumerable module.
       #
       # You can customize the mapping from undesired method to desired method.
@@ -25,6 +25,7 @@ module RuboCop
       #   # bad
       #   items.collect
       #   items.collect!
+      #   items.collect_concat
       #   items.inject
       #   items.detect
       #   items.find_all
@@ -33,6 +34,7 @@ module RuboCop
       #   # good
       #   items.map
       #   items.map!
+      #   items.flat_map
       #   items.reduce
       #   items.find
       #   items.select
@@ -47,12 +49,15 @@ module RuboCop
         def on_block(node)
           check_method_node(node.send_node)
         end
+        alias on_numblock on_block
+        alias on_itblock on_block
 
         def on_send(node)
           return unless implicit_block?(node)
 
           check_method_node(node)
         end
+        alias on_csend on_send
 
         private
 

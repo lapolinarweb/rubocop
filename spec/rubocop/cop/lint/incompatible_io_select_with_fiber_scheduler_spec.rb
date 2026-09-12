@@ -12,6 +12,17 @@ RSpec.describe RuboCop::Cop::Lint::IncompatibleIoSelectWithFiberScheduler, :conf
     RUBY
   end
 
+  it 'registers and corrects an offense when using `IO.select` with single read argument and specify the first argument only' do
+    expect_offense(<<~RUBY)
+      IO.select([io])
+      ^^^^^^^^^^^^^^^ Use `io.wait_readable` instead of `IO.select([io])`.
+    RUBY
+
+    expect_correction(<<~RUBY)
+      io.wait_readable
+    RUBY
+  end
+
   it 'registers and corrects an offense when using `IO.select` with single read and timeout arguments' do
     expect_offense(<<~RUBY)
       IO.select([io], [], [], timeout)
@@ -111,9 +122,33 @@ RSpec.describe RuboCop::Cop::Lint::IncompatibleIoSelectWithFiberScheduler, :conf
     RUBY
   end
 
+  it 'registers an offense when using `IO.select` with read argument and using return value but does not autocorrect' do
+    expect_offense(<<~RUBY)
+      rs, _ = IO.select([rp], [])
+              ^^^^^^^^^^^^^^^^^^^ Use `rp.wait_readable` instead of `IO.select([rp], [])`.
+    RUBY
+
+    expect_no_corrections
+  end
+
+  it 'registers an offense when using `IO.select` with write argument and using return value but does not autocorrect' do
+    expect_offense(<<~RUBY)
+      _, ws = IO.select([], [wp])
+              ^^^^^^^^^^^^^^^^^^^ Use `wp.wait_writable` instead of `IO.select([], [wp])`.
+    RUBY
+
+    expect_no_corrections
+  end
+
   it 'does not register an offense when using `IO.select` with multiple read arguments' do
     expect_no_offenses(<<~RUBY)
       IO.select([foo, bar], [], [])
+    RUBY
+  end
+
+  it 'registers and corrects an offense when using `IO.select` with multiple read argument and specify the first argument only' do
+    expect_no_offenses(<<~RUBY)
+      IO.select([foo, bar])
     RUBY
   end
 
@@ -126,6 +161,24 @@ RSpec.describe RuboCop::Cop::Lint::IncompatibleIoSelectWithFiberScheduler, :conf
   it 'does not register an offense when using `IO.select` with read and write arguments' do
     expect_no_offenses(<<~RUBY)
       IO.select([rp], [wp], [])
+    RUBY
+  end
+
+  it 'does not register an offense when using `IO.select` with read and excepts arguments' do
+    expect_no_offenses(<<~RUBY)
+      IO.select([rp], [], [excepts])
+    RUBY
+  end
+
+  it 'does not register an offense when using `Enumerable#select`' do
+    expect_no_offenses(<<~RUBY)
+      collection.select { |item| item.do_something? }
+    RUBY
+  end
+
+  it 'does not register an offense when the single array element is a splat' do
+    expect_no_offenses(<<~RUBY)
+      IO.select([*reads])
     RUBY
   end
 end

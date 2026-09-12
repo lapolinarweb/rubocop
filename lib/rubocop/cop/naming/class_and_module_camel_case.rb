@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Naming
-      # This cop checks for class and module names with
+      # Checks for class and module names with
       # an underscore in them.
       #
       # `AllowedNames` config takes an array of permitted names.
@@ -30,9 +30,11 @@ module RuboCop
         MSG = 'Use CamelCase for classes and modules.'
 
         def on_class(node)
+          return unless node.loc.name.source.include?('_')
+
           allowed = /#{cop_config['AllowedNames'].join('|')}/
           name = node.loc.name.source.gsub(allowed, '')
-          return unless /_/.match?(name)
+          return unless name.include?('_')
 
           add_offense(node.loc.name)
         end

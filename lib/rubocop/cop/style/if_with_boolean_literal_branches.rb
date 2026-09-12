@@ -3,12 +3,31 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for redundant `if` with boolean literal branches.
+      # Checks for redundant `if` with boolean literal branches.
       # It checks only conditions to return boolean value (`true` or `false`) for safe detection.
-      # The conditions to be checked are comparison methods, predicate methods, and double negative.
+      # The conditions to be checked are comparison methods, predicate methods, and
+      # double negation (!!).
+      # `nonzero?` method is allowed by default.
+      # These are customizable with `AllowedMethods` option.
+      #
+      # This cop targets only ``if``s with a single `elsif` or `else` branch. The following
+      # code will be allowed, because it has two `elsif` branches:
+      #
+      # [source,ruby]
+      # ----
+      # if foo
+      #   true
+      # elsif bar > baz
+      #   true
+      # elsif qux > quux # Single `elsif` is warned, but two or more `elsif`s are not.
+      #   true
+      # else
+      #   false
+      # end
+      # ----
       #
       # @safety
-      #   Auto-correction is unsafe because there is no guarantee that all predicate methods
+      #   Autocorrection is unsafe because there is no guarantee that all predicate methods
       #   will return a boolean value. Those methods can be allowed with `AllowedMethods` config.
       #
       # @example
@@ -25,7 +44,6 @@ module RuboCop
       #   # good
       #   foo == bar
       #
-      # @example
       #   # bad
       #   if foo.do_something?
       #     true
@@ -36,7 +54,10 @@ module RuboCop
       #   # good (but potentially an unsafe correction)
       #   foo.do_something?
       #
-      # @example AllowedMethods: ['nonzero?']
+      # @example AllowedMethods: ['infinite?', 'nonzero?'] (default)
+      #   # good
+      #   num.infinite? ? true : false
+      #
       #   # good
       #   num.nonzero? ? true : false
       #
@@ -49,13 +70,13 @@ module RuboCop
 
         # @!method if_with_boolean_literal_branches?(node)
         def_node_matcher :if_with_boolean_literal_branches?, <<~PATTERN
-          (if #return_boolean_value? {(true) (false) | (false) (true)})
+          (if #return_boolean_value? <true false>)
         PATTERN
         # @!method double_negative?(node)
         def_node_matcher :double_negative?, '(send (send _ :!) :!)'
 
         def on_if(node)
-          return unless if_with_boolean_literal_branches?(node)
+          return if !if_with_boolean_literal_branches?(node) || multiple_elsif?(node)
 
           condition = node.condition
           range, keyword = offense_range_with_keyword(node, condition)
@@ -74,6 +95,12 @@ module RuboCop
 
         private
 
+        def multiple_elsif?(node)
+          return false unless (parent = node.parent)
+
+          parent.if_type? && parent.elsif?
+        end
+
         def offense_range_with_keyword(node, condition)
           if node.ternary?
             range = condition.source_range.end.join(node.source_range.end)
@@ -87,12 +114,16 @@ module RuboCop
         end
 
         def message(node, keyword)
-          message_template = node.elsif? ? MSG_FOR_ELSIF : MSG
-
-          format(message_template, keyword: keyword)
+          if node.elsif?
+            MSG_FOR_ELSIF
+          else
+            format(MSG, keyword: keyword)
+          end
         end
 
         def return_boolean_value?(condition)
+          return false unless condition
+
           if condition.begin_type?
             return_boolean_value?(condition.children.first)
           elsif condition.or_type?
@@ -127,8 +158,7 @@ module RuboCop
         end
 
         def require_parentheses?(condition)
-          condition.and_type? || condition.or_type? ||
-            (condition.send_type? && condition.comparison_method?)
+          condition.operator_keyword? || (condition.send_type? && condition.comparison_method?)
         end
       end
     end

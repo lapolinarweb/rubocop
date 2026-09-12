@@ -10,10 +10,52 @@ RSpec.describe RuboCop::Cop::Layout::FirstArrayElementIndentation, :config do
                         cop_config.merge(supported_styles).merge(
                           'IndentationWidth' => cop_indent
                         ),
+                        'Layout/ArrayAlignment' => array_alignment_config,
                         'Layout/IndentationWidth' => { 'Width' => 2 })
   end
   let(:cop_config) { { 'EnforcedStyle' => 'special_inside_parentheses' } }
+  let(:array_alignment_config) { {} }
   let(:cop_indent) { nil } # use indent from Layout/IndentationWidth
+
+  context 'when Layout/ArrayAlignment uses `with_fixed_indentation`' do
+    let(:cop_config) { { 'EnforcedStyle' => 'consistent' } }
+    let(:array_alignment_config) { { 'EnforcedStyle' => 'with_fixed_indentation' } }
+
+    it 'does not register an offense for a multi-line array value in a multi-pair hash' do
+      expect_no_offenses(<<~RUBY)
+        foo bar: [
+              'foo',
+              'bar'
+        ],
+        baz: 'baz'
+      RUBY
+    end
+
+    it 'registers an offense and corrects a single-element array value in a multi-pair hash' do
+      expect_offense(<<~RUBY)
+        foo bar: [
+        1
+        ^ Use 2 spaces for indentation in an array, relative to the parent hash key.
+        ],
+        ^ Indent the right bracket the same as the parent hash key.
+        baz: 3
+      RUBY
+
+      expect_correction(<<~RUBY)
+        foo bar: [
+              1
+            ],
+        baz: 3
+      RUBY
+    end
+
+    it 'does not register an offense for a bracketless array' do
+      expect_no_offenses(<<~RUBY)
+        x = 1,
+            2
+      RUBY
+    end
+  end
 
   context 'when array is operand' do
     it 'accepts correctly indented first element' do
@@ -260,6 +302,74 @@ RSpec.describe RuboCop::Cop::Layout::FirstArrayElementIndentation, :config do
             )
           RUBY
         end
+
+        it 'registers an offense for incorrectly indented multi-line array that is the value of a single pair hash' do
+          expect_offense(<<~RUBY)
+            func(x: [
+                  :a, :b])
+                  ^^ Use 2 spaces for indentation in an array, relative to the first position after the preceding left parenthesis.
+          RUBY
+
+          expect_correction(<<~RUBY)
+            func(x: [
+                   :a, :b])
+          RUBY
+        end
+
+        it 'registers an offense for a multi-line array that is a value of a multi pairs hash ' \
+           'when the indent of its elements is not based on the hash key' do
+          expect_offense(<<~RUBY)
+            func(x: [
+              :a,
+              ^^ Use 2 spaces for indentation in an array, relative to the parent hash key.
+                   :b
+            ],
+            ^ Indent the right bracket the same as the parent hash key.
+                 y: [
+                   :c,
+                   :d
+                 ])
+          RUBY
+
+          expect_correction(<<~RUBY)
+            func(x: [
+                   :a,
+                   :b
+                 ],
+                 y: [
+                   :c,
+                   :d
+                 ])
+          RUBY
+        end
+
+        it 'accepts indent based on the preceding left parenthesis ' \
+           'when the right bracket and its following pair is on the same line' do
+          expect_no_offenses(<<~RUBY)
+            func(:x, y: [
+                   :a,
+                   :b
+                 ], z: [
+                   :c,
+                   :d
+                 ])
+          RUBY
+        end
+
+        it 'accepts indent based on the left brace when the outer hash key and ' \
+           'the left bracket is not on the same line' do
+          expect_no_offenses(<<~RUBY)
+            func(x:
+                   [
+                     :a,
+                     :b
+                   ],
+                 y: [
+                   :a,
+                   :b
+                 ])
+          RUBY
+        end
       end
 
       context 'and EnforcedStyle is consistent' do
@@ -307,6 +417,74 @@ RSpec.describe RuboCop::Cop::Layout::FirstArrayElementIndentation, :config do
               :name])
           RUBY
         end
+
+        it 'registers an offense for incorrectly indented multi-line array that is the value of a single pair hash' do
+          expect_offense(<<~RUBY)
+            func(x: [
+                  :a, :b])
+                  ^^ Use 2 spaces for indentation in an array, relative to the start of the line where the left square bracket is.
+          RUBY
+
+          expect_correction(<<~RUBY)
+            func(x: [
+              :a, :b])
+          RUBY
+        end
+
+        it 'registers an offense for a multi-line array that is a value of a multi pairs hash ' \
+           'when the indent of its elements is not based on the hash key' do
+          expect_offense(<<~RUBY)
+            func(x: [
+              :a,
+              ^^ Use 2 spaces for indentation in an array, relative to the parent hash key.
+                   :b
+            ],
+            ^ Indent the right bracket the same as the parent hash key.
+                 y: [
+                   :c,
+                   :d
+                 ])
+          RUBY
+
+          expect_correction(<<~RUBY)
+            func(x: [
+                   :a,
+                   :b
+                 ],
+                 y: [
+                   :c,
+                   :d
+                 ])
+          RUBY
+        end
+
+        it 'accepts indent based on the start of the line where the left bracket is' \
+           'when the right bracket and its following pair is on the same line' do
+          expect_no_offenses(<<~RUBY)
+            func(:x, y: [
+              :a,
+              :b
+            ], z: [
+              :c,
+              :d
+            ])
+          RUBY
+        end
+
+        it 'accepts indent based on the left brace when the outer hash key and ' \
+           'the left bracket is not on the same line' do
+          expect_no_offenses(<<~RUBY)
+            func(x:
+                   [
+                     :a,
+                     :b
+                   ],
+                 y: [
+                   :a,
+                   :b
+                 ])
+          RUBY
+        end
       end
     end
 
@@ -336,6 +514,74 @@ RSpec.describe RuboCop::Cop::Layout::FirstArrayElementIndentation, :config do
         expect_correction(<<~RUBY)
           func x, [
             1, 2]
+        RUBY
+      end
+
+      it 'registers an offense for incorrectly indented multi-line array that is the value of a single pair hash' do
+        expect_offense(<<~RUBY)
+          func x: [
+                 :a, :b]
+                 ^^ Use 2 spaces for indentation in an array, relative to the start of the line where the left square bracket is.
+        RUBY
+
+        expect_correction(<<~RUBY)
+          func x: [
+            :a, :b]
+        RUBY
+      end
+
+      it 'registers an offense for a multi-line array that is a value of a multi pairs hash ' \
+         'when the indent of its elements is not based on the hash key' do
+        expect_offense(<<~RUBY)
+          func x: [
+            :a,
+            ^^ Use 2 spaces for indentation in an array, relative to the parent hash key.
+                 :b
+          ],
+          ^ Indent the right bracket the same as the parent hash key.
+               y: [
+                 :c,
+                 :d
+               ]
+        RUBY
+
+        expect_correction(<<~RUBY)
+          func x: [
+                 :a,
+                 :b
+               ],
+               y: [
+                 :c,
+                 :d
+               ]
+        RUBY
+      end
+
+      it 'accepts indent based on the start of the line where the left bracket is' \
+         'when the right bracket and its following pair is on the same line' do
+        expect_no_offenses(<<~RUBY)
+          func :x, y: [
+            :a,
+            :b
+          ], z: [
+            :c,
+            :d
+          ]
+        RUBY
+      end
+
+      it 'accepts indent based on the left bracket when the outer hash key and ' \
+         'the left bracket is not on the same line' do
+        expect_no_offenses(<<~RUBY)
+          func x:
+                  [
+                    :a,
+                    :b
+                  ],
+                y: [
+                  :a,
+                  :b
+                ]
         RUBY
       end
     end

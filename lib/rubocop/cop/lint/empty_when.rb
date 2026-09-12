@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Lint
-      # This cop checks for the presence of `when` branches without a body.
+      # Checks for the presence of `when` branches without a body.
       #
       # @example
       #
@@ -13,8 +13,6 @@ module RuboCop
       #     do_something
       #   when baz
       #   end
-      #
-      # @example
       #
       #   # good
       #   case condition
@@ -45,15 +43,24 @@ module RuboCop
       #   end
       #
       class EmptyWhen < Base
+        include CommentsHelp
+
         MSG = 'Avoid `when` branches without a body.'
 
         def on_case(node)
-          node.each_when do |when_node|
+          node.when_branches.each do |when_node|
             next if when_node.body
-            next if cop_config['AllowComments'] && comment_lines?(node)
+            next if allow_comments?(when_node)
 
             add_offense(when_node)
           end
+        end
+
+        private
+
+        def allow_comments?(node)
+          cop_config['AllowComments'] && contains_comments?(node) &&
+            !comments_contain_disables?(node, name)
         end
       end
     end

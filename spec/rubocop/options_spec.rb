@@ -5,15 +5,7 @@ RSpec.describe RuboCop::Options, :isolated_environment do
 
   subject(:options) { described_class.new }
 
-  before do
-    $stdout = StringIO.new
-    $stderr = StringIO.new
-  end
-
-  after do
-    $stdout = STDOUT
-    $stderr = STDERR
-  end
+  include_context 'mock console output'
 
   def abs(path)
     File.expand_path(path)
@@ -21,23 +13,43 @@ RSpec.describe RuboCop::Options, :isolated_environment do
 
   describe 'option' do
     describe '-h/--help' do
-      it 'exits cleanly' do
+      # HACK: `help` option is implemented with OptionParser, if the environment vars
+      # `RUBY_PAGER` or `PAGER` are set, the mock for stdout will not be applied.
+      # To ensure stdout is mocked, a simple way is to temporarily delete these environment vars.
+      # https://github.com/ruby/optparse/blob/v0.6.0/lib/optparse.rb#L1053-L1071
+      around do |example|
+        original_ruby_pager = ENV.delete('RUBY_PAGER')
+        original_pager = ENV.delete('PAGER')
+        begin
+          example.run
+        ensure
+          ENV['RUBY_PAGER'] = original_ruby_pager
+          ENV['PAGER'] = original_pager
+        end
+      end
+
+      it 'exits cleanly `-h`' do
         expect { options.parse ['-h'] }.to exit_with_code(0)
+      end
+
+      it 'exits cleanly `--help`' do
         expect { options.parse ['--help'] }.to exit_with_code(0)
       end
 
+      # rubocop:disable-next RSpec/ExampleLength
       it 'shows help text' do
         begin
           options.parse(['--help'])
-        rescue SystemExit # rubocop:disable Lint/SuppressedException
+        rescue SystemExit # rubocop:disable Lint/SuppressedException -- the exit is the expected outcome
         end
 
+        # rubocop:todo-next Naming/InclusiveLanguage -- the deprecated flag spelling is the subject here
         expected_help = <<~OUTPUT
           Usage: rubocop [options] [file1, file2, ...]
 
           Basic Options:
               -l, --lint                       Run only lint cops.
-              -x, --fix-layout                 Run only layout cops, with auto-correct on.
+              -x, --fix-layout                 Run only layout cops, with autocorrect on.
                   --safe                       Run only safe cops.
                   --except [COP1,COP2,...]     Exclude the given cop(s).
                   --only [COP1,COP2,...]       Run only the given cop(s).
@@ -48,8 +60,20 @@ RSpec.describe RuboCop::Options, :isolated_environment do
                                                containing offenses.
                   --disable-pending-cops       Run without pending cops.
                   --enable-pending-cops        Run with pending cops.
-                  --ignore-disable-comments    Run cops even when they are disabled locally
-                                               by a `rubocop:disable` directive.
+                  --disable-all-cops           Run with all cops disabled by default,
+                                               except `Lint/Syntax`. Overrides
+                                               `AllCops/EnabledByDefault` and
+                                               `AllCops/DisabledByDefault` in config files.
+                  --enable-all-cops            Run with all cops enabled, including those
+                                               disabled by default. Overrides
+                                               `AllCops/EnabledByDefault` and
+                                               `AllCops/DisabledByDefault` in config files.
+                  --[no-]preview               Opt in to unstable behavior: cops that are
+                                               `Enabled: preview`, and changes to existing
+                                               cops that are not the default yet.
+                                               Overrides `AllCops: Preview`.
+                  --ignore-disable-comments    Report offenses even if they have been manually disabled
+                                               with a `rubocop:disable` or `rubocop:todo` directive.
                   --force-exclusion            Any files excluded by `Exclude` in configuration
                                                files will be excluded, even if given explicitly
                                                as arguments.
@@ -58,14 +82,33 @@ RSpec.describe RuboCop::Options, :isolated_environment do
                                                of user configuration or default configuration.
                   --ignore-parent-exclusion    Prevent from inheriting `AllCops/Exclude` from
                                                parent folders.
+                  --ignore-unrecognized-cops   Ignore unrecognized cops or departments in the config.
                   --force-default-config       Use default configuration even if configuration
                                                files are present in the directory tree.
+                  --changed [REVISION]         Inspect only the files that differ from a git
+                                               revision, defaulting to HEAD. Untracked files
+                                               count as changed. Pass a revision with
+                                               `--changed=REVISION`.
               -s, --stdin FILE                 Pipe source from STDIN, using FILE in offense
                                                reports. This is useful for editor integration.
+                  --editor-mode                Optimize real-time feedback in editors,
+                                               adjusting behaviors for editing experience.
               -P, --[no-]parallel              Use available CPUs to execute inspection in
                                                parallel. Default is true.
-                  --fail-level SEVERITY        Minimum severity (A/I/R/C/W/E/F) for exit
-                                               with error code.
+                                               You can specify the number of parallel processes using
+                                               the $PARALLEL_PROCESSOR_COUNT environment variable.
+                  --raise-cop-error            Raise cop-related errors with cause and location.
+                                               This is used to prevent cops from failing silently.
+                                               Default is false.
+                  --fail-level SEVERITY        Minimum severity for exit with error code.
+                                               Overrides `AllCops: FailLevel` in the configuration.
+                                                 [A] autocorrect
+                                                 [I] info
+                                                 [R] refactor
+                                                 [C] convention
+                                                 [W] warning
+                                                 [E] error
+                                                 [F] fatal
 
           Caching:
               -C, --cache FLAG                 Use result caching (FLAG=true) or don't
@@ -75,6 +118,26 @@ RSpec.describe RuboCop::Options, :isolated_environment do
                                                Takes precedence over the configuration
                                                parameter AllCops: CacheRootDirectory and
                                                the $RUBOCOP_CACHE_ROOT environment variable.
+
+          LSP Option:
+                  --lsp                        Start a language server listening on STDIN.
+
+          MCP Option:
+                  --mcp                        Start an MCP (Model Context Protocol) server that
+                                               communicates over stdio.
+
+          Server Options:
+                  --[no-]server                If a server process has not been started yet, start
+                                               the server process and execute inspection with server.
+                                               Default is false.
+                                               You can specify the server host and port with the
+                                               $RUBOCOP_SERVER_HOST and the $RUBOCOP_SERVER_PORT
+                                               environment variables.
+                  --restart-server             Restart server process.
+                  --start-server               Start server process.
+                  --stop-server                Stop server process.
+                  --server-status              Show server status.
+                  --no-detach                  Run the server process in the foreground.
 
           Output Options:
               -f, --format FORMATTER           Choose an output formatter. This option
@@ -89,10 +152,12 @@ RSpec.describe RuboCop::Options, :isolated_environment do
                                                  [h]tml
                                                  [j]son
                                                  [ju]nit
+                                                 [m]arkdown
                                                  [o]ffenses
                                                  [pa]cman
                                                  [p]rogress (default)
                                                  [q]uiet
+                                                 [sa]rif
                                                  [s]imple
                                                  [t]ap
                                                  [w]orst
@@ -107,21 +172,33 @@ RSpec.describe RuboCop::Options, :isolated_environment do
                                                if no format is specified.
                   --stderr                     Write all output to stderr except for the
                                                autocorrected source. This is especially useful
-                                               when combined with --auto-correct and --stdin.
+                                               when combined with --autocorrect and --stdin.
                   --display-time               Display elapsed time in seconds.
                   --display-only-failed        Only output offense messages. Omit passing
                                                cops. Only valid for --format junit.
                   --display-only-fail-level-offenses
                                                Only output offense messages at
-                                               the specified --fail-level or above
+                                               the specified --fail-level or above.
+                  --display-only-correctable   Only output correctable offense messages.
+                  --display-only-safe-correctable
+                                               Only output safe-correctable offense messages
+                                               when combined with --display-only-correctable.
+                  --display-suppressed         Also output offenses suppressed by directive
+                                               comments. They do not affect the exit code.
 
-          Auto-correction:
-              -a, --auto-correct               Auto-correct offenses (only when it's safe).
+          Autocorrection:
+              -a, --autocorrect                Autocorrect offenses (only when it's safe).
+                  --auto-correct               (same, deprecated)
                   --safe-auto-correct          (same, deprecated)
-              -A, --auto-correct-all           Auto-correct offenses (safe and unsafe)
-                  --disable-uncorrectable      Used with --auto-correct to annotate any
+              -A, --autocorrect-all            Autocorrect offenses (safe and unsafe).
+                  --auto-correct-all           (same, deprecated)
+                  --disable-uncorrectable      Used with --autocorrect to annotate any
                                                offenses that do not support autocorrect
                                                with `rubocop:todo` comments.
+                  --diff                       Print a unified diff of what autocorrection
+                                               would change, without writing any files.
+                                               Turns on safe autocorrection unless a mode
+                                               was already given with -a, -A or -x.
 
           Config Generation:
                   --auto-gen-config            Generate a configuration file acting as a
@@ -129,9 +206,12 @@ RSpec.describe RuboCop::Options, :isolated_environment do
                   --regenerate-todo            Regenerate the TODO configuration file using
                                                the last configuration. If there is no existing
                                                TODO file, acts like --auto-gen-config.
+                  --report-unused-todo-entries Also report TODO configuration file entries that
+                                               are no longer needed, and fail if any are found.
                   --exclude-limit COUNT        Set the limit for how many files to explicitly exclude.
                                                If there are more files than the limit, the cop will
                                                be disabled instead. Default is 15.
+                  --no-exclude-limit           Do not set the limit for how many files to exclude.
                   --[no-]offense-counts        Include offense counts in configuration
                                                file generated by --auto-gen-config.
                                                Default is true.
@@ -141,22 +221,45 @@ RSpec.describe RuboCop::Options, :isolated_environment do
                                                exclude-limit. Default is false.
                   --[no-]auto-gen-timestamp    Include the date and time when the --auto-gen-config
                                                was run in the file it generates. Default is true.
+                  --[no-]auto-gen-enforced-style
+                                               Add a setting to the TODO configuration file to enforce
+                                               the style used, rather than a per-file exclusion
+                                               if one style is used in all files for cop with
+                                               EnforcedStyle as a configurable option
+                                               when the --auto-gen-config was run
+                                               in the file it generates. Default is true.
 
           Additional Modes:
               -L, --list-target-files          List all files RuboCop will inspect.
-                  --show-cops [COP1,COP2,...]  Shows the given cops, or all cops by
+                  --list-enabled-cops-for PATH List which cops will inspect a given file or
+                                               directory.
+                  --show-cops [COP1,COP2,...]  Show the given cops, or all cops by
                                                default, and their configurations for the
                                                current directory.
+                                               You can use `*` as a wildcard.
+                  --show-docs-url [COP1,COP2,...]
+                                               Display url to documentation for the given
+                                               cops, or base url by default.
 
           General Options:
                   --init                       Generate a .rubocop.yml file in the current directory.
               -c, --config FILE                Specify configuration file.
               -d, --debug                      Display debug info.
+                  --plugin FILE                Load a RuboCop plugin.
               -r, --require FILE               Require Ruby file.
                   --[no-]color                 Force color output on or off.
               -v, --version                    Display version.
               -V, --verbose-version            Display verbose version.
         OUTPUT
+
+        if RUBY_ENGINE == 'ruby' && !RuboCop::Platform.windows?
+          expected_help += <<~OUTPUT
+
+            Profiling Options:
+                    --profile                    Profile rubocop.
+                    --memory                     Profile rubocop memory usage.
+          OUTPUT
+        end
 
         expect($stdout.string).to eq(expected_help)
       end
@@ -164,7 +267,7 @@ RSpec.describe RuboCop::Options, :isolated_environment do
       it 'lists all builtin formatters' do
         begin
           options.parse(['--help'])
-        rescue SystemExit # rubocop:disable Lint/SuppressedException
+        rescue SystemExit # rubocop:disable Lint/SuppressedException -- the exit is the expected outcome
         end
 
         option_sections = $stdout.string.lines.slice_before(/^\s*-/)
@@ -203,6 +306,20 @@ RSpec.describe RuboCop::Options, :isolated_environment do
           .to raise_error(RuboCop::OptionArgumentError, msg)
       end
 
+      it 'rejects using `--lsp` with `--editor-mode`' do
+        msg = 'Do not specify `--editor-mode` as it is redundant in `--lsp`.'
+        expect do
+          options.parse %w[--lsp --editor-mode]
+        end.to raise_error(RuboCop::OptionArgumentError, msg)
+      end
+
+      it 'rejects using `--enable-all-cops` with `--disable-all-cops`' do
+        msg = '--enable-all-cops cannot be used together with --disable-all-cops.'
+        expect do
+          options.parse %w[--enable-all-cops --disable-all-cops]
+        end.to raise_error(RuboCop::OptionArgumentError, msg)
+      end
+
       it 'mentions all incompatible options when more than two are used' do
         msg = 'Incompatible cli options: [:version, :verbose_version, :show_cops]'
         expect { options.parse %w[-vV --show-cops] }
@@ -210,50 +327,65 @@ RSpec.describe RuboCop::Options, :isolated_environment do
       end
     end
 
+    describe '--fix-layout' do
+      it 'sets some autocorrect options' do
+        options.parse %w[--fix-layout]
+        expect_autocorrect_options_for_fix_layout
+      end
+    end
+
     describe '--parallel' do
       context 'combined with --cache false' do
-        it 'ignores parallel' do
+        it 'ignores --parallel' do
           msg = '-P/--parallel is being ignored because it is not compatible with --cache false'
           options.parse %w[--parallel --cache false]
           expect($stdout.string).to include(msg)
-          expect(options.instance_variable_get('@options').keys).not_to include(:parallel)
+          expect(options.instance_variable_get(:@options)).not_to be_key(:parallel)
         end
       end
 
-      context 'combined with --auto-correct' do
-        it 'ignores parallel' do
-          msg = '-P/--parallel is being ignored because it is not compatible with --auto-correct'
-          options.parse %w[--parallel --auto-correct]
-          expect($stdout.string).to include(msg)
-          expect(options.instance_variable_get('@options').keys).not_to include(:parallel)
+      context 'combined with an autocorrect argument' do
+        context 'combined with --fix-layout' do
+          it 'allows --parallel' do
+            options.parse %w[--parallel --fix-layout]
+            expect($stdout.string).not_to include('-P/--parallel is being ignored')
+            expect(options.instance_variable_get(:@options)).to be_key(:parallel)
+          end
         end
-      end
 
-      context 'combined with --auto-gen-config' do
-        it 'ignore parallel' do
-          msg = '-P/--parallel is being ignored because it is not compatible with --auto-gen-config'
-          options.parse %w[--parallel --auto-gen-config]
-          expect($stdout.string).to include(msg)
-          expect(options.instance_variable_get('@options').keys).not_to include(:parallel)
+        context 'combined with --autocorrect' do
+          it 'allows --parallel' do
+            options.parse %w[--parallel --autocorrect]
+            expect($stdout.string).not_to include('-P/--parallel is being ignored')
+            expect(options.instance_variable_get(:@options)).to be_key(:parallel)
+          end
+        end
+
+        context 'combined with --autocorrect-all' do
+          it 'allows --parallel' do
+            options.parse %w[--parallel --autocorrect-all]
+            expect($stdout.string).not_to include('-P/--parallel is being ignored')
+            expect(options.instance_variable_get(:@options)).to be_key(:parallel)
+          end
         end
       end
 
       context 'combined with --fail-fast' do
-        it 'ignores parallel' do
+        it 'ignores --parallel' do
           msg = '-P/--parallel is being ignored because it is not compatible with -F/--fail-fast'
           options.parse %w[--parallel --fail-fast]
           expect($stdout.string).to include(msg)
-          expect(options.instance_variable_get('@options').keys).not_to include(:parallel)
+          expect(options.instance_variable_get(:@options)).not_to be_key(:parallel)
         end
       end
-    end
 
-    context 'combined with --auto-correct and --fail-fast' do
-      it 'ignores parallel' do
-        msg = '-P/--parallel is being ignored because it is not compatible with -F/--fail-fast'
-        options.parse %w[--parallel --fail-fast --auto-correct]
-        expect($stdout.string).to include(msg)
-        expect(options.instance_variable_get('@options').keys).not_to include(:parallel)
+      context 'combined with two incompatible arguments' do
+        it 'ignores --parallel and lists both incompatible arguments' do
+          options.parse %w[--parallel --fail-fast --autocorrect]
+          expect($stdout.string).to include('-P/--parallel is being ignored because it is not ' \
+                                            'compatible with -F/--fail-fast')
+          expect(options.instance_variable_get(:@options)).not_to be_key(:parallel)
+        end
       end
     end
 
@@ -276,26 +408,53 @@ RSpec.describe RuboCop::Options, :isolated_environment do
       end
     end
 
+    describe '--display-only-fail-level-offenses' do
+      %w[--fix-layout -x --autocorrect -a --autocorrect-all -A].each do |o|
+        it 'fails if given with an autocorrect argument' do
+          expect { options.parse ['--display-only-fail-level-offenses', o] }
+            .not_to raise_error(RuboCop::OptionArgumentError)
+        end
+      end
+    end
+
+    describe '--display-only-correctable' do
+      it 'fails if given with --display-only-failed' do
+        expect { options.parse %w[--display-only-correctable --display-only-failed] }
+          .to raise_error(RuboCop::OptionArgumentError)
+      end
+
+      it 'fails if given with an autocorrect argument' do
+        %w[--fix-layout -x --autocorrect -a --autocorrect-all -A].each do |o|
+          expect { options.parse ['--display-only-correctable', o] }
+            .to raise_error(RuboCop::OptionArgumentError)
+        end
+      end
+    end
+
     describe '--fail-level' do
       it 'accepts full severity names' do
         %w[info refactor convention warning error fatal].each do |severity|
-          expect { options.parse(['--fail-level', severity]) }
-            .not_to raise_error
+          expect { options.parse(['--fail-level', severity]) }.not_to raise_error
         end
       end
 
       it 'accepts severity initial letters' do
         %w[I R C W E F].each do |severity|
-          expect { options.parse(['--fail-level', severity]) }
-            .not_to raise_error
+          expect { options.parse(['--fail-level', severity]) }.not_to raise_error
         end
       end
 
       it 'accepts the "fake" severities A/autocorrect' do
         %w[autocorrect A].each do |severity|
-          expect { options.parse(['--fail-level', severity]) }
-            .not_to raise_error
+          expect { options.parse(['--fail-level', severity]) }.not_to raise_error
         end
+      end
+    end
+
+    describe '--raise-cop-error' do
+      it 'raises cop errors' do
+        results = options.parse %w[--raise-cop-error]
+        expect(results).to eq([{ raise_cop_error: true }, []])
       end
     end
 
@@ -348,15 +507,19 @@ RSpec.describe RuboCop::Options, :isolated_environment do
     end
 
     describe '--disable-uncorrectable' do
-      it 'accepts together with --auto-correct' do
-        expect { options.parse %w[--auto-correct --disable-uncorrectable] }.not_to raise_error
+      it 'accepts together with a safe autocorrect argument' do
+        %w[--fix-layout -x --autocorrect -a].each do |o|
+          expect { options.parse ['--disable-uncorrectable', o] }.not_to raise_error
+        end
       end
 
-      it 'accepts together with --auto-correct-all' do
-        expect { options.parse %w[--auto-correct-all --disable-uncorrectable] }.not_to raise_error
+      it 'accepts together with an unsafe autocorrect argument' do
+        %w[--fix-layout -x --autocorrect-all -A].each do |o|
+          expect { options.parse ['--disable-uncorrectable', o] }.not_to raise_error
+        end
       end
 
-      it 'fails if given alone without --auto-correct/-a' do
+      it 'fails if given without an autocorrect argument' do
         expect { options.parse %w[--disable-uncorrectable] }
           .to raise_error(RuboCop::OptionArgumentError)
       end
@@ -369,7 +532,9 @@ RSpec.describe RuboCop::Options, :isolated_environment do
       end
 
       it 'fails if given alone without argument' do
-        expect { options.parse %w[--exclude-limit] }.to raise_error(OptionParser::MissingArgument)
+        expect do
+          options.parse %w[--exclude-limit]
+        end.to raise_error(OptionParser::MissingArgument)
       end
 
       it 'fails if given first without argument' do
@@ -378,7 +543,34 @@ RSpec.describe RuboCop::Options, :isolated_environment do
       end
 
       it 'fails if given without --auto-gen-config' do
-        expect { options.parse %w[--exclude-limit 10] }.to raise_error(RuboCop::OptionArgumentError)
+        expect do
+          options.parse %w[--exclude-limit 10]
+        end.to raise_error(RuboCop::OptionArgumentError)
+      end
+    end
+
+    describe '--autocorrect' do
+      context 'Specify only --autocorrect' do
+        it 'sets some autocorrect options' do
+          options.parse %w[--autocorrect]
+          expect_autocorrect_options_for_autocorrect
+        end
+      end
+
+      context 'Specify --autocorrect and --autocorrect-all' do
+        it 'emits a warning and sets some autocorrect options' do
+          expect { options.parse %w[--autocorrect --autocorrect-all] }.to raise_error(
+            RuboCop::OptionArgumentError,
+            /Error: Both safe and unsafe autocorrect options are specified, use only one./
+          )
+        end
+      end
+    end
+
+    describe '--autocorrect-all' do
+      it 'sets some autocorrect options' do
+        options.parse %w[--autocorrect-all]
+        expect_autocorrect_options_for_autocorrect_all
       end
     end
 
@@ -401,7 +593,9 @@ RSpec.describe RuboCop::Options, :isolated_environment do
       let(:config_regeneration) do
         instance_double(RuboCop::ConfigRegeneration, options: todo_options)
       end
-      let(:todo_options) { { auto_gen_config: true, exclude_limit: '100', offense_counts: false } }
+      let(:todo_options) do
+        { auto_gen_config: true, exclude_limit: '100', offense_counts: false }
+      end
 
       before do
         allow(RuboCop::ConfigRegeneration).to receive(:new).and_return(config_regeneration)
@@ -480,14 +674,65 @@ RSpec.describe RuboCop::Options, :isolated_environment do
       end
 
       it 'fails if more than one path is given' do
-        expect { options.parse %w[--stdin foo bar] }.to raise_error(RuboCop::OptionArgumentError)
+        expect do
+          options.parse %w[--stdin foo bar]
+        end.to raise_error(RuboCop::OptionArgumentError)
       end
     end
 
-    describe '--safe-auto-correct' do
-      it 'is a deprecated alias' do
-        expect { options.parse %w[--safe-auto-correct] }.to output(/deprecated/).to_stderr
+    # rubocop:todo-next Naming/InclusiveLanguage -- the deprecated flag spelling is the subject here
+    describe 'deprecated options' do
+      describe '--auto-correct' do
+        it 'emits a warning and sets the correct options instead' do
+          options.parse %w[--auto-correct]
+          expect($stderr.string).to include('--auto-correct is deprecated; use --autocorrect')
+          expect(options.instance_variable_get(:@options)).not_to be_key(:auto_correct)
+          expect_autocorrect_options_for_autocorrect
+        end
       end
+
+      describe '--safe-auto-correct' do
+        it 'emits a warning and sets the correct options instead' do
+          options.parse %w[--safe-auto-correct]
+          expect($stderr.string).to include('--safe-auto-correct is deprecated; use --autocorrect')
+          expect(options.instance_variable_get(:@options)).not_to be_key(:safe_auto_correct)
+          expect_autocorrect_options_for_autocorrect
+        end
+      end
+
+      describe '--auto-correct-all' do
+        it 'emits a warning and sets the correct options instead' do
+          options.parse %w[--auto-correct-all]
+          expect($stderr.string).to include('--auto-correct-all is deprecated; ' \
+                                            'use --autocorrect-all')
+          expect(options.instance_variable_get(:@options)).not_to be_key(:auto_correct_all)
+          expect_autocorrect_options_for_autocorrect_all
+        end
+      end
+    end
+
+    def expect_autocorrect_options_for_fix_layout
+      options_keys = options.instance_variable_get(:@options).keys
+      expect(options_keys).to include(:fix_layout)
+      expect(options_keys).to include(:autocorrect)
+      expect(options_keys).not_to include(:safe_autocorrect)
+      expect(options_keys).not_to include(:autocorrect_all)
+    end
+
+    def expect_autocorrect_options_for_autocorrect
+      options_keys = options.instance_variable_get(:@options).keys
+      expect(options_keys).not_to include(:fix_layout)
+      expect(options_keys).to include(:autocorrect)
+      expect(options_keys).to include(:safe_autocorrect)
+      expect(options_keys).not_to include(:autocorrect_all)
+    end
+
+    def expect_autocorrect_options_for_autocorrect_all
+      options_keys = options.instance_variable_get(:@options).keys
+      expect(options_keys).not_to include(:fix_layout)
+      expect(options_keys).to include(:autocorrect)
+      expect(options_keys).not_to include(:safe_autocorrect)
+      expect(options_keys).to include(:autocorrect_all)
     end
   end
 

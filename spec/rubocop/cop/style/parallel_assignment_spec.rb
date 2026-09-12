@@ -3,7 +3,7 @@
 RSpec.describe RuboCop::Cop::Style::ParallelAssignment, :config do
   let(:config) { RuboCop::Config.new('Layout/IndentationWidth' => { 'Width' => 2 }) }
 
-  it 'registers an offense when the right side has mulitiple arrays' do
+  it 'registers an offense when the right side has multiple arrays' do
     expect_offense(<<~RUBY)
       a, b, c = [1, 2], [3, 4], [5, 6]
       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Do not use parallel assignment.
@@ -192,6 +192,18 @@ RSpec.describe RuboCop::Cop::Style::ParallelAssignment, :config do
     RUBY
   end
 
+  it 'registers an offense when a lambda with parallel assignment is used on the RHS' do
+    expect_offense(<<~RUBY)
+      a, b = x, -> { a, b = x, y }
+      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Do not use parallel assignment.
+    RUBY
+
+    expect_correction(<<~RUBY)
+      a = x
+      b = -> { a, b = x, y }
+    RUBY
+  end
+
   shared_examples('allowed') do |source|
     it "allows assignment of: #{source.gsub(/\s*\n\s*/, '; ')}" do
       expect_no_offenses(source)
@@ -208,6 +220,8 @@ RSpec.describe RuboCop::Cop::Style::ParallelAssignment, :config do
   it_behaves_like('allowed', 'a, = *foo')
   it_behaves_like('allowed', 'a, *b = [1, 2, 3]')
   it_behaves_like('allowed', '*a, b = [1, 2, 3]')
+  it_behaves_like('allowed', '*, b = [1, 2, 3]')
+  it_behaves_like('allowed', 'a, *, b = [1, 2, 3]')
   it_behaves_like('allowed', 'a, b = b, a')
   it_behaves_like('allowed', 'a, b, c = b, c, a')
   it_behaves_like('allowed', 'a, b = (a + b), (a - b)')
@@ -277,6 +291,30 @@ RSpec.describe RuboCop::Cop::Style::ParallelAssignment, :config do
     RUBY
   end
 
+  it 'corrects when a word array element contains a single quote' do
+    expect_offense(<<~RUBY)
+      a, b = %w(it's fine)
+      ^^^^^^^^^^^^^^^^^^^^ Do not use parallel assignment.
+    RUBY
+
+    expect_correction(<<~'RUBY')
+      a = 'it\'s'
+      b = 'fine'
+    RUBY
+  end
+
+  it 'corrects when a symbol array element needs quoting' do
+    expect_offense(<<~RUBY)
+      a, b = %i(foo-bar baz)
+      ^^^^^^^^^^^^^^^^^^^^^^ Do not use parallel assignment.
+    RUBY
+
+    expect_correction(<<~RUBY)
+      a = :"foo-bar"
+      b = :baz
+    RUBY
+  end
+
   it 'corrects when the right variable is a symbol array' do
     expect_offense(<<~RUBY)
       a, b, c = %i(a b c)
@@ -323,6 +361,22 @@ RSpec.describe RuboCop::Cop::Style::ParallelAssignment, :config do
     expect_correction(<<~RUBY)
       CONSTANT1 = CONSTANT3
       CONSTANT2 = CONSTANT4
+    RUBY
+  end
+
+  it 'corrects when using parallel assignment in singleton method' do
+    expect_offense(<<~RUBY)
+      def self.foo
+        foo, bar = 1, 2
+        ^^^^^^^^^^^^^^^ Do not use parallel assignment.
+      end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      def self.foo
+        foo = 1
+        bar = 2
+      end
     RUBY
   end
 
@@ -515,7 +569,23 @@ RSpec.describe RuboCop::Cop::Style::ParallelAssignment, :config do
     RUBY
   end
 
-  it 'corrects when the expression uses a modifier rescue statement' do
+  it 'corrects when the expression uses a modifier rescue statement', :ruby26 do
+    expect_offense(<<~RUBY)
+      a, b = 1, 2 rescue foo
+      ^^^^^^^^^^^ Do not use parallel assignment.
+    RUBY
+
+    expect_correction(<<~RUBY)
+      begin
+        a = 1
+        b = 2
+      rescue
+        foo
+      end
+    RUBY
+  end
+
+  it 'corrects when the expression uses a modifier rescue statement', :ruby27 do
     expect_offense(<<~RUBY)
       a, b = 1, 2 rescue foo
       ^^^^^^^^^^^ Do not use parallel assignment.
@@ -571,8 +641,7 @@ RSpec.describe RuboCop::Cop::Style::ParallelAssignment, :config do
     RUBY
   end
 
-  it 'corrects when the expression uses a modifier rescue statement ' \
-     'as the only thing inside of a method' do
+  it 'corrects when the expression uses a modifier rescue statement as the only thing inside of a method', :ruby26 do
     expect_offense(<<~RUBY)
       def foo
         a, b = 1, 2 rescue foo
@@ -590,7 +659,47 @@ RSpec.describe RuboCop::Cop::Style::ParallelAssignment, :config do
     RUBY
   end
 
-  it 'corrects when the expression uses a modifier rescue statement inside of a method' do
+  it 'corrects when the expression uses a modifier rescue statement as the only thing inside of a method', :ruby27 do
+    expect_offense(<<~RUBY)
+      def foo
+        a, b = 1, 2 rescue foo
+        ^^^^^^^^^^^ Do not use parallel assignment.
+      end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      def foo
+        a = 1
+        b = 2
+      rescue
+        foo
+      end
+    RUBY
+  end
+
+  it 'corrects when the expression uses a modifier rescue statement inside of a method', :ruby26 do
+    expect_offense(<<~RUBY)
+      def foo
+        a, b = %w(1 2) rescue foo
+        ^^^^^^^^^^^^^^ Do not use parallel assignment.
+        something_else
+      end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      def foo
+        begin
+          a = '1'
+          b = '2'
+        rescue
+          foo
+        end
+        something_else
+      end
+    RUBY
+  end
+
+  it 'corrects when the expression uses a modifier rescue statement inside of a method', :ruby27 do
     expect_offense(<<~RUBY)
       def foo
         a, b = %w(1 2) rescue foo
@@ -626,6 +735,18 @@ RSpec.describe RuboCop::Cop::Style::ParallelAssignment, :config do
     RUBY
   end
 
+  it 'corrects when assignments include __FILE__' do
+    expect_offense(<<~RUBY)
+      a, b = c, __FILE__
+      ^^^^^^^^^^^^^^^^^^ Do not use parallel assignment.
+    RUBY
+
+    expect_correction(<<~RUBY)
+      a = c
+      b = __FILE__
+    RUBY
+  end
+
   it 'allows more left variables than right variables' do
     expect_no_offenses(<<~RUBY)
       a, b, c, d = 1, 2
@@ -645,9 +766,35 @@ RSpec.describe RuboCop::Cop::Style::ParallelAssignment, :config do
     RUBY
   end
 
+  it 'allows assigning heredocs' do
+    expect_no_offenses(<<~RUBY)
+      a, b = <<~A, <<~B
+        one
+      A
+        two
+      B
+    RUBY
+  end
+
+  it 'allows assigning an expression containing a heredoc' do
+    expect_no_offenses(<<~RUBY)
+      a, b = foo(<<~A), 2
+        text
+      A
+    RUBY
+  end
+
+  it 'allows assigning heredocs in a modifier statement' do
+    expect_no_offenses(<<~RUBY)
+      a, b = 1, <<~B if condition
+        two
+      B
+    RUBY
+  end
+
   describe 'using custom indentation width' do
     let(:config) do
-      RuboCop::Config.new('Performance/ParallelAssignment' => {
+      RuboCop::Config.new('Style/ParallelAssignment' => {
                             'Enabled' => true
                           },
                           'Layout/IndentationWidth' => {
@@ -683,7 +830,23 @@ RSpec.describe RuboCop::Cop::Style::ParallelAssignment, :config do
       RUBY
     end
 
-    it 'works with rescue' do
+    it 'works with rescue', :ruby26 do
+      expect_offense(<<~RUBY)
+        a, b = 1, 2 rescue foo
+        ^^^^^^^^^^^ Do not use parallel assignment.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        begin
+           a = 1
+           b = 2
+        rescue
+           foo
+        end
+      RUBY
+    end
+
+    it 'works with rescue', :ruby27 do
       expect_offense(<<~RUBY)
         a, b = 1, 2 rescue foo
         ^^^^^^^^^^^ Do not use parallel assignment.

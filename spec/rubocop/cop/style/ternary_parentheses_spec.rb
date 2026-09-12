@@ -1,13 +1,6 @@
 # frozen_string_literal: true
 
 RSpec.describe RuboCop::Cop::Style::TernaryParentheses, :config do
-  let(:redundant_parens_enabled) { false }
-  let(:other_cops) do
-    {
-      'Style/RedundantParentheses' => { 'Enabled' => redundant_parens_enabled }
-    }
-  end
-
   shared_examples 'safe assignment disabled' do |style, message|
     let(:cop_config) { { 'EnforcedStyle' => style, 'AllowSafeAssignment' => false } }
 
@@ -366,13 +359,27 @@ RSpec.describe RuboCop::Cop::Style::TernaryParentheses, :config do
         expect_no_corrections
       end
 
+      it 'does not register an offense for a modifier `if` condition' do
+        expect_no_offenses(<<~RUBY)
+          foo = (a if b) ? a : b
+        RUBY
+      end
+
+      it 'does not register an offense for a modifier `unless` condition' do
+        expect_no_offenses(<<~RUBY)
+          foo = (a unless b) ? a : b
+        RUBY
+      end
+
       it 'registers an offense for defined with variable in condition' do
         expect_offense(<<~RUBY)
           foo = (defined? bar) ? a : b
                 ^^^^^^^^^^^^^^^^^^^^^^ Omit parentheses for ternary conditions.
         RUBY
 
-        expect_no_corrections
+        expect_correction(<<~RUBY)
+          foo = defined?(bar) ? a : b
+        RUBY
       end
 
       it 'registers an offense for defined with method chain in condition' do
@@ -381,7 +388,9 @@ RSpec.describe RuboCop::Cop::Style::TernaryParentheses, :config do
                 ^^^^^^^^^^^^^^^^^^^^^^^^^^ Omit parentheses for ternary conditions.
         RUBY
 
-        expect_no_corrections
+        expect_correction(<<~RUBY)
+          foo = defined?(bar.baz) ? a : b
+        RUBY
       end
 
       it 'registers an offense for defined with class method in condition' do
@@ -390,7 +399,9 @@ RSpec.describe RuboCop::Cop::Style::TernaryParentheses, :config do
                 ^^^^^^^^^^^^^^^^^^^^^^^^^^ Omit parentheses for ternary conditions.
         RUBY
 
-        expect_no_corrections
+        expect_correction(<<~RUBY)
+          foo = defined?(Bar.baz) ? a : b
+        RUBY
       end
 
       it 'registers an offense for defined with nested constant in condition' do
@@ -399,7 +410,30 @@ RSpec.describe RuboCop::Cop::Style::TernaryParentheses, :config do
                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^ Omit parentheses for ternary conditions.
         RUBY
 
-        expect_no_corrections
+        expect_correction(<<~RUBY)
+          foo = defined?(Bar::BAZ) ? a : b
+        RUBY
+      end
+    end
+
+    # In Ruby 2.7, `match-pattern` node represents one line pattern matching.
+    #
+    # $ ruby-parse --27 -e 'foo in bar'
+    # (match-pattern (send nil :foo) (match-var :bar))
+    #
+    context 'with one line pattern matching', :ruby27, unsupported_on: :prism do
+      it 'does not register an offense' do
+        expect_no_offenses(<<~RUBY)
+          (foo in bar) ? a : b
+        RUBY
+      end
+    end
+
+    context 'with one line pattern matching', :ruby30 do
+      it 'does not register an offense' do
+        expect_no_offenses(<<~RUBY)
+          (foo in bar) ? a : b
+        RUBY
       end
     end
 
@@ -432,6 +466,52 @@ RSpec.describe RuboCop::Cop::Style::TernaryParentheses, :config do
                       'Omit parentheses for ternary conditions.'
     end
 
+    context 'with a parenthesized method call condition' do
+      it 'registers an offense for defined check' do
+        expect_offense(<<~RUBY)
+          foo = (defined?(bar)) ? a : b
+                ^^^^^^^^^^^^^^^^^^^^^^^ Omit parentheses for ternary conditions.
+        RUBY
+
+        expect_correction(<<~RUBY)
+          foo = defined?(bar) ? a : b
+        RUBY
+      end
+
+      it 'registers an offense when calling method with a parameter' do
+        expect_offense(<<~RUBY)
+          foo = (baz?(bar)) ? a : b
+                ^^^^^^^^^^^^^^^^^^^ Omit parentheses for ternary conditions.
+        RUBY
+
+        expect_correction(<<~RUBY)
+          foo = baz?(bar) ? a : b
+        RUBY
+      end
+
+      it 'registers an offense calling an operator method with a dot' do
+        expect_offense(<<~RUBY)
+          foo = (bar.<(10)) ? 1000 : 2000
+                ^^^^^^^^^^^^^^^^^^^^^^^^^ Omit parentheses for ternary conditions.
+        RUBY
+
+        expect_correction(<<~RUBY)
+          foo = bar.<(10) ? 1000 : 2000
+        RUBY
+      end
+
+      it 'registers an offense calling an operator method with safe navigation' do
+        expect_offense(<<~RUBY)
+          foo = (bar&.<(10)) ? 1000 : 2000
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^ Omit parentheses for ternary conditions.
+        RUBY
+
+        expect_correction(<<~RUBY)
+          foo = bar&.<(10) ? 1000 : 2000
+        RUBY
+      end
+    end
+
     context 'with an unparenthesized method call condition' do
       it 'registers an offense for defined check' do
         expect_offense(<<~RUBY)
@@ -439,7 +519,9 @@ RSpec.describe RuboCop::Cop::Style::TernaryParentheses, :config do
                 ^^^^^^^^^^^^^^^^^^^^^^ Omit parentheses for ternary conditions.
         RUBY
 
-        expect_no_corrections
+        expect_correction(<<~RUBY)
+          foo = defined?(bar) ? a : b
+        RUBY
       end
 
       it 'registers an offense when calling method with a parameter' do
@@ -448,7 +530,20 @@ RSpec.describe RuboCop::Cop::Style::TernaryParentheses, :config do
                 ^^^^^^^^^^^^^^^^^^ Omit parentheses for ternary conditions.
         RUBY
 
-        expect_no_corrections
+        expect_correction(<<~RUBY)
+          foo = baz?(bar) ? a : b
+        RUBY
+      end
+
+      it 'registers an offense calling method with safe navigation' do
+        expect_offense(<<~RUBY)
+          foo = (bar&.foo 10) ? 1000 : 2000
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^ Omit parentheses for ternary conditions.
+        RUBY
+
+        expect_correction(<<~RUBY)
+          foo = bar&.foo(10) ? 1000 : 2000
+        RUBY
       end
 
       context 'when calling method on a receiver' do
@@ -458,7 +553,9 @@ RSpec.describe RuboCop::Cop::Style::TernaryParentheses, :config do
                   ^^^^^^^^^^^^^^^^^^^^^^ Omit parentheses for ternary conditions.
           RUBY
 
-          expect_no_corrections
+          expect_correction(<<~RUBY)
+            foo = baz.foo?(bar) ? a : b
+          RUBY
         end
       end
 
@@ -469,7 +566,9 @@ RSpec.describe RuboCop::Cop::Style::TernaryParentheses, :config do
                   ^^^^^^^^^^^^^^^^^^^^^^^^ Omit parentheses for ternary conditions.
           RUBY
 
-          expect_no_corrections
+          expect_correction(<<~RUBY)
+            foo = "bar".foo?(bar) ? a : b
+          RUBY
         end
       end
 
@@ -480,7 +579,9 @@ RSpec.describe RuboCop::Cop::Style::TernaryParentheses, :config do
                   ^^^^^^^^^^^^^^^^^^^^^^ Omit parentheses for ternary conditions.
           RUBY
 
-          expect_no_corrections
+          expect_correction(<<~RUBY)
+            foo = Bar.foo?(bar) ? a : b
+          RUBY
         end
       end
 
@@ -491,7 +592,35 @@ RSpec.describe RuboCop::Cop::Style::TernaryParentheses, :config do
                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^ Omit parentheses for ternary conditions.
           RUBY
 
-          expect_no_corrections
+          expect_correction(<<~RUBY)
+            foo = baz.foo?(bar, baz) ? a : b
+          RUBY
+        end
+      end
+
+      context 'when calling an operator method with a dot' do
+        it 'registers an offense' do
+          expect_offense(<<~RUBY)
+            foo = (bar.< 10) ? 1000 : 2000
+                  ^^^^^^^^^^^^^^^^^^^^^^^^ Omit parentheses for ternary conditions.
+          RUBY
+
+          expect_correction(<<~RUBY)
+            foo = bar.<(10) ? 1000 : 2000
+          RUBY
+        end
+      end
+
+      context 'when calling an operator method with save navigation' do
+        it 'registers an offense' do
+          expect_offense(<<~RUBY)
+            foo = (bar&.< 10) ? 1000 : 2000
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^ Omit parentheses for ternary conditions.
+          RUBY
+
+          expect_correction(<<~RUBY)
+            foo = bar&.<(10) ? 1000 : 2000
+          RUBY
         end
       end
     end
@@ -600,7 +729,9 @@ RSpec.describe RuboCop::Cop::Style::TernaryParentheses, :config do
                 ^^^^^^^^^^^^^^^^^^^^^^ Only use parentheses for ternary expressions with complex conditions.
         RUBY
 
-        expect_no_corrections
+        expect_correction(<<~RUBY)
+          foo = defined?(bar) ? a : b
+        RUBY
       end
 
       it 'registers an offense for defined with method chain in condition' do
@@ -609,7 +740,9 @@ RSpec.describe RuboCop::Cop::Style::TernaryParentheses, :config do
                 ^^^^^^^^^^^^^^^^^^^^^^^^^^ Only use parentheses for ternary expressions with complex conditions.
         RUBY
 
-        expect_no_corrections
+        expect_correction(<<~RUBY)
+          foo = defined?(bar.baz) ? a : b
+        RUBY
       end
 
       it 'registers an offense for defined with class method in condition' do
@@ -618,7 +751,9 @@ RSpec.describe RuboCop::Cop::Style::TernaryParentheses, :config do
                 ^^^^^^^^^^^^^^^^^^^^^^^^^^ Only use parentheses for ternary expressions with complex conditions.
         RUBY
 
-        expect_no_corrections
+        expect_correction(<<~RUBY)
+          foo = defined?(Bar.baz) ? a : b
+        RUBY
       end
 
       it 'registers an offense for defined with nested constant in condition' do
@@ -627,7 +762,9 @@ RSpec.describe RuboCop::Cop::Style::TernaryParentheses, :config do
                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^ Only use parentheses for ternary expressions with complex conditions.
         RUBY
 
-        expect_no_corrections
+        expect_correction(<<~RUBY)
+          foo = defined?(Bar::BAZ) ? a : b
+        RUBY
       end
     end
 
@@ -644,7 +781,7 @@ RSpec.describe RuboCop::Cop::Style::TernaryParentheses, :config do
         expect_no_offenses('foo = bar = (bar == 1) ? a : b')
       end
 
-      it 'accepts accepts safe multiple assignment' do
+      it 'accepts safe multiple assignment' do
         expect_no_offenses('foo = (bar = baz = find_bar) ? a : b')
       end
 
@@ -660,7 +797,9 @@ RSpec.describe RuboCop::Cop::Style::TernaryParentheses, :config do
                 ^^^^^^^^^^^^^^^^^^^^^^ Only use parentheses for ternary expressions with complex conditions.
         RUBY
 
-        expect_no_corrections
+        expect_correction(<<~RUBY)
+          foo = defined?(bar) ? a : b
+        RUBY
       end
 
       context 'with accessor in method call parameters' do
@@ -670,16 +809,20 @@ RSpec.describe RuboCop::Cop::Style::TernaryParentheses, :config do
             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Only use parentheses for ternary expressions with complex conditions.
           RUBY
 
-          expect_no_corrections
+          expect_correction(<<~RUBY)
+            %w(a b).include?(params[:t]) ? "ab" : "c"
+          RUBY
         end
 
         it 'registers an offense for array include? with multiple parameters without parens' do
-          expect_offense(<<~'RUBY')
+          expect_offense(<<~RUBY)
             (%w(a b).include? params[:t], 3) ? "ab" : "c"
             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Only use parentheses for ternary expressions with complex conditions.
           RUBY
 
-          expect_no_corrections
+          expect_correction(<<~RUBY)
+            %w(a b).include?(params[:t], 3) ? "ab" : "c"
+          RUBY
         end
 
         it 'registers an offense for array include? with multiple parameters with parens' do
@@ -701,7 +844,9 @@ RSpec.describe RuboCop::Cop::Style::TernaryParentheses, :config do
             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Only use parentheses for ternary expressions with complex conditions.
           RUBY
 
-          expect_no_corrections
+          expect_correction(<<~RUBY)
+            %w(a b).include?("a") ? "ab" : "c"
+          RUBY
         end
 
         it 'registers an offense for array include? with parens' do
@@ -722,7 +867,9 @@ RSpec.describe RuboCop::Cop::Style::TernaryParentheses, :config do
                 ^^^^^^^^^^^^^^^^^^ Only use parentheses for ternary expressions with complex conditions.
         RUBY
 
-        expect_no_corrections
+        expect_correction(<<~RUBY)
+          foo = baz?(bar) ? a : b
+        RUBY
       end
 
       it 'registers an offense when calling method on a receiver' do
@@ -731,7 +878,9 @@ RSpec.describe RuboCop::Cop::Style::TernaryParentheses, :config do
                 ^^^^^^^^^^^^^^^^^^^^^^ Only use parentheses for ternary expressions with complex conditions.
         RUBY
 
-        expect_no_corrections
+        expect_correction(<<~RUBY)
+          foo = baz.foo?(bar) ? a : b
+        RUBY
       end
     end
 
@@ -869,26 +1018,6 @@ RSpec.describe RuboCop::Cop::Style::TernaryParentheses, :config do
 
       it 'accepts safe assignment' do
         expect_no_offenses('foo = (bar = baz == 1) ? a : b')
-      end
-    end
-  end
-
-  context 'when `RedundantParenthesis` would cause an infinite loop' do
-    let(:redundant_parens_enabled) { true }
-
-    context 'when `EnforcedStyle: require_parentheses`' do
-      let(:cop_config) { { 'EnforcedStyle' => 'require_parentheses' } }
-
-      it 'accepts' do
-        expect_no_offenses('foo = bar? ? a : b')
-      end
-    end
-
-    context 'when `EnforcedStyle: require_parentheses_when_complex`' do
-      let(:cop_config) { { 'EnforcedStyle' => 'require_parentheses_when_complex' } }
-
-      it 'accepts' do
-        expect_no_offenses('!condition.nil? ? foo : bar')
       end
     end
   end

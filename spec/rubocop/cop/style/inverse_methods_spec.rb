@@ -33,6 +33,12 @@ RSpec.describe RuboCop::Cop::Style::InverseMethods, :config do
     RUBY
   end
 
+  it 'does not register an offense for safe navigation calling !.none? with a symbol proc' do
+    expect_no_offenses(<<~RUBY)
+      !foo&.none?(&:even?)
+    RUBY
+  end
+
   it 'registers an offense for calling !.none? with a block' do
     expect_offense(<<~RUBY)
       !foo.none? { |f| f.even? }
@@ -44,6 +50,38 @@ RSpec.describe RuboCop::Cop::Style::InverseMethods, :config do
     RUBY
   end
 
+  it 'does not register an offense for safe navigation calling !.none? with a block' do
+    expect_no_offenses(<<~RUBY)
+      !foo&.none? { |f| f.even? }
+    RUBY
+  end
+
+  context 'Ruby 2.7', :ruby27 do
+    it 'registers an offense for calling !.none? with a numblock' do
+      expect_offense(<<~RUBY)
+        !foo.none? { _1.even? }
+        ^^^^^^^^^^^^^^^^^^^^^^^ Use `any?` instead of inverting `none?`.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        foo.any? { _1.even? }
+      RUBY
+    end
+  end
+
+  context 'Ruby 3.4', :ruby34 do
+    it 'registers an offense for calling !.none? with an itblock' do
+      expect_offense(<<~RUBY)
+        !foo.none? { it.even? }
+        ^^^^^^^^^^^^^^^^^^^^^^^ Use `any?` instead of inverting `none?`.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        foo.any? { it.even? }
+      RUBY
+    end
+  end
+
   it 'registers an offense for calling !.any? inside parens' do
     expect_offense(<<~RUBY)
       !(foo.any? &:working?)
@@ -52,6 +90,12 @@ RSpec.describe RuboCop::Cop::Style::InverseMethods, :config do
 
     expect_correction(<<~RUBY)
       foo.none? &:working?
+    RUBY
+  end
+
+  it 'does not register an offense for safe navigation calling !.any? inside parens' do
+    expect_no_offenses(<<~RUBY)
+      !(foo&.any? &:working?)
     RUBY
   end
 
@@ -122,17 +166,17 @@ RSpec.describe RuboCop::Cop::Style::InverseMethods, :config do
     odd?: :even?,
     blank?: :present?,
     exclude?: :include? }.each do |method, inverse|
-      it "registers an offense for !foo.#{method}" do
-        expect_offense(<<~RUBY, method: method)
-          !foo.%{method}
-          ^^^^^^{method} Use `#{inverse}` instead of inverting `#{method}`.
-        RUBY
+    it "registers an offense for !foo.#{method}" do
+      expect_offense(<<~RUBY, method: method)
+        !foo.%{method}
+        ^^^^^^{method} Use `#{inverse}` instead of inverting `#{method}`.
+      RUBY
 
-        expect_correction(<<~RUBY)
-          foo.#{inverse}
-        RUBY
-      end
+      expect_correction(<<~RUBY)
+        foo.#{inverse}
+      RUBY
     end
+  end
 
   { :== => :!=,
     :!= => :==,
@@ -161,6 +205,42 @@ RSpec.describe RuboCop::Cop::Style::InverseMethods, :config do
         foo #{inverse} bar
       RUBY
     end
+  end
+
+  it 'allows using `any?` method with safe navigation operator' do
+    expect_no_offenses(<<~RUBY)
+      !nullable&.any?(&:odd)
+    RUBY
+  end
+
+  it 'allows using `none?` method with safe navigation operator' do
+    expect_no_offenses(<<~RUBY)
+      !nullable&.none?(&:odd)
+    RUBY
+  end
+
+  it 'allows comparing for relational comparison operator (`<`) with safe navigation operator' do
+    expect_no_offenses(<<~RUBY)
+      !nullable&.<(0)
+    RUBY
+  end
+
+  it 'allows comparing for relational comparison operator (`<=`) with safe navigation operator' do
+    expect_no_offenses(<<~RUBY)
+      !nullable&.<=(0)
+    RUBY
+  end
+
+  it 'allows comparing for relational comparison operator (`>`) with safe navigation operator' do
+    expect_no_offenses(<<~RUBY)
+      !nullable&.>(0)
+    RUBY
+  end
+
+  it 'allows comparing for relational comparison operator (`>=`) with safe navigation operator' do
+    expect_no_offenses(<<~RUBY)
+      !nullable&.>=(0)
+    RUBY
   end
 
   it 'allows comparing camel case constants on the right' do
@@ -219,6 +299,17 @@ RSpec.describe RuboCop::Cop::Style::InverseMethods, :config do
         RUBY
       end
 
+      it "registers an offense for foo&.#{method} { |e| !e }" do
+        expect_offense(<<~RUBY, method: method)
+          foo&.%{method} { |e| !e }
+          ^^^^^^{method}^^^^^^^^^^^ Use `#{inverse}` instead of inverting `#{method}`.
+        RUBY
+
+        expect_correction(<<~RUBY)
+          foo&.#{inverse} { |e| e }
+        RUBY
+      end
+
       it 'registers an offense for a multiline method call where the last method is inverted' do
         expect_offense(<<~RUBY, method: method)
           foo.%{method} do |e|
@@ -232,6 +323,23 @@ RSpec.describe RuboCop::Cop::Style::InverseMethods, :config do
           foo.#{inverse} do |e|
             something
             e.bar
+          end
+        RUBY
+      end
+
+      it 'registers an offense for a multiline safe navigation method call where the last method is inverted' do
+        expect_offense(<<~RUBY, method: method)
+          foo&.%{method} do |e|
+          ^^^^^^{method}^^^^^^^ Use `#{inverse}` instead of inverting `#{method}`.
+            something
+            e&.bar&.!
+          end
+        RUBY
+
+        expect_correction(<<~RUBY)
+          foo&.#{inverse} do |e|
+            something
+            e&.bar
           end
         RUBY
       end
@@ -296,6 +404,17 @@ RSpec.describe RuboCop::Cop::Style::InverseMethods, :config do
 
         expect_correction(<<~RUBY)
           foo.#{inverse} { |e| e.bar? }
+        RUBY
+      end
+
+      it 'corrects an inverted safe navigation method call when using `BasicObject#!`' do
+        expect_offense(<<~RUBY, method: method)
+          foo&.%{method} { |e| e&.bar?&.! }
+          ^^^^^^{method}^^^^^^^^^^^^^^^^^^^ Use `#{inverse}` instead of inverting `#{method}`.
+        RUBY
+
+        expect_correction(<<~RUBY)
+          foo&.#{inverse} { |e| e&.bar? }
         RUBY
       end
 

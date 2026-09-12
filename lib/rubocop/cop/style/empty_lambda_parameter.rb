@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for parentheses for empty lambda parameters. Parentheses
+      # Checks for parentheses for empty lambda parameters. Parentheses
       # for empty lambda parameters do not cause syntax errors, but they are
       # redundant.
       #
@@ -23,7 +23,7 @@ module RuboCop
 
         MSG = 'Omit parentheses for the empty lambda parameters.'
 
-        def on_block(node)
+        def on_block(node) # rubocop:disable InternalAffairs/NumblockHandler, InternalAffairs/ItblockHandler -- the offense is an empty `()`
           send_node = node.send_node
           return unless send_node.send_type?
 
@@ -34,7 +34,7 @@ module RuboCop
 
         def autocorrect(corrector, node)
           send_node = node.parent.send_node
-          range = range_between(send_node.loc.expression.end_pos, node.loc.expression.end_pos)
+          range = range_between(send_node.source_range.end_pos, node.source_range.end_pos)
 
           corrector.remove(range)
         end

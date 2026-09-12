@@ -22,7 +22,7 @@ RSpec.describe RuboCop::Cop::Layout::SpaceInsideParens, :config do
     end
 
     it 'registers an offense for space around heredoc start' do
-      expect_offense(<<~'RUBY')
+      expect_offense(<<~RUBY)
         f( <<~HEREDOC )
                      ^ Space inside parentheses detected.
           ^ Space inside parentheses detected.
@@ -287,7 +287,7 @@ RSpec.describe RuboCop::Cop::Layout::SpaceInsideParens, :config do
       RUBY
     end
 
-    it 'registers multiple offense for a missing and extra space between consecutive brackets' do
+    it 'registers multiple offenses for a missing and extra space between consecutive brackets' do
       expect_offense(<<~RUBY)
         g( (( 3 + 5 ) * f) ** x, 5)
                                   ^ No space inside parentheses detected.

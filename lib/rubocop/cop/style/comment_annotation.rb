@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks that comment annotation keywords are written according
+      # Checks that comment annotation keywords are written according
       # to guidelines.
       #
       # Annotation keywords can be specified by overriding the cop's `Keywords`
@@ -104,7 +104,7 @@ module RuboCop
         end
 
         def inline_comment?(comment)
-          !comment_line?(comment.loc.expression.source_line)
+          !comment_line?(comment.source_range.source_line)
         end
 
         def annotation_range(annotation)

@@ -1,10 +1,44 @@
 # frozen_string_literal: true
 
 RSpec.describe RuboCop::Cop::Lint::RedundantCopEnableDirective, :config do
-  it 'registers offense and corrects unnecessary enable' do
+  describe 'when cop is disabled in the configuration' do
+    let(:other_cops) { { 'Layout/LineLength' => { 'Enabled' => false } } }
+
+    it 'registers no offense when enabling the cop' do
+      expect_no_offenses(<<~RUBY)
+        foo
+        # rubocop:enable Layout/LineLength
+      RUBY
+    end
+
+    it 'registers an offense if enabling it twice' do
+      expect_offense(<<~RUBY)
+        foo
+        # rubocop:enable Layout/LineLength
+        # rubocop:enable Layout/LineLength
+                         ^^^^^^^^^^^^^^^^^ Unnecessary enabling of Layout/LineLength.
+      RUBY
+    end
+  end
+
+  it 'registers an offense and corrects unnecessary enable' do
     expect_offense(<<~RUBY)
       foo
       # rubocop:enable Layout/LineLength
+                       ^^^^^^^^^^^^^^^^^ Unnecessary enabling of Layout/LineLength.
+    RUBY
+
+    expect_correction(<<~RUBY)
+      foo
+    RUBY
+  end
+
+  # Without taking the reason along, the `#` is removed but its text is not, leaving bare
+  # words behind that do not parse.
+  it 'registers an offense and removes the `--` reason with the directive' do
+    expect_offense(<<~RUBY)
+      foo
+      # rubocop:enable Layout/LineLength -- no longer needed
                        ^^^^^^^^^^^^^^^^^ Unnecessary enabling of Layout/LineLength.
     RUBY
 
@@ -77,7 +111,7 @@ RSpec.describe RuboCop::Cop::Lint::RedundantCopEnableDirective, :config do
     RUBY
   end
 
-  it 'registers offense and corrects redundant enabling of same cop' do
+  it 'registers an offense and corrects redundant enabling of same cop' do
     expect_offense(<<~RUBY)
       # rubocop:disable Layout/LineLength
       fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo = barrrrrrrrrrrrrrrrrrrrrrrrrr
@@ -102,7 +136,7 @@ RSpec.describe RuboCop::Cop::Lint::RedundantCopEnableDirective, :config do
   end
 
   context 'all switch' do
-    it 'registers offense and corrects unnecessary enable all' do
+    it 'registers an offense and corrects unnecessary enable all' do
       expect_offense(<<~RUBY)
         foo
         # rubocop:enable all
@@ -153,6 +187,21 @@ RSpec.describe RuboCop::Cop::Lint::RedundantCopEnableDirective, :config do
         # rubocop:disable Layout/LineLength
         foo
         # rubocop:enable Layout/LineLength
+      RUBY
+    end
+
+    it 'locates the right cop when a redundant one shares a prefix with a necessary one' do
+      expect_offense(<<~RUBY)
+        # rubocop:disable Layout/EmptyLinesAroundClassBody
+        foo
+        # rubocop:enable Layout/EmptyLinesAroundClassBody, Layout/EmptyLines
+                                                           ^^^^^^^^^^^^^^^^^ Unnecessary enabling of Layout/EmptyLines.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        # rubocop:disable Layout/EmptyLinesAroundClassBody
+        foo
+        # rubocop:enable Layout/EmptyLinesAroundClassBody
       RUBY
     end
   end
@@ -228,7 +277,7 @@ RSpec.describe RuboCop::Cop::Lint::RedundantCopEnableDirective, :config do
   end
 
   context 'when all department enabled' do
-    it 'registers offense and corrects unnecessary enable' do
+    it 'registers an offense and corrects unnecessary enable' do
       expect_offense(<<~RUBY)
         foo
         # rubocop:enable Layout
@@ -287,7 +336,7 @@ RSpec.describe RuboCop::Cop::Lint::RedundantCopEnableDirective, :config do
       RUBY
     end
 
-    it 'registers offense and corrects redundant enabling of same department' do
+    it 'registers an offense and corrects redundant enabling of same department' do
       expect_offense(<<~RUBY)
         # rubocop:disable Layout
         fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo = barrrrrrrrrrrrrrrrrrrrrrrrrr
@@ -311,7 +360,7 @@ RSpec.describe RuboCop::Cop::Lint::RedundantCopEnableDirective, :config do
       RUBY
     end
 
-    it 'registers offense and corrects redundant enabling of cop of same department' do
+    it 'registers an offense and corrects redundant enabling of cop of same department' do
       expect_offense(<<~RUBY)
         # rubocop:disable Layout
         fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo = barrrrrrrrrrrrrrrrrrrrrrrrrr
@@ -326,7 +375,7 @@ RSpec.describe RuboCop::Cop::Lint::RedundantCopEnableDirective, :config do
       RUBY
     end
 
-    it 'registers offense and corrects redundant enabling of department of same cop' do
+    it 'registers an offense and corrects redundant enabling of department of same cop' do
       expect_offense(<<~RUBY)
         # rubocop:disable Layout/LineLength
         fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo = barrrrrrrrrrrrrrrrrrrrrrrrrr
@@ -340,6 +389,44 @@ RSpec.describe RuboCop::Cop::Lint::RedundantCopEnableDirective, :config do
         fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo = barrrrrrrrrrrrrrrrrrrrrrrrrr
 
         some_code
+      RUBY
+    end
+  end
+
+  context 'with `rubocop:pop` directives' do
+    it 'registers an offense and corrects a `pop` without a matching `push`' do
+      expect_offense(<<~RUBY)
+        foo = 1
+        # rubocop:pop
+        ^^^^^^^^^^^^^ Unnecessary `rubocop:pop` without a matching `rubocop:push`.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        foo = 1
+      RUBY
+    end
+
+    it 'registers an offense for a second `pop` after a matched pair' do
+      expect_offense(<<~RUBY)
+        # rubocop:push -Style/StringLiterals
+        foo = "1"
+        # rubocop:pop
+        # rubocop:pop
+        ^^^^^^^^^^^^^ Unnecessary `rubocop:pop` without a matching `rubocop:push`.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        # rubocop:push -Style/StringLiterals
+        foo = "1"
+        # rubocop:pop
+      RUBY
+    end
+
+    it 'does not register an offense for a matched `push` / `pop` pair' do
+      expect_no_offenses(<<~RUBY)
+        # rubocop:push -Style/StringLiterals
+        foo = "1"
+        # rubocop:pop
       RUBY
     end
   end

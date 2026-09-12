@@ -5,15 +5,19 @@ module RuboCop
     module Utils
       # Parses {Kernel#sprintf} format strings.
       class FormatString
-        DIGIT_DOLLAR  = /(\d+)\$/.freeze
+        # Escaping the `#` in `INTERPOLATION` and `TEMPLATE_NAME` is necessary to
+        # avoid a bug in Ruby 3.2.0
+        # See: https://bugs.ruby-lang.org/issues/19379
+        DIGIT_DOLLAR  = /(?<arg_number>\d+)\$/.freeze
+        INTERPOLATION = /\#\{.*?\}/.freeze
         FLAG          = /[ #0+-]|#{DIGIT_DOLLAR}/.freeze
         NUMBER_ARG    = /\*#{DIGIT_DOLLAR}?/.freeze
-        NUMBER        = /\d+|#{NUMBER_ARG}/.freeze
+        NUMBER        = /\d+|#{NUMBER_ARG}|#{INTERPOLATION}/.freeze
         WIDTH         = /(?<width>#{NUMBER})/.freeze
-        PRECISION     = /\.(?<precision>#{NUMBER})/.freeze
+        PRECISION     = /\.(?<precision>#{NUMBER}?)/.freeze
         TYPE          = /(?<type>[bBdiouxXeEfgGaAcps])/.freeze
         NAME          = /<(?<name>\w+)>/.freeze
-        TEMPLATE_NAME = /\{(?<name>\w+)\}/.freeze
+        TEMPLATE_NAME = /(?<!\#)\{(?<name>\w+)\}/.freeze
 
         SEQUENCE = /
             % (?<type>%)
@@ -41,7 +45,7 @@ module RuboCop
         #
         # @see https://ruby-doc.org/core-2.6.3/Kernel.html#method-i-format
         class FormatSequence
-          attr_reader :begin_pos, :end_pos, :flags, :width, :precision, :name, :type
+          attr_reader :begin_pos, :end_pos, :flags, :width, :precision, :name, :type, :arg_number
 
           def initialize(match)
             @source = match[0]
@@ -52,6 +56,7 @@ module RuboCop
             @precision = match[:precision]
             @name = match[:name]
             @type = match[:type]
+            @arg_number = match[:arg_number]
           end
 
           def percent?
@@ -64,6 +69,16 @@ module RuboCop
 
           def template?
             name && @source.include?('{')
+          end
+
+          def variable_width?
+            !!width&.start_with?('*')
+          end
+
+          def variable_width_argument_number
+            return unless variable_width?
+
+            width == '*' ? 1 : width.match(DIGIT_DOLLAR)['arg_number'].to_i
           end
 
           # Number of arguments required for the format sequence

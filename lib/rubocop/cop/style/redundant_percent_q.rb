@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for usage of the %q/%Q syntax when '' or "" would do.
+      # Checks for usage of the %q/%Q syntax when '' or "" would do.
       #
       # @example
       #
@@ -53,7 +53,7 @@ module RuboCop
           return if interpolated_quotes?(node) || allowed_percent_q?(node)
 
           add_offense(node) do |corrector|
-            delimiter = /^%Q[^"]+$|'/.match?(node.source) ? QUOTE : SINGLE_QUOTE
+            delimiter = /\A%Q[^"]+\z|'/.match?(node.source) ? QUOTE : SINGLE_QUOTE
 
             corrector.replace(node.loc.begin, delimiter)
             corrector.replace(node.loc.end, delimiter)
@@ -80,8 +80,7 @@ module RuboCop
         end
 
         def string_literal?(node)
-          node.loc.respond_to?(:begin) && node.loc.respond_to?(:end) &&
-            node.loc.begin && node.loc.end
+          node.loc?(:begin) && node.loc?(:end)
         end
 
         def start_with_percent_q_variant?(string)
@@ -91,9 +90,12 @@ module RuboCop
         def acceptable_q?(node)
           src = node.source
 
-          return true if STRING_INTERPOLATION_REGEXP.match?(src)
+          # If the string contains interpolation-like syntax and would be
+          # converted to a double-quoted string (because it contains single
+          # quotes), the replacement would activate interpolation.
+          return true if STRING_INTERPOLATION_REGEXP.match?(src) && src.include?(SINGLE_QUOTE)
 
-          src.scan(/\\./).any? { |s| ESCAPED_NON_BACKSLASH.match?(s) }
+          src.scan(/\\./).any?(ESCAPED_NON_BACKSLASH)
         end
 
         def acceptable_capital_q?(node)

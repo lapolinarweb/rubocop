@@ -15,6 +15,51 @@ RSpec.describe RuboCop::Cop::Style::HashAsLastArrayItem, :config do
       RUBY
     end
 
+    it 'registers an offense and corrects when the single-line array contains only hash elements without braces' do
+      expect_offense(<<~RUBY)
+        [one: 1, two: 2]
+         ^^^^^^^^^^^^^^ Wrap hash in `{` and `}`.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        [{one: 1, two: 2}]
+      RUBY
+    end
+
+    it 'registers an offense and corrects when the multiline array contains only hash elements without braces' do
+      expect_offense(<<~RUBY)
+        [
+          one: 1,
+          ^^^^^^^ Wrap hash in `{` and `}`.
+          two: 2
+        ]
+      RUBY
+
+      # NOTE: Hash element indentation is handled by
+      # `Layout/FirstHashElementIndentation` and `Layout/HashAlignment` cops.
+      expect_correction(<<~RUBY)
+        [
+          {
+          one: 1,
+          two: 2
+          }
+        ]
+      RUBY
+    end
+
+    it 'registers an offense and corrects when the multiline array on the same line contains only hash elements without braces' do
+      expect_offense(<<~RUBY)
+        [one: 1,
+         ^^^^^^^ Wrap hash in `{` and `}`.
+         two: 2]
+      RUBY
+
+      expect_correction(<<~RUBY)
+        [{one: 1,
+         two: 2}]
+      RUBY
+    end
+
     it 'does not register an offense when hash with braces' do
       expect_no_offenses(<<~RUBY)
         [1, 2, { one: 1, two: 2 }]
@@ -36,6 +81,12 @@ RSpec.describe RuboCop::Cop::Style::HashAsLastArrayItem, :config do
     it 'does not register an offense when the hash is empty' do
       expect_no_offenses(<<~RUBY)
         [1, {}]
+      RUBY
+    end
+
+    it 'does not register an offense when using double splat operator' do
+      expect_no_offenses(<<~RUBY)
+        [1, **options]
       RUBY
     end
   end
@@ -62,6 +113,17 @@ RSpec.describe RuboCop::Cop::Style::HashAsLastArrayItem, :config do
 
       expect_correction(<<~RUBY)
         [1, 2,  one: 1, two: 2, ]
+      RUBY
+    end
+
+    it 'registers an offense and corrects when the array contains only hash elements with braces' do
+      expect_offense(<<~RUBY)
+        [{one: 1, two: 2}]
+         ^^^^^^^^^^^^^^^^ Omit the braces around the hash.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        [one: 1, two: 2]
       RUBY
     end
 

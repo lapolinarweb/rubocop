@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks that `include`, `extend` and `prepend` statements appear
+      # Checks that `include`, `extend` and `prepend` statements appear
       # inside classes and modules, not at the top level, so as to not affect
       # the behavior of `Object`.
       #
@@ -47,7 +47,7 @@ module RuboCop
         # @!method include_statement(node)
         def_node_matcher :include_statement, <<~PATTERN
           (send nil? ${:include :extend :prepend}
-            const)
+            const+)
         PATTERN
 
         # @!method in_top_level_scope?(node)

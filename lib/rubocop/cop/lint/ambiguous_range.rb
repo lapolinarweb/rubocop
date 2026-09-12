@@ -3,12 +3,12 @@
 module RuboCop
   module Cop
     module Lint
-      # This cop checks for ambiguous ranges.
+      # Checks for ambiguous ranges.
       #
-      # Ranges have quite low precedence, which leads to unexpected behaviour when
+      # Ranges have quite low precedence, which leads to unexpected behavior when
       # using a range with other operators. This cop avoids that by making ranges
       # explicit by requiring parenthesis around complex range boundaries (anything
-      # that is not a basic literal: numerics, strings, symbols, etc.).
+      # that is not a literal: numerics, strings, symbols, etc.).
       #
       # This cop can be configured with `RequireParenthesesForMethodChains` in order to
       # specify whether method chains (including `self.foo`) should be wrapped in parens
@@ -18,16 +18,18 @@ module RuboCop
       # value, it will be wrapped in order to prevent the ambiguity of `1..2.to_a`.
       #
       # @safety
-      #   The cop auto-corrects by wrapping the entire boundary in parentheses, which
+      #   The cop autocorrects by wrapping the entire boundary in parentheses, which
       #   makes the outcome more explicit but is possible to not be the intention of the
-      #   programmer. For this reason, this cop's auto-correct is unsafe (it will not
-      #   change the behaviour of the code, but will not necessarily match the
+      #   programmer. For this reason, this cop's autocorrect is unsafe (it will not
+      #   change the behavior of the code, but will not necessarily match the
       #   intent of the program).
       #
       # @example
       #   # bad
       #   x || 1..2
+      #   x - 1..2
       #   (x || 1..2)
+      #   x || 1..y || 2
       #   1..2.to_a
       #
       #   # good, unambiguous
@@ -41,6 +43,7 @@ module RuboCop
       #
       #   # good, ambiguity removed
       #   x || (1..2)
+      #   (x - 1)..2
       #   (x || 1)..2
       #   (x || 1)..(y || 2)
       #   (1..2).to_a
@@ -57,6 +60,7 @@ module RuboCop
       #   # good
       #   (a.foo)..(b.bar)
       class AmbiguousRange < Base
+        include RationalLiteral
         extend AutoCorrector
 
         MSG = 'Wrap complex range boundaries with parentheses to avoid ambiguity.'
@@ -79,10 +83,11 @@ module RuboCop
           yield range.end if range.end
         end
 
+        # rubocop:disable-next Metrics/CyclomaticComplexity
         def acceptable?(node)
           node.begin_type? ||
-            node.basic_literal? ||
-            node.variable? || node.const_type? ||
+            node.literal? || rational_literal?(node) ||
+            node.variable? || node.const_type? || node.self_type? ||
             (node.call_type? && acceptable_call?(node))
         end
 
@@ -92,6 +97,8 @@ module RuboCop
           # Require parentheses when making a method call on a literal
           # to avoid the ambiguity of `1..2.to_a`.
           return false if node.receiver&.basic_literal?
+
+          return false if node.operator_method? && !node.method?(:[])
 
           require_parentheses_for_method_chain? || node.receiver.nil?
         end

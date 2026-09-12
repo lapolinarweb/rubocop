@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 RSpec.describe RuboCop::Cop::Lint::DuplicateMethods, :config do
-  shared_examples 'in scope' do |type, opening_line|
+  shared_examples 'in scope' do |type, opening_line, receiver = 'A'|
     it "registers an offense for duplicate method in #{type}" do
       expect_offense(<<~RUBY)
         #{opening_line}
@@ -9,7 +9,7 @@ RSpec.describe RuboCop::Cop::Lint::DuplicateMethods, :config do
             implement 1
           end
           def some_method
-          ^^^^^^^^^^^^^^^ Method `A#some_method` is defined at both (string):2 and (string):5.
+          ^^^^^^^^^^^^^^^ Method `#{receiver}#some_method` is defined at both (string):2 and (string):5.
             implement 2
           end
         end
@@ -36,7 +36,7 @@ RSpec.describe RuboCop::Cop::Lint::DuplicateMethods, :config do
             implement 1
           end
           def self.some_method
-          ^^^^^^^^^^^^^^^^^^^^ Method `A.some_method` is defined at both dups.rb:2 and dups.rb:5.
+          ^^^^^^^^^^^^^^^^^^^^ Method `#{receiver}.some_method` is defined at both dups.rb:2 and dups.rb:5.
             implement 2
           end
         end
@@ -76,7 +76,7 @@ RSpec.describe RuboCop::Cop::Lint::DuplicateMethods, :config do
             implement 1
           end
           private def some_method
-                  ^^^^^^^^^^^^^^^ Method `A#some_method` is defined at both (string):2 and (string):5.
+                  ^^^^^^^^^^^^^^^ Method `#{receiver}#some_method` is defined at both (string):2 and (string):5.
             implement 2
           end
         end
@@ -90,7 +90,7 @@ RSpec.describe RuboCop::Cop::Lint::DuplicateMethods, :config do
             implement 1
           end
           private def self.some_method
-                  ^^^^^^^^^^^^^^^^^^^^ Method `A.some_method` is defined at both (string):2 and (string):5.
+                  ^^^^^^^^^^^^^^^^^^^^ Method `#{receiver}.some_method` is defined at both (string):2 and (string):5.
             implement 2
           end
         end
@@ -117,7 +117,7 @@ RSpec.describe RuboCop::Cop::Lint::DuplicateMethods, :config do
             implement 1
           end
           protected def some_method
-                    ^^^^^^^^^^^^^^^ Method `A#some_method` is defined at both (string):2 and (string):5.
+                    ^^^^^^^^^^^^^^^ Method `#{receiver}#some_method` is defined at both (string):2 and (string):5.
             implement 2
           end
         end
@@ -131,14 +131,14 @@ RSpec.describe RuboCop::Cop::Lint::DuplicateMethods, :config do
             implement 1
           end
           def some_method
-          ^^^^^^^^^^^^^^^ Method `A#some_method` is defined at both dups.rb:2 and dups.rb:5.
+          ^^^^^^^^^^^^^^^ Method `#{receiver}#some_method` is defined at both dups.rb:2 and dups.rb:5.
             implement 2
           end
           def any_method
             implement 1
           end
           def any_method
-          ^^^^^^^^^^^^^^ Method `A#any_method` is defined at both dups.rb:8 and dups.rb:11.
+          ^^^^^^^^^^^^^^ Method `#{receiver}#any_method` is defined at both dups.rb:8 and dups.rb:11.
             implement 2
           end
         end
@@ -154,7 +154,7 @@ RSpec.describe RuboCop::Cop::Lint::DuplicateMethods, :config do
         end
         #{opening_line}
           def some_method
-          ^^^^^^^^^^^^^^^ Method `A#some_method` is defined at both dups.rb:2 and dups.rb:7.
+          ^^^^^^^^^^^^^^^ Method `#{receiver}#some_method` is defined at both dups.rb:2 and dups.rb:7.
             implement 2
           end
         end
@@ -170,7 +170,7 @@ RSpec.describe RuboCop::Cop::Lint::DuplicateMethods, :config do
         end
         #{opening_line}
           def self.some_method
-          ^^^^^^^^^^^^^^^^^^^^ Method `A.some_method` is defined at both test.rb:2 and test.rb:7.
+          ^^^^^^^^^^^^^^^^^^^^ Method `#{receiver}.some_method` is defined at both test.rb:2 and test.rb:7.
             implement 2
           end
         end
@@ -189,7 +189,7 @@ RSpec.describe RuboCop::Cop::Lint::DuplicateMethods, :config do
       expect_offense(<<~RUBY, 'second.rb')
         #{opening_line}
           def some_method
-          ^^^^^^^^^^^^^^^ Method `A#some_method` is defined at both first.rb:2 and second.rb:2.
+          ^^^^^^^^^^^^^^^ Method `#{receiver}#some_method` is defined at both first.rb:2 and second.rb:2.
             implement 2
           end
         end
@@ -204,7 +204,7 @@ RSpec.describe RuboCop::Cop::Lint::DuplicateMethods, :config do
               implement 1
             end
             def some_method
-            ^^^^^^^^^^^^^^^ Method `A.some_method` is defined at both test.rb:3 and test.rb:6.
+            ^^^^^^^^^^^^^^^ Method `#{receiver}.some_method` is defined at both test.rb:3 and test.rb:6.
               implement 2
             end
           end
@@ -220,13 +220,13 @@ RSpec.describe RuboCop::Cop::Lint::DuplicateMethods, :config do
               implement 1
             end
             def some_method
-            ^^^^^^^^^^^^^^^ Method `B::A#some_method` is defined at both test.rb:3 and test.rb:6.
+            ^^^^^^^^^^^^^^^ Method `B::#{receiver}#some_method` is defined at both test.rb:3 and test.rb:6.
               implement 2
             end
             def self.another
             end
             def self.another
-            ^^^^^^^^^^^^^^^^ Method `B::A.another` is defined at both test.rb:9 and test.rb:11.
+            ^^^^^^^^^^^^^^^^ Method `B::#{receiver}.another` is defined at both test.rb:9 and test.rb:11.
             end
           end
         end
@@ -234,7 +234,6 @@ RSpec.describe RuboCop::Cop::Lint::DuplicateMethods, :config do
     end
 
     it 'registers an offense when class << exp is used' do
-      pending
       expect_offense(<<~RUBY, 'test.rb')
         #{opening_line}
           class << blah
@@ -242,7 +241,7 @@ RSpec.describe RuboCop::Cop::Lint::DuplicateMethods, :config do
               implement 1
             end
             def some_method
-            ^^^^^^^^^^^^^^^ Method `A#some_method` is defined at both test.rb:3 and test.rb:6.
+            ^^^^^^^^^^^^^^^ Method `blah.some_method` is defined at both test.rb:3 and test.rb:6.
               implement 2
             end
           end
@@ -251,19 +250,30 @@ RSpec.describe RuboCop::Cop::Lint::DuplicateMethods, :config do
     end
 
     it "registers an offense for duplicate alias in #{type}" do
-      expect_offense(<<-RUBY, 'example.rb')
+      expect_offense(<<~RUBY, 'example.rb')
         #{opening_line}
           def some_method
             implement 1
           end
           alias some_method any_method
-          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Method `A#some_method` is defined at both example.rb:2 and example.rb:5.
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Method `#{receiver}#some_method` is defined at both example.rb:2 and example.rb:5.
+        end
+      RUBY
+    end
+
+    it "does not register an offense for duplicate self-alias in #{type}" do
+      expect_no_offenses(<<~RUBY, 'example.rb')
+        #{opening_line}
+          alias some_method some_method
+          def some_method
+            implement 1
+          end
         end
       RUBY
     end
 
     it "doesn't register an offense for non-duplicate alias in #{type}" do
-      expect_no_offenses(<<-RUBY)
+      expect_no_offenses(<<~RUBY)
         #{opening_line}
           def some_method
             implement 1
@@ -274,19 +284,41 @@ RSpec.describe RuboCop::Cop::Lint::DuplicateMethods, :config do
     end
 
     it "registers an offense for duplicate alias_method in #{type}" do
-      expect_offense(<<-RUBY, 'example.rb')
+      expect_offense(<<~RUBY, 'example.rb')
         #{opening_line}
           def some_method
             implement 1
           end
           alias_method :some_method, :any_method
-          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Method `A#some_method` is defined at both example.rb:2 and example.rb:5.
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Method `#{receiver}#some_method` is defined at both example.rb:2 and example.rb:5.
+        end
+      RUBY
+    end
+
+    it "does not register an offense for duplicate self-alias_method in #{type}" do
+      expect_no_offenses(<<~RUBY, 'example.rb')
+        #{opening_line}
+          alias_method :some_method, :some_method
+          def some_method
+            implement 1
+          end
+        end
+      RUBY
+    end
+
+    it "does not register an offense for duplicate self-alias_method with dynamic original name in #{type}" do
+      expect_no_offenses(<<~RUBY, 'example.rb')
+        #{opening_line}
+          alias_method :some_method, unknown()
+          def some_method
+            implement 1
+          end
         end
       RUBY
     end
 
     it "accepts for non-duplicate alias_method in #{type}" do
-      expect_no_offenses(<<-RUBY)
+      expect_no_offenses(<<~RUBY)
         #{opening_line}
           def some_method
             implement 1
@@ -297,7 +329,7 @@ RSpec.describe RuboCop::Cop::Lint::DuplicateMethods, :config do
     end
 
     it "doesn't register an offense for alias for gvar in #{type}" do
-      expect_no_offenses(<<-RUBY)
+      expect_no_offenses(<<~RUBY)
         #{opening_line}
           alias $foo $bar
         end
@@ -305,70 +337,70 @@ RSpec.describe RuboCop::Cop::Lint::DuplicateMethods, :config do
     end
 
     it "registers an offense for duplicate attr_reader in #{type}" do
-      expect_offense(<<-RUBY, 'example.rb')
+      expect_offense(<<~RUBY, 'example.rb')
         #{opening_line}
           def something
           end
           attr_reader :something
-          ^^^^^^^^^^^^^^^^^^^^^^ Method `A#something` is defined at both example.rb:2 and example.rb:4.
+          ^^^^^^^^^^^^^^^^^^^^^^ Method `#{receiver}#something` is defined at both example.rb:2 and example.rb:4.
         end
       RUBY
     end
 
     it "registers an offense for duplicate attr_writer in #{type}" do
-      expect_offense(<<-RUBY, 'example.rb')
+      expect_offense(<<~RUBY, 'example.rb')
         #{opening_line}
           def something=(right)
           end
           attr_writer :something
-          ^^^^^^^^^^^^^^^^^^^^^^ Method `A#something=` is defined at both example.rb:2 and example.rb:4.
+          ^^^^^^^^^^^^^^^^^^^^^^ Method `#{receiver}#something=` is defined at both example.rb:2 and example.rb:4.
         end
       RUBY
     end
 
     it "registers offenses for duplicate attr_accessor in #{type}" do
-      expect_offense(<<-RUBY, 'example.rb')
+      expect_offense(<<~RUBY, 'example.rb')
         #{opening_line}
           attr_accessor :something
 
           def something
-          ^^^^^^^^^^^^^ Method `A#something` is defined at both example.rb:2 and example.rb:4.
+          ^^^^^^^^^^^^^ Method `#{receiver}#something` is defined at both example.rb:2 and example.rb:4.
           end
           def something=(right)
-          ^^^^^^^^^^^^^^ Method `A#something=` is defined at both example.rb:2 and example.rb:6.
+          ^^^^^^^^^^^^^^ Method `#{receiver}#something=` is defined at both example.rb:2 and example.rb:6.
           end
         end
       RUBY
     end
 
     it "registers an offense for duplicate attr in #{type}" do
-      expect_offense(<<-RUBY, 'example.rb')
+      expect_offense(<<~RUBY, 'example.rb')
         #{opening_line}
           def something
           end
           attr :something
-          ^^^^^^^^^^^^^^^ Method `A#something` is defined at both example.rb:2 and example.rb:4.
+          ^^^^^^^^^^^^^^^ Method `#{receiver}#something` is defined at both example.rb:2 and example.rb:4.
         end
       RUBY
     end
 
     it "registers offenses for duplicate assignable attr in #{type}" do
-      expect_offense(<<-RUBY, 'example.rb')
+      expect_offense(<<~RUBY, 'example.rb')
         #{opening_line}
           attr :something, true
 
           def something
-          ^^^^^^^^^^^^^ Method `A#something` is defined at both example.rb:2 and example.rb:4.
+          ^^^^^^^^^^^^^ Method `#{receiver}#something` is defined at both example.rb:2 and example.rb:4.
           end
           def something=(right)
-          ^^^^^^^^^^^^^^ Method `A#something=` is defined at both example.rb:2 and example.rb:6.
+          ^^^^^^^^^^^^^^ Method `#{receiver}#something=` is defined at both example.rb:2 and example.rb:6.
           end
         end
       RUBY
     end
 
     it "accepts for attr_reader and setter in #{type}" do
-      expect_no_offenses(<<-RUBY)
+      expect_no_offenses(<<~RUBY)
         #{opening_line}
           def something=(right)
           end
@@ -378,7 +410,7 @@ RSpec.describe RuboCop::Cop::Lint::DuplicateMethods, :config do
     end
 
     it "accepts for attr_writer and getter in #{type}" do
-      expect_no_offenses(<<-RUBY)
+      expect_no_offenses(<<~RUBY)
         #{opening_line}
           def something
           end
@@ -386,13 +418,746 @@ RSpec.describe RuboCop::Cop::Lint::DuplicateMethods, :config do
         end
       RUBY
     end
+
+    it "registers an offense for duplicate nested method in #{type}" do
+      expect_offense(<<~RUBY, 'example.rb')
+        #{opening_line}
+          def foo
+            def some_method
+              implement 1
+            end
+          end
+
+          def foo
+          ^^^^^^^ Method `#{receiver}#foo` is defined at both example.rb:2 and example.rb:8.
+            def some_method
+            ^^^^^^^^^^^^^^^ Method `#{receiver}#some_method` is defined at both example.rb:3 and example.rb:9.
+              implement 2
+            end
+          end
+        end
+      RUBY
+    end
+
+    it "registers an offense for duplicate nested method in self method of #{type}" do
+      expect_offense(<<~RUBY, 'example.rb')
+        #{opening_line}
+          def self.foo
+            def some_method
+              implement 1
+            end
+          end
+
+          def self.foo
+          ^^^^^^^^^^^^ Method `#{receiver}.foo` is defined at both example.rb:2 and example.rb:8.
+            def some_method
+            ^^^^^^^^^^^^^^^ Method `#{receiver}#some_method` is defined at both example.rb:3 and example.rb:9.
+              implement 2
+            end
+          end
+        end
+      RUBY
+    end
+
+    it 'does not register an offense for same method name defined in different methods' do
+      expect_no_offenses(<<~RUBY)
+        #{opening_line}
+          def foo
+            def some_method
+              implement 1
+            end
+          end
+
+          def bar
+            def some_method
+              implement 2
+            end
+          end
+        end
+      RUBY
+    end
+
+    it 'does not register an offense for same method name defined in different self methods' do
+      expect_no_offenses(<<~RUBY)
+        #{opening_line}
+          def self.foo
+            def some_method
+              implement 1
+            end
+          end
+
+          def self.bar
+            def some_method
+              implement 2
+            end
+          end
+        end
+      RUBY
+    end
+
+    it 'does not register an offense for same method name defined in different blocks' do
+      expect_no_offenses(<<~RUBY)
+        #{opening_line}
+          dsl_like('foo') do
+            def some_method
+              implement 1
+            end
+          end
+
+          dsl_like('bar') do
+            def some_method
+              implement 2
+            end
+          end
+        end
+      RUBY
+    end
+
+    context 'when `AllCops/ActiveSupportExtensionsEnabled: true`' do
+      let(:config) do
+        RuboCop::Config.new('AllCops' => { 'ActiveSupportExtensionsEnabled' => true })
+      end
+
+      it "registers an offense for duplicate delegate with symbol method in #{type}" do
+        expect_offense(<<~RUBY, 'example.rb')
+          #{opening_line}
+            def some_method
+              implement 1
+            end
+            delegate :some_method, to: :foo
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Method `#{receiver}#some_method` is defined at both example.rb:2 and example.rb:5.
+          end
+        RUBY
+      end
+
+      it "registers an offense for duplicate delegate with string method in #{type}" do
+        expect_offense(<<~RUBY, 'example.rb')
+          #{opening_line}
+            def some_method
+              implement 1
+            end
+            delegate 'some_method', to: :foo
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Method `#{receiver}#some_method` is defined at both example.rb:2 and example.rb:5.
+          end
+        RUBY
+      end
+
+      it "registers an offense for duplicate delegate with string `to` argument in #{type}" do
+        expect_offense(<<~RUBY, 'example.rb')
+          #{opening_line}
+            def some_method
+              implement 1
+            end
+            delegate :some_method, to: 'foo'
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Method `#{receiver}#some_method` is defined at both example.rb:2 and example.rb:5.
+          end
+        RUBY
+      end
+
+      it "registers an offense for duplicate delegate with symbol prefix in #{type}" do
+        expect_offense(<<~RUBY, 'example.rb')
+          #{opening_line}
+            def some_method
+              implement 1
+            end
+            delegate :method, to: :foo, prefix: :some
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Method `#{receiver}#some_method` is defined at both example.rb:2 and example.rb:5.
+          end
+        RUBY
+      end
+
+      it "registers an offense for duplicate delegate with string prefix in #{type}" do
+        expect_offense(<<~RUBY, 'example.rb')
+          #{opening_line}
+            def some_method
+              implement 1
+            end
+            delegate :method, to: :foo, prefix: 'some'
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Method `#{receiver}#some_method` is defined at both example.rb:2 and example.rb:5.
+          end
+        RUBY
+      end
+
+      it "registers an offense for duplicate delegate with prefix true in #{type}" do
+        expect_offense(<<~RUBY, 'example.rb')
+          #{opening_line}
+            def some_method
+              implement 1
+            end
+            delegate :method, to: :some, prefix: true
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Method `#{receiver}#some_method` is defined at both example.rb:2 and example.rb:5.
+          end
+        RUBY
+      end
+
+      it "registers an offense with multiple delegates in #{type}" do
+        expect_offense(<<~RUBY, 'example.rb')
+          #{opening_line}
+            def some_method
+              implement 1
+            end
+            delegate :other_method, :some_method, to: :foo
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Method `#{receiver}#some_method` is defined at both example.rb:2 and example.rb:5.
+          end
+        RUBY
+      end
+
+      it "does not register an offense for non-duplicate delegate with prefix false in #{type}" do
+        expect_no_offenses(<<~RUBY, 'example.rb')
+          #{opening_line}
+            def some_method
+              implement 1
+            end
+            delegate :method, prefix: false, to: :some
+          end
+        RUBY
+      end
+
+      it "does not register an offense for dynamically specified `to` option with enabled prefix in #{type}" do
+        expect_no_offenses(<<~RUBY, 'example.rb')
+          #{opening_line}
+            def some_method
+              implement 1
+            end
+
+            %w[any none some].each do |type|
+              delegate :method, prefix: true, to: type
+            end
+          end
+        RUBY
+      end
+
+      it "does not register an offense for dynamically specified `prefix` in #{type}" do
+        expect_no_offenses(<<~RUBY, 'example.rb')
+          #{opening_line}
+            def some_method
+              implement 1
+            end
+
+            delegate :method, prefix: some_condition, to: :some
+          end
+        RUBY
+      end
+
+      it "does not register an offense for non-duplicate delegate in #{type}" do
+        expect_no_offenses(<<~RUBY, 'example.rb')
+          #{opening_line}
+            def some_method
+              implement 1
+            end
+            delegate :other_method, to: :foo
+          end
+        RUBY
+      end
+
+      it "does not register an offense for duplicate delegate inside a condition in #{type}" do
+        expect_no_offenses(<<~RUBY, 'example.rb')
+          #{opening_line}
+            def some_method
+              implement 1
+            end
+
+            if cond
+              delegate :some_method, to: :foo
+            end
+          end
+        RUBY
+      end
+
+      it "does not register an offense for duplicate delegate with splat keyword arguments in #{type}" do
+        expect_no_offenses(<<~RUBY, 'example.rb')
+          #{opening_line}
+            def some_method
+              implement 1
+            end
+
+            delegate :some_method, **options
+          end
+        RUBY
+      end
+
+      it "does not register an offense for duplicate delegate without keyword arguments in #{type}" do
+        expect_no_offenses(<<~RUBY, 'example.rb')
+          #{opening_line}
+            def some_method
+              implement 1
+            end
+
+            delegate :some_method
+          end
+        RUBY
+      end
+
+      it 'does not register an offense for duplicate delegate without `to` argument' do
+        expect_no_offenses(<<~RUBY, 'example.rb')
+          #{opening_line}
+            def some_method
+              implement 1
+            end
+
+            delegate :some_method, prefix: true
+          end
+        RUBY
+      end
+
+      it "does not register an offense for an unregistered delegating method in #{type}" do
+        expect_no_offenses(<<~RUBY, 'example.rb')
+          #{opening_line}
+            def some_method
+              implement 1
+            end
+
+            expose :some_method, to: :foo
+          end
+        RUBY
+      end
+    end
+
+    context 'with a custom `DelegatingMethods` and `ActiveSupportExtensionsEnabled: true`' do
+      let(:config) do
+        RuboCop::Config.new(
+          'AllCops' => { 'ActiveSupportExtensionsEnabled' => true },
+          'Lint/DuplicateMethods' => { 'DelegatingMethods' => %w[delegate expose] }
+        )
+      end
+
+      it "registers an offense for a registered custom delegating method in #{type}" do
+        expect_offense(<<~RUBY, 'example.rb')
+          #{opening_line}
+            def some_method
+              implement 1
+            end
+            expose :some_method, to: :foo
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Method `#{receiver}#some_method` is defined at both example.rb:2 and example.rb:5.
+          end
+        RUBY
+      end
+
+      it "still registers an offense for the built-in `delegate` in #{type}" do
+        expect_offense(<<~RUBY, 'example.rb')
+          #{opening_line}
+            def some_method
+              implement 1
+            end
+            delegate :some_method, to: :foo
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Method `#{receiver}#some_method` is defined at both example.rb:2 and example.rb:5.
+          end
+        RUBY
+      end
+    end
+
+    context 'with a custom `DelegatingMethods` and `ActiveSupportExtensionsEnabled: false`' do
+      let(:config) do
+        RuboCop::Config.new(
+          'AllCops' => { 'ActiveSupportExtensionsEnabled' => false },
+          'Lint/DuplicateMethods' => { 'DelegatingMethods' => %w[delegate expose] }
+        )
+      end
+
+      it "does not register an offense for a custom delegating method in #{type}" do
+        expect_no_offenses(<<~RUBY, 'example.rb')
+          #{opening_line}
+            def some_method
+              implement 1
+            end
+            expose :some_method, to: :foo
+          end
+        RUBY
+      end
+    end
+
+    context 'when `AllCops/ActiveSupportExtensionsEnabled: false`' do
+      let(:config) do
+        RuboCop::Config.new('AllCops' => { 'ActiveSupportExtensionsEnabled' => false })
+      end
+
+      it "does not register an offense for duplicate delegate in #{type}" do
+        expect_no_offenses(<<~RUBY, 'example.rb')
+          #{opening_line}
+            def some_method
+              implement 1
+            end
+            delegate :some_method, to: :foo
+          end
+        RUBY
+      end
+    end
+
+    it 'registers an offense for duplicate method when `def_delegator` is used' do
+      expect_offense(<<~RUBY)
+        #{opening_line}
+          def_delegator :foo, :bar
+
+          def bar; end
+          ^^^^^^^ Method `#{receiver}#bar` is defined at both (string):2 and (string):4.
+        end
+      RUBY
+    end
+
+    it 'registers an offense for duplicate method when `def_delegator` is used with string arguments' do
+      expect_offense(<<~RUBY)
+        #{opening_line}
+          def_delegator 'foo', 'bar'
+
+          def bar; end
+          ^^^^^^^ Method `#{receiver}#bar` is defined at both (string):2 and (string):4.
+        end
+      RUBY
+    end
+
+    it 'registers an offense for duplicate method when `def_instance_delegator` is used' do
+      expect_offense(<<~RUBY)
+        #{opening_line}
+          def_instance_delegator :foo, :bar
+
+          def bar; end
+          ^^^^^^^ Method `#{receiver}#bar` is defined at both (string):2 and (string):4.
+        end
+      RUBY
+    end
+
+    it 'registers an offense for duplicate method when `def_delegator` is used with alias' do
+      expect_offense(<<~RUBY)
+        #{opening_line}
+          def_delegator :foo, :bar, :baz
+
+          def bar; end
+
+          def baz; end
+          ^^^^^^^ Method `#{receiver}#baz` is defined at both (string):2 and (string):6.
+        end
+      RUBY
+    end
+
+    it 'does not register an offense for duplicate method when `def_delegator` is used within a condition' do
+      expect_no_offenses(<<~RUBY)
+        #{opening_line}
+          def_delegator :foo, :bar if baz?
+
+          def bar; end
+        end
+      RUBY
+    end
+
+    it 'registers an offense for duplicate method when `def_delegators` is used' do
+      expect_offense(<<~RUBY)
+        #{opening_line}
+          def_delegators :foo, :bar, :baz
+
+          def bar; end
+          ^^^^^^^ Method `#{receiver}#bar` is defined at both (string):2 and (string):4.
+        end
+      RUBY
+    end
+
+    it 'registers an offense for duplicate method when `def_delegators` is used with string arguments' do
+      expect_offense(<<~RUBY)
+        #{opening_line}
+          def_delegators 'foo', 'bar', 'baz'
+
+          def bar; end
+          ^^^^^^^ Method `#{receiver}#bar` is defined at both (string):2 and (string):4.
+        end
+      RUBY
+    end
+
+    it 'registers an offense for duplicate method when `def_instance_delegators` is used' do
+      expect_offense(<<~RUBY)
+        #{opening_line}
+          def_instance_delegators :foo, :bar, :baz
+
+          def bar; end
+          ^^^^^^^ Method `#{receiver}#bar` is defined at both (string):2 and (string):4.
+        end
+      RUBY
+    end
+
+    it 'does not register an offense for duplicate method when `def_delegators` is used within a condition' do
+      expect_no_offenses(<<~RUBY)
+        #{opening_line}
+          def_delegators :foo, :bar, :baz if qux?
+
+          def bar; end
+        end
+      RUBY
+    end
   end
 
-  include_examples('in scope', 'class', 'class A')
-  include_examples('in scope', 'module', 'module A')
-  include_examples('in scope', 'dynamic class', 'A = Class.new do')
-  include_examples('in scope', 'dynamic module', 'A = Module.new do')
-  include_examples('in scope', 'class_eval block', 'A.class_eval do')
+  it 'does not register an offense when the self-alias trick is used to redefine ' \
+     'a method from another file' do
+    expect_no_offenses(<<~RUBY, 'first.rb')
+      class A
+        def some_method
+          implement 1
+        end
+      end
+    RUBY
+
+    expect_no_offenses(<<~RUBY, 'second.rb')
+      class A
+        alias_method :some_method, :some_method
+        def some_method
+          implement 2
+        end
+      end
+    RUBY
+  end
+
+  it 'does not register an offense when the `alias` self-alias trick is used to redefine ' \
+     'a method from another file' do
+    expect_no_offenses(<<~RUBY, 'first.rb')
+      class A
+        def some_method
+          implement 1
+        end
+      end
+    RUBY
+
+    expect_no_offenses(<<~RUBY, 'second.rb')
+      class A
+        alias some_method some_method
+        def some_method
+          implement 2
+        end
+      end
+    RUBY
+  end
+
+  # rubocop:disable InternalAffairs/ExampleDescription -- `expect_no_offenses` is only the
+  # cross-file setup; the example asserts the offense in the second file.
+  it 'registers an offense when the self-alias trick from a previous file is used ' \
+     'without a redefinition in its own file' do
+    expect_no_offenses(<<~RUBY, 'first.rb')
+      class A
+        alias_method :some_method, :some_method
+        def some_method
+          implement 1
+        end
+      end
+    RUBY
+
+    expect_offense(<<~RUBY, 'second.rb')
+      class A
+        def some_method
+        ^^^^^^^^^^^^^^^ Method `A#some_method` is defined at both first.rb:3 and second.rb:2.
+          implement 2
+        end
+      end
+    RUBY
+  end
+  # rubocop:enable InternalAffairs/ExampleDescription
+
+  it 'registers an offense for a same-file duplicate even when the self-alias trick ' \
+     'is used for the same method' do
+    expect_offense(<<~RUBY, 'test.rb')
+      class A
+        alias_method :some_method, :some_method
+        def some_method
+          implement 1
+        end
+        def some_method
+        ^^^^^^^^^^^^^^^ Method `A#some_method` is defined at both test.rb:3 and test.rb:6.
+          implement 2
+        end
+      end
+    RUBY
+  end
+
+  context 'with Active Support redefinition markers and `ActiveSupportExtensionsEnabled: true`' do
+    let(:config) do
+      RuboCop::Config.new('AllCops' => { 'ActiveSupportExtensionsEnabled' => true })
+    end
+
+    it 'does not register an offense when `silence_redefinition_of_method` marks ' \
+       'a redefinition of a method from another file' do
+      expect_no_offenses(<<~RUBY, 'first.rb')
+        class A
+          def some_method
+            implement 1
+          end
+        end
+      RUBY
+
+      expect_no_offenses(<<~RUBY, 'second.rb')
+        class A
+          silence_redefinition_of_method :some_method
+          def some_method
+            implement 2
+          end
+        end
+      RUBY
+    end
+
+    it 'does not register an offense when the marker uses a string method name' do
+      expect_no_offenses(<<~RUBY, 'first.rb')
+        class A
+          def some_method
+            implement 1
+          end
+        end
+      RUBY
+
+      expect_no_offenses(<<~RUBY, 'second.rb')
+        class A
+          silence_redefinition_of_method 'some_method'
+          def some_method
+            implement 2
+          end
+        end
+      RUBY
+    end
+
+    it 'does not register an offense when `redefine_method` marks ' \
+       'a redefinition of a method from another file' do
+      expect_no_offenses(<<~RUBY, 'first.rb')
+        class A
+          def some_method
+            implement 1
+          end
+        end
+      RUBY
+
+      expect_no_offenses(<<~RUBY, 'second.rb')
+        class A
+          redefine_method(:some_method) do
+            implement 2
+          end
+
+          def some_method
+            implement 3
+          end
+        end
+      RUBY
+    end
+
+    # rubocop:disable InternalAffairs/ExampleDescription -- `expect_no_offenses` is only the
+    # cross-file setup; the example asserts the offense in the second file.
+    it 'registers an offense when the marker names a different method' do
+      expect_no_offenses(<<~RUBY, 'first.rb')
+        class A
+          def some_method
+            implement 1
+          end
+        end
+      RUBY
+
+      expect_offense(<<~RUBY, 'second.rb')
+        class A
+          silence_redefinition_of_method :other_method
+          def some_method
+          ^^^^^^^^^^^^^^^ Method `A#some_method` is defined at both first.rb:2 and second.rb:3.
+            implement 2
+          end
+        end
+      RUBY
+    end
+    # rubocop:enable InternalAffairs/ExampleDescription
+
+    it 'registers an offense for a same-file duplicate even when the method is marked' do
+      expect_offense(<<~RUBY, 'test.rb')
+        class A
+          silence_redefinition_of_method :some_method
+          def some_method
+            implement 1
+          end
+          def some_method
+          ^^^^^^^^^^^^^^^ Method `A#some_method` is defined at both test.rb:3 and test.rb:6.
+            implement 2
+          end
+        end
+      RUBY
+    end
+  end
+
+  # rubocop:disable InternalAffairs/ExampleDescription -- `expect_no_offenses` is only the
+  # cross-file setup; the example asserts the offense in the second file.
+  it 'registers an offense despite `silence_redefinition_of_method` when ' \
+     '`ActiveSupportExtensionsEnabled` is disabled' do
+    expect_no_offenses(<<~RUBY, 'first.rb')
+      class A
+        def some_method
+          implement 1
+        end
+      end
+    RUBY
+
+    expect_offense(<<~RUBY, 'second.rb')
+      class A
+        silence_redefinition_of_method :some_method
+        def some_method
+        ^^^^^^^^^^^^^^^ Method `A#some_method` is defined at both first.rb:2 and second.rb:3.
+          implement 2
+        end
+      end
+    RUBY
+  end
+  # rubocop:enable InternalAffairs/ExampleDescription
+
+  context 'with `AllowedCrossFilePaths`' do
+    let(:cop_config) { { 'AllowedCrossFilePaths' => ['scripts/**/*'] } }
+
+    it 'does not register an offense when the other definition site matches an allowed path' do
+      expect_no_offenses(<<~RUBY, 'scripts/import.rb')
+        class A
+          def some_method
+            implement 1
+          end
+        end
+      RUBY
+
+      expect_no_offenses(<<~RUBY, 'app/model.rb')
+        class A
+          def some_method
+            implement 2
+          end
+        end
+      RUBY
+    end
+
+    # rubocop:disable InternalAffairs/ExampleDescription -- `expect_no_offenses` is only the
+    # cross-file setup; the example asserts the offense in the second file.
+    it 'registers an offense when the other definition site does not match an allowed path' do
+      expect_no_offenses(<<~RUBY, 'app/model.rb')
+        class A
+          def some_method
+            implement 1
+          end
+        end
+      RUBY
+
+      expect_offense(<<~RUBY, 'app/other.rb')
+        class A
+          def some_method
+          ^^^^^^^^^^^^^^^ Method `A#some_method` is defined at both app/model.rb:2 and app/other.rb:2.
+            implement 2
+          end
+        end
+      RUBY
+    end
+    # rubocop:enable InternalAffairs/ExampleDescription
+
+    it 'registers an offense for a same-file duplicate even in a file matching an allowed path' do
+      expect_offense(<<~RUBY, 'scripts/import.rb')
+        class A
+          def some_method
+            implement 1
+          end
+          def some_method
+          ^^^^^^^^^^^^^^^ Method `A#some_method` is defined at both scripts/import.rb:2 and scripts/import.rb:5.
+            implement 2
+          end
+        end
+      RUBY
+    end
+  end
+
+  it_behaves_like('in scope', 'class', 'class A')
+  it_behaves_like('in scope', 'module', 'module A')
+  it_behaves_like('in scope', 'dynamic class', 'A = Class.new do')
+  it_behaves_like('in scope', 'dynamic module', 'A = Module.new do')
+  it_behaves_like('in scope', 'class_eval block', 'A.class_eval do')
+  it_behaves_like('in scope', 'anonymous class', 'Class.new do', 'Object')
+  it_behaves_like('in scope', 'anonymous module', 'Module.new do', 'Object')
 
   %w[class module].each do |type|
     it "registers an offense for duplicate class methods with named receiver in #{type}" do
@@ -510,6 +1275,752 @@ RSpec.describe RuboCop::Cop::Lint::DuplicateMethods, :config do
     RUBY
   end
 
+  it 'does not register an offense for the same instance method in different Class.new blocks ' \
+     'assigned to different constants' do
+    expect_no_offenses(<<~RUBY)
+      self::A = Class.new do
+        def foo
+          1
+        end
+      end
+      self::B = Class.new do
+        def foo
+          2
+        end
+      end
+    RUBY
+  end
+
+  it 'does not register an offense for the same class method in different Class.new blocks ' \
+     'assigned to different constants' do
+    expect_no_offenses(<<~RUBY)
+      self::A = Class.new do
+        def self.name
+          'Foo'
+        end
+      end
+      self::B = Class.new do
+        def self.name
+          'Bar'
+        end
+      end
+    RUBY
+  end
+
+  it 'registers an offense for duplicate methods inside the same Class.new block assigned to a constant' do
+    expect_offense(<<~RUBY)
+      self::A = Class.new do
+        def foo
+          1
+        end
+        def foo
+        ^^^^^^^ Method `::A#foo` is defined at both (string):2 and (string):5.
+          2
+        end
+      end
+    RUBY
+  end
+
+  it 'does not register an offense for the same instance method in different Class.new blocks ' \
+     'returned from different methods' do
+    expect_no_offenses(<<~RUBY)
+      def build_foo
+        Class.new do
+          def name
+            'Foo'
+          end
+        end
+      end
+      def build_bar
+        Class.new do
+          def name
+            'Bar'
+          end
+        end
+      end
+    RUBY
+  end
+
+  it 'does not register an offense for the same class method in different Class.new blocks ' \
+     'returned from different methods' do
+    expect_no_offenses(<<~RUBY)
+      def build_foo
+        Class.new do
+          def self.name
+            'Foo'
+          end
+        end
+      end
+      def build_bar
+        Class.new do
+          def self.name
+            'Bar'
+          end
+        end
+      end
+    RUBY
+  end
+
+  it 'registers an offense for duplicate methods inside the same Class.new block returned from a method' do
+    expect_offense(<<~RUBY)
+      def build_klass
+        Class.new do
+          def name
+            1
+          end
+          def name
+          ^^^^^^^^ Method `Object#name` is defined at both (string):3 and (string):6.
+            2
+          end
+        end
+      end
+    RUBY
+  end
+
+  it 'ignores Module.new blocks which are passed as method arguments' do
+    expect_no_offenses(<<~RUBY)
+      A.prepend(
+        Module.new { def foo; end }
+      )
+      B.prepend(
+        Module.new { def foo; end }
+      )
+    RUBY
+  end
+
+  it 'ignores Module.new blocks which are passed as safe navigation method arguments' do
+    expect_no_offenses(<<~RUBY)
+      A&.prepend(
+        Module.new { def foo; end }
+      )
+      B&.prepend(
+        Module.new { def foo; end }
+      )
+    RUBY
+  end
+
+  it 'registers an offense for the same method in anonymous module blocks prepended to the same receiver' do
+    expect_offense(<<~RUBY)
+      A.prepend(
+        Module.new do
+          def foo
+            x
+          end
+        end
+      )
+
+      A.prepend(
+        Module.new do
+          def foo
+          ^^^^^^^ Method `Object#foo` is defined at both (string):3 and (string):11.
+            y
+          end
+        end
+      )
+    RUBY
+  end
+
+  it 'does not register an offense for the same method in anonymous module blocks prepended to different receivers' do
+    expect_no_offenses(<<~RUBY)
+      A.prepend(
+        Module.new do
+          def foo
+            x
+          end
+        end
+      )
+
+      B.prepend(
+        Module.new do
+          def foo
+            y
+          end
+        end
+      )
+    RUBY
+  end
+
+  it 'registers an offense for the same method in anonymous module blocks prepended to the same receiver using safe navigation' do
+    expect_offense(<<~RUBY)
+      A&.prepend(
+        Module.new do
+          def foo
+            x
+          end
+        end
+      )
+
+      A&.prepend(
+        Module.new do
+          def foo
+          ^^^^^^^ Method `Object#foo` is defined at both (string):3 and (string):11.
+            y
+          end
+        end
+      )
+    RUBY
+  end
+
+  it 'does not register an offense for the same method in anonymous module blocks prepended to different receivers using safe navigation' do
+    expect_no_offenses(<<~RUBY)
+      A&.prepend(
+        Module.new do
+          def foo
+            x
+          end
+        end
+      )
+
+      B&.prepend(
+        Module.new do
+          def foo
+            y
+          end
+        end
+      )
+    RUBY
+  end
+
+  it 'does not register an offense for the same method in different Module.new blocks passed to a no-receiver call' do
+    expect_no_offenses(<<~RUBY)
+      stub_const('Foo',
+                 Module.new { def self.underscore(_); end })
+      stub_const('Bar',
+                 Module.new { def self.underscore(_); end })
+    RUBY
+  end
+
+  it 'does not register an offense for the same instance method in different Module.new blocks passed to a no-receiver call' do
+    expect_no_offenses(<<~RUBY)
+      stub_const('Foo',
+                 Module.new { def underscore(_); end })
+      stub_const('Bar',
+                 Module.new { def underscore(_); end })
+    RUBY
+  end
+
+  it 'does not register an offense for the same instance method in different Class.new blocks ' \
+     'passed to the same named-receiver method call' do
+    expect_no_offenses(<<~RUBY)
+      T.cast(
+        Class.new(Base) do
+          def perform
+            1
+          end
+        end,
+        T.class_of(Base)
+      )
+
+      T.cast(
+        Class.new(Base) do
+          def perform
+            2
+          end
+        end,
+        T.class_of(Base)
+      )
+    RUBY
+  end
+
+  it 'does not register an offense for the same class method in different Class.new blocks ' \
+     'passed to the same named-receiver method call' do
+    expect_no_offenses(<<~RUBY)
+      T.cast(
+        Class.new(Base) do
+          def self.perform
+            1
+          end
+        end,
+        T.class_of(Base)
+      )
+
+      T.cast(
+        Class.new(Base) do
+          def self.perform
+            2
+          end
+        end,
+        T.class_of(Base)
+      )
+    RUBY
+  end
+
+  it 'does not register an offense for the same instance method in different Class.new blocks ' \
+     'on the same line passed to the same named-receiver method call' do
+    expect_no_offenses(<<~RUBY)
+      T.cast(Class.new(Base) { def perform; 1; end }, T.class_of(Base)); T.cast(Class.new(Base) { def perform; 2; end }, T.class_of(Base))
+    RUBY
+  end
+
+  it 'does not register an offense for the same instance method in different Class.new blocks ' \
+     'inside blocks with multiple statements' do
+    expect_no_offenses(<<~RUBY)
+      foo do
+        a = bar
+        Class.new do
+          def custom_validation
+          end
+        end
+      end
+
+      foo do
+        b = baz
+        Class.new do
+          def custom_validation
+          end
+        end
+      end
+    RUBY
+  end
+
+  it 'does not register an offense for the same class method in different Class.new blocks ' \
+     'inside blocks with multiple statements' do
+    expect_no_offenses(<<~RUBY)
+      foo do
+        a = bar
+        Class.new do
+          def self.name
+            'Foo'
+          end
+        end
+      end
+
+      foo do
+        b = baz
+        Class.new do
+          def self.name
+            'Bar'
+          end
+        end
+      end
+    RUBY
+  end
+
+  it 'does not register an offense for the same instance method in different Class.new blocks ' \
+     'inside numblocks with multiple statements', :ruby27 do
+    expect_no_offenses(<<~RUBY)
+      foo do
+        _1
+        Class.new do
+          def custom_validation
+          end
+        end
+      end
+
+      bar do
+        _1
+        Class.new do
+          def custom_validation
+          end
+        end
+      end
+    RUBY
+  end
+
+  it 'does not register an offense for the same class method in different Class.new blocks ' \
+     'inside numblocks with multiple statements', :ruby27 do
+    expect_no_offenses(<<~RUBY)
+      foo do
+        _1
+        Class.new do
+          def self.name
+            'Foo'
+          end
+        end
+      end
+
+      bar do
+        _1
+        Class.new do
+          def self.name
+            'Bar'
+          end
+        end
+      end
+    RUBY
+  end
+
+  it 'does not register an offense for the same instance method in different Class.new blocks ' \
+     'inside itblocks with multiple statements', :ruby34 do
+    expect_no_offenses(<<~RUBY)
+      foo do
+        it
+        Class.new do
+          def custom_validation
+          end
+        end
+      end
+
+      bar do
+        it
+        Class.new do
+          def custom_validation
+          end
+        end
+      end
+    RUBY
+  end
+
+  it 'does not register an offense for the same class method in different Class.new blocks ' \
+     'inside itblocks with multiple statements', :ruby34 do
+    expect_no_offenses(<<~RUBY)
+      foo do
+        it
+        Class.new do
+          def self.name
+            'Foo'
+          end
+        end
+      end
+
+      bar do
+        it
+        Class.new do
+          def self.name
+            'Bar'
+          end
+        end
+      end
+    RUBY
+  end
+
+  it 'does not register an offense for the same instance method in different Class.new blocks inside blocks' do
+    expect_no_offenses(<<~RUBY)
+      let(:foo_class) do
+        Class.new do
+          def name
+            'Foo'
+          end
+        end
+      end
+
+      let(:bar_class) do
+        Class.new do
+          def name
+            'Bar'
+          end
+        end
+      end
+    RUBY
+  end
+
+  it 'does not register an offense for the same class method in different Class.new blocks inside blocks' do
+    expect_no_offenses(<<~RUBY)
+      let(:foo_class) do
+        Class.new do
+          def self.name
+            'Foo'
+          end
+        end
+      end
+
+      let(:bar_class) do
+        Class.new do
+          def self.name
+            'Bar'
+          end
+        end
+      end
+    RUBY
+  end
+
+  it 'does not register an offense for the same instance method in different Class.new blocks inside describe blocks' do
+    expect_no_offenses(<<~RUBY)
+      describe 'something' do
+        Class.new do
+          def foo
+            1
+          end
+        end
+      end
+
+      describe 'other' do
+        Class.new do
+          def foo
+            2
+          end
+        end
+      end
+    RUBY
+  end
+
+  it 'does not register an offense for singleton methods in separate Class.new blocks assigned to an instance variable' do
+    expect_no_offenses(<<~RUBY)
+      def setup
+        @first = Class.new do
+          class << self
+            def name
+              'FIRST'
+            end
+          end
+        end
+
+        Class.new do
+          class << self
+            def name
+              'SECOND'
+            end
+          end
+        end
+      end
+    RUBY
+  end
+
+  it 'registers an offense for duplicate methods inside the same Class.new block inside a block' do
+    expect_offense(<<~RUBY)
+      let(:klass) do
+        Class.new do
+          def foo
+            1
+          end
+          def foo
+          ^^^^^^^ Method `::Object#foo` is defined at both (string):3 and (string):6.
+            2
+          end
+        end
+      end
+    RUBY
+  end
+
+  it 'registers an offense for duplicate class methods inside the same Class.new block inside a block' do
+    expect_offense(<<~RUBY)
+      let(:klass) do
+        Class.new do
+          def self.foo
+            1
+          end
+          def self.foo
+          ^^^^^^^^^^^^ Method `::Object.foo` is defined at both (string):3 and (string):6.
+            2
+          end
+        end
+      end
+    RUBY
+  end
+
+  it 'does not register an offense for the same instance method in different Module.new blocks inside blocks' do
+    expect_no_offenses(<<~RUBY)
+      let(:foo_mod) do
+        Module.new do
+          def name
+            'Foo'
+          end
+        end
+      end
+
+      let(:bar_mod) do
+        Module.new do
+          def name
+            'Bar'
+          end
+        end
+      end
+    RUBY
+  end
+
+  it 'does not register an offense for the same instance method in different Module.new blocks with chained method calls' do
+    expect_no_offenses(<<~RUBY)
+      Module.new { def test; end }
+            .instance_method(:test)
+
+      Module.new { def test; end }
+            .instance_method(:test)
+    RUBY
+  end
+
+  it 'does not register an offense for the same instance method in different Module.new blocks ' \
+     'with endless methods and chained calls', :ruby30 do
+    expect_no_offenses(<<~RUBY)
+      Module.new { def test(*one, **two, &block) = super(one, two, yield(block)) }
+            .instance_method(:test)
+            .parameters
+    RUBY
+  end
+
+  it 'does not register an offense for the same instance method in different Class.new blocks inside numblocks', :ruby27 do
+    expect_no_offenses(<<~RUBY)
+      foo { Class.new(_1) { def name; end } }
+
+      bar { Class.new(_1) { def name; end } }
+    RUBY
+  end
+
+  it 'does not register an offense for the same class method in different Class.new blocks inside numblocks', :ruby27 do
+    expect_no_offenses(<<~RUBY)
+      foo { Class.new(_1) { def self.name; 'Foo'; end } }
+
+      bar { Class.new(_1) { def self.name; 'Bar'; end } }
+    RUBY
+  end
+
+  it 'registers an offense for duplicate methods inside the same Class.new block inside a numblock', :ruby27 do
+    expect_offense(<<~RUBY)
+      foo { Class.new(_1) do
+          def foo
+            1
+          end
+          def foo
+          ^^^^^^^ Method `Object#foo` is defined at both (string):2 and (string):5.
+            2
+          end
+        end
+      }
+    RUBY
+  end
+
+  it 'registers an offense for duplicate class methods inside the same Class.new block inside a numblock', :ruby27 do
+    expect_offense(<<~RUBY)
+      foo { Class.new(_1) do
+          def self.foo
+            1
+          end
+          def self.foo
+          ^^^^^^^^^^^^ Method `Object.foo` is defined at both (string):2 and (string):5.
+            2
+          end
+        end
+      }
+    RUBY
+  end
+
+  it 'does not register an offense for the same instance method in different Class.new blocks inside itblocks', :ruby34 do
+    expect_no_offenses(<<~RUBY)
+      foo { Class.new(it) { def name; end } }
+
+      bar { Class.new(it) { def name; end } }
+    RUBY
+  end
+
+  it 'does not register an offense for the same class method in different Class.new blocks inside itblocks', :ruby34 do
+    expect_no_offenses(<<~RUBY)
+      foo { Class.new(it) { def self.name; 'Foo'; end } }
+
+      bar { Class.new(it) { def self.name; 'Bar'; end } }
+    RUBY
+  end
+
+  it 'registers an offense for duplicate methods inside the same Class.new block inside an itblock', :ruby34 do
+    expect_offense(<<~RUBY)
+      foo { Class.new(it) do
+          def foo
+            1
+          end
+          def foo
+          ^^^^^^^ Method `Object#foo` is defined at both (string):2 and (string):5.
+            2
+          end
+        end
+      }
+    RUBY
+  end
+
+  it 'registers an offense for duplicate class methods inside the same Class.new block inside an itblock', :ruby34 do
+    expect_offense(<<~RUBY)
+      foo { Class.new(it) do
+          def self.foo
+            1
+          end
+          def self.foo
+          ^^^^^^^^^^^^ Method `Object.foo` is defined at both (string):2 and (string):5.
+            2
+          end
+        end
+      }
+    RUBY
+  end
+
+  it 'does not register an offense when there are same `alias_method` name outside `ensure` scope' do
+    expect_no_offenses(<<~RUBY)
+      module FooTest
+        def make_save_always_fail
+          Foo.class_eval do
+            def failed_save
+              raise
+            end
+            alias_method :original_save, :save
+            alias_method :save, :failed_save
+          end
+
+          yield
+        ensure
+          Foo.class_eval do
+            alias_method :save, :original_save
+          end
+        end
+      end
+    RUBY
+  end
+
+  it 'registers an offense when there are duplicate `alias_method` name inside `ensure` scope' do
+    expect_offense(<<~RUBY, 'test.rb')
+      module FooTest
+        def make_save_always_fail
+          Foo.class_eval do
+            def failed_save
+              raise
+            end
+            alias_method :original_save, :save
+            alias_method :save, :failed_save
+          end
+
+          yield
+        ensure
+          Foo.class_eval do
+            alias_method :save, :original_save
+            alias_method :save, :original_save
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Method `FooTest::Foo#save` is defined at both test.rb:14 and test.rb:15.
+          end
+        end
+      end
+    RUBY
+  end
+
+  it 'does not register an offense when there are same `alias_method` name outside `rescue` scope' do
+    expect_no_offenses(<<~RUBY)
+      module FooTest
+        def make_save_always_fail
+          Foo.class_eval do
+            def failed_save
+              raise
+            end
+            alias_method :original_save, :save
+            alias_method :save, :failed_save
+          end
+
+          yield
+        rescue
+          Foo.class_eval do
+            alias_method :save, :original_save
+          end
+        end
+      end
+    RUBY
+  end
+
+  it 'registers an offense when there are duplicate `alias_method` name inside `rescue` scope' do
+    expect_offense(<<~RUBY, 'test.rb')
+      module FooTest
+        def make_save_always_fail
+          Foo.class_eval do
+            def failed_save
+              raise
+            end
+            alias_method :original_save, :save
+            alias_method :save, :failed_save
+          end
+
+          yield
+        rescue
+          Foo.class_eval do
+            alias_method :save, :original_save
+            alias_method :save, :original_save
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Method `FooTest::Foo#save` is defined at both test.rb:14 and test.rb:15.
+          end
+        end
+      end
+    RUBY
+  end
+
   it 'does not register for the same method in different scopes within `class << self`' do
     expect_no_offenses(<<~RUBY, 'test.rb')
       class A
@@ -526,7 +2037,7 @@ RSpec.describe RuboCop::Cop::Lint::DuplicateMethods, :config do
     RUBY
   end
 
-  it 'properly registers and offense when deeply nested' do
+  it 'properly registers an offense when deeply nested' do
     expect_offense(<<~RUBY, 'test.rb')
       module A
         module B
@@ -578,6 +2089,104 @@ RSpec.describe RuboCop::Cop::Lint::DuplicateMethods, :config do
         ^^^^^^^^^^^^^ Method `Object#something` is defined at both /no/project/root/foo.rb:1 and /no/project/root/foo.rb:3.
         end
       RUBY
+    end
+  end
+
+  context 'cross-file detection', :project_index do
+    let(:fixture_dir) do
+      File.expand_path('../../../fixtures/cross_file_duplicate_methods', __dir__)
+    end
+
+    def stage_fixture(tmpdir)
+      Dir.glob(File.join(fixture_dir, '*.rb')).each do |file|
+        FileUtils.cp(file, tmpdir)
+      end
+    end
+
+    def cop_offenses(tmpdir)
+      offenses = project_index_offenses(tmpdir)
+
+      offenses.select { |offense| offense['cop_name'] == 'Lint/DuplicateMethods' }
+    end
+
+    def run_with_config(body)
+      Dir.mktmpdir do |tmpdir|
+        # Resolve the `/var` -> `/private/var` macOS tmpdir symlink so that paths
+        # derived from the config location line up with the paths the index
+        # reports (`AllowedCrossFilePaths` matching relies on that).
+        tmpdir = File.realpath(tmpdir)
+        stage_fixture(tmpdir)
+        write_rubocop_config(tmpdir, body)
+        cop_offenses(tmpdir)
+      end
+    end
+
+    # The fixture contains:
+    # * `a.rb`/`b.rb` - `A#some_method` defined with `def` in both files
+    # * `c.rb`/`d.rb` - `attr_reader :shared_attr` and `attr_writer :shared_attr` on `B`
+    # * `e.rb`/`f.rb` - `attr_writer :val` and `def val=` on `C`
+    # * `g.rb`/`h.rb` - `def self.build` on `D` in both files
+    # * `i.rb`       - a unique method
+    # * `j.rb`/`k.rb` - `F#patched` redefined in `k.rb` using the self-alias trick
+    it 'reports duplicates defined in another file when UseProjectIndex is enabled' do
+      offenses = run_with_config('AllCops' => { 'UseProjectIndex' => true })
+      messages = offenses.to_h { |o| [File.basename(o['path']), o['message']] }
+
+      expect(offenses.size).to eq(6)
+      expect(messages.keys.sort).to eq(%w[a.rb b.rb e.rb f.rb g.rb h.rb])
+      expect(messages['a.rb']).to include('`A#some_method`', 'a.rb:2', 'b.rb:2')
+      expect(messages['b.rb']).to include('`A#some_method`', 'a.rb:2', 'b.rb:2')
+      expect(messages['e.rb']).to include('`C#val=`', 'e.rb:2', 'f.rb:2')
+      expect(messages['f.rb']).to include('`C#val=`', 'e.rb:2', 'f.rb:2')
+      expect(messages['g.rb']).to include('`D.build`', 'g.rb:2', 'h.rb:2')
+      expect(messages['h.rb']).to include('`D.build`', 'g.rb:2', 'h.rb:2')
+    end
+
+    it 'does not report cross-file duplicates when UseProjectIndex is disabled' do
+      offenses = run_with_config('AllCops' => { 'UseProjectIndex' => false })
+
+      expect(offenses).to be_empty
+    end
+
+    it 'does not report duplicates whose other definition site matches `AllowedCrossFilePaths`' do
+      offenses = run_with_config(
+        'AllCops' => { 'UseProjectIndex' => true },
+        'Lint/DuplicateMethods' => { 'AllowedCrossFilePaths' => ['b.rb', 'f*.rb', 'h.rb'] }
+      )
+
+      # The offense within an allowed file itself remains: its other definition
+      # site (`a.rb`/`e.rb`/`g.rb`) matches no allowed pattern. Silencing those
+      # is the job of an ordinary per-cop `Exclude`.
+      expect(offenses.map { |offense| File.basename(offense['path']) }.sort)
+        .to eq(%w[b.rb f.rb h.rb])
+    end
+
+    # The fixture contains:
+    # * `a.rb`/`b.rb` - `G#marked` redefined in `b.rb` with a preceding
+    #   `silence_redefinition_of_method :marked`
+    # * `c.rb`/`d.rb` - `H#helper` redefined in `d.rb`, whose marker names a
+    #   different method (`other_helper`)
+    # * `e.rb`/`f.rb` - `I#gen` redefined in `f.rb` with a `redefine_method(:gen)` marker
+    context 'with Active Support redefinition markers' do
+      let(:fixture_dir) do
+        File.expand_path('../../../fixtures/cross_file_duplicate_methods_active_support', __dir__)
+      end
+
+      it 'does not report redefinitions marked with Active Support markers when ' \
+         '`ActiveSupportExtensionsEnabled` is enabled' do
+        offenses = run_with_config(
+          'AllCops' => { 'UseProjectIndex' => true, 'ActiveSupportExtensionsEnabled' => true }
+        )
+
+        expect(offenses.map { |offense| File.basename(offense['path']) }.sort).to eq(%w[c.rb d.rb])
+      end
+
+      it 'reports marked redefinitions when `ActiveSupportExtensionsEnabled` is disabled' do
+        offenses = run_with_config('AllCops' => { 'UseProjectIndex' => true })
+
+        expect(offenses.map { |offense| File.basename(offense['path']) }.sort)
+          .to eq(%w[a.rb b.rb c.rb d.rb e.rb f.rb])
+      end
     end
   end
 end

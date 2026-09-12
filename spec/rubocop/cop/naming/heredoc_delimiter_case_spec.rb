@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
 RSpec.describe RuboCop::Cop::Naming::HeredocDelimiterCase, :config do
-  let(:config) { RuboCop::Config.new(described_class.badge.to_s => cop_config) }
-
   context 'when enforced style is uppercase' do
     let(:cop_config) do
       {
@@ -172,6 +170,16 @@ RSpec.describe RuboCop::Cop::Naming::HeredocDelimiterCase, :config do
             <<-'+'
               foo
             +
+          RUBY
+        end
+      end
+
+      # FIXME: `<<''` is a syntax error. This test was added because Parser gem can parse it,
+      # but this will be removed after https://github.com/whitequark/parser/issues/996 is resolved.
+      context 'when using blank heredoc delimiters', unsupported_on: :prism do
+        it 'does not register an offense' do
+          expect_no_offenses(<<~RUBY)
+            <<''
           RUBY
         end
       end

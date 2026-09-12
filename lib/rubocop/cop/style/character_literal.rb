@@ -4,6 +4,12 @@ module RuboCop
   module Cop
     module Style
       # Checks for uses of the character literal ?x.
+      # Starting with Ruby 1.9 character literals are
+      # essentially one-character strings, so this syntax
+      # is mostly redundant at this point.
+      #
+      # A `?` character literal can be used to express meta and control characters.
+      # That's a good use case of a `?` literal so it doesn't count as an offense.
       #
       # @example
       #   # bad
@@ -12,8 +18,9 @@ module RuboCop
       #   # good
       #   'x'
       #
-      #   # good
+      #   # good - control & meta escapes
       #   ?\C-\M-d
+      #   "\C-\M-d" # same as above
       class CharacterLiteral < Base
         include StringHelp
         extend AutoCorrector
@@ -22,11 +29,11 @@ module RuboCop
 
         def offense?(node)
           # we don't register an offense for things like ?\C-\M-d
-          node.loc.begin.is?('?') && node.source.size.between?(2, 3)
+          node.character_literal? && node.source.size.between?(2, 3)
         end
 
         def autocorrect(corrector, node)
-          string = node.source[1..-1]
+          string = node.source[1..]
 
           # special character like \n
           # or ' which needs to use "" or be escaped.

@@ -58,7 +58,7 @@ RSpec.describe RuboCop::Cop::Layout::ArrayAlignment, :config do
       RUBY
     end
 
-    it 'auto-corrects array within array with too much indentation' do
+    it 'autocorrects array within array with too much indentation' do
       expect_offense(<<~RUBY)
         [:l1,
           [:l2,
@@ -76,7 +76,7 @@ RSpec.describe RuboCop::Cop::Layout::ArrayAlignment, :config do
       RUBY
     end
 
-    it 'auto-corrects array within array with too little indentation' do
+    it 'autocorrects array within array with too little indentation' do
       expect_offense(<<~RUBY)
         [:l1,
         [:l2,
@@ -94,7 +94,7 @@ RSpec.describe RuboCop::Cop::Layout::ArrayAlignment, :config do
       RUBY
     end
 
-    it 'does not indent heredoc strings in autocorrect' do
+    it 'does not indent heredoc strings when autocorrecting' do
       expect_offense(<<~RUBY)
         var = [
                { :type => 'something',
@@ -142,7 +142,7 @@ RSpec.describe RuboCop::Cop::Layout::ArrayAlignment, :config do
       RUBY
     end
 
-    it 'auto-corrects array if the first element being on a new row' do
+    it 'autocorrects misaligned array with the first element on a new row' do
       expect_offense(<<~RUBY)
         array = [
           a,
@@ -202,6 +202,39 @@ RSpec.describe RuboCop::Cop::Layout::ArrayAlignment, :config do
       RUBY
     end
 
+    it 'accepts when assigning aligned bracketed array elements' do
+      expect_no_offenses(<<~RUBY)
+        var = [
+          first,
+          second
+        ]
+      RUBY
+    end
+
+    it 'accepts when assigning aligned unbracketed array elements' do
+      expect_no_offenses(<<~RUBY)
+        var =
+          first,
+          second
+      RUBY
+    end
+
+    it 'registers an offense when assigning not aligned unbracketed array elements' do
+      expect_offense(<<~RUBY)
+        var =
+             first,
+             ^^^^^ Use one level of indentation for elements following the first line of a multi-line array.
+            second
+            ^^^^^^ Use one level of indentation for elements following the first line of a multi-line array.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        var =
+          first,
+          second
+      RUBY
+    end
+
     it 'accepts single line array' do
       expect_no_offenses('array = [ a, b ]')
     end
@@ -220,7 +253,7 @@ RSpec.describe RuboCop::Cop::Layout::ArrayAlignment, :config do
       RUBY
     end
 
-    it 'auto-corrects array within array with too much indentation' do
+    it 'autocorrects array within array with too much indentation' do
       expect_offense(<<~RUBY)
         [:l1,
            [:l2,
@@ -238,7 +271,7 @@ RSpec.describe RuboCop::Cop::Layout::ArrayAlignment, :config do
       RUBY
     end
 
-    it 'auto-corrects array within array with too little indentation' do
+    it 'autocorrects array within array with too little indentation' do
       expect_offense(<<~RUBY)
         [:l1,
          [:l2,
@@ -256,7 +289,7 @@ RSpec.describe RuboCop::Cop::Layout::ArrayAlignment, :config do
       RUBY
     end
 
-    it 'does not indent heredoc strings in autocorrect' do
+    it 'does not indent heredoc strings when autocorrecting' do
       expect_offense(<<~RUBY)
         var = [
           { :type => 'something',
@@ -304,7 +337,7 @@ RSpec.describe RuboCop::Cop::Layout::ArrayAlignment, :config do
       RUBY
     end
 
-    it 'auto-corrects array if the first element being on a new row' do
+    it 'autocorrects misaligned array with the first element on a new row' do
       expect_offense(<<~RUBY)
         array = [
           a,

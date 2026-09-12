@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Naming
-      # This cop checks block parameter names for how descriptive they
+      # Checks block parameter names for how descriptive they
       # are. It is highly configurable.
       #
       # The `MinNameLength` config option takes an integer. It represents
@@ -38,7 +38,7 @@ module RuboCop
       class BlockParameterName < Base
         include UncommunicativeName
 
-        def on_block(node)
+        def on_block(node) # rubocop:disable InternalAffairs/NumblockHandler, InternalAffairs/ItblockHandler -- there are no parameter names to check
           return unless node.arguments?
 
           check(node, node.arguments)

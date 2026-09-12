@@ -21,7 +21,7 @@ RSpec.describe RuboCop::Cop::Style::RedundantAssignment, :config do
   end
 
   context 'when inside begin-end body' do
-    it 'registers an offense and auto-corrects' do
+    it 'registers an offense and autocorrects' do
       expect_offense(<<~RUBY)
         def func
           some_preceding_statements
@@ -46,7 +46,7 @@ RSpec.describe RuboCop::Cop::Style::RedundantAssignment, :config do
   end
 
   context 'when rescue blocks present' do
-    it 'does register an offense and auto-corrects when inside function or rescue block' do
+    it 'registers an offense and autocorrects when inside function or rescue block' do
       expect_offense(<<~RUBY)
         def func
           1
@@ -92,7 +92,7 @@ RSpec.describe RuboCop::Cop::Style::RedundantAssignment, :config do
   end
 
   context 'when inside an if-branch' do
-    it 'registers an offense and auto-corrects' do
+    it 'registers an offense and autocorrects' do
       expect_offense(<<~RUBY)
         def func
           some_preceding_statements
@@ -128,7 +128,7 @@ RSpec.describe RuboCop::Cop::Style::RedundantAssignment, :config do
   end
 
   context 'when inside a when-branch' do
-    it 'registers an offense and auto-corrects' do
+    it 'registers an offense and autocorrects' do
       expect_offense(<<~RUBY)
         def func
           some_preceding_statements
@@ -180,6 +180,59 @@ RSpec.describe RuboCop::Cop::Style::RedundantAssignment, :config do
     RUBY
   end
 
+  context 'when inside an `in` branch' do
+    it 'registers an offense and autocorrects' do
+      expect_offense(<<~RUBY)
+        def func
+          some_preceding_statements
+          case x
+          in y
+            res = 1
+            ^^^^^^^ Redundant assignment before returning detected.
+            res
+          in z
+            2
+          in q
+          else
+            res = 3
+            ^^^^^^^ Redundant assignment before returning detected.
+            res
+          end
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        def func
+          some_preceding_statements
+          case x
+          in y
+            1
+           #{trailing_whitespace}
+          in z
+            2
+          in q
+          else
+            3
+           #{trailing_whitespace}
+          end
+        end
+      RUBY
+    end
+  end
+
+  it 'accepts empty `in` nodes' do
+    expect_no_offenses(<<~RUBY)
+      def func
+        case x
+        in y then 1
+        in z # do nothing
+        else
+          3
+        end
+      end
+    RUBY
+  end
+
   it 'accepts empty method body' do
     expect_no_offenses(<<~RUBY)
       def func
@@ -196,5 +249,19 @@ RSpec.describe RuboCop::Cop::Style::RedundantAssignment, :config do
         end
       end
     RUBY
+  end
+
+  it 'reports an offense for def ending with assignment and returning with comment in between, but does not autocorrect' do
+    expect_offense(<<~RUBY)
+      def func
+        some_preceding_statements
+        x = something
+        ^^^^^^^^^^^^^ Redundant assignment before returning detected.
+        # something important about x
+        x
+      end
+    RUBY
+
+    expect_no_corrections
   end
 end

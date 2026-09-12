@@ -3,9 +3,13 @@
 module RuboCop
   module Cop
     module Style
-      # This cop enforces consistency between 'return nil' and 'return'.
+      # Enforces consistency between `return nil` and `return`.
       #
-      # Supported styles are: return, return_nil.
+      # This cop is disabled by default. Because there seems to be a perceived semantic difference
+      # between `return` and `return nil`. The former can be seen as just halting evaluation,
+      # while the latter might be used when the return value is of specific concern.
+      #
+      # Supported styles are `return` and `return_nil`.
       #
       # @example EnforcedStyle: return (default)
       #   # bad
@@ -43,7 +47,7 @@ module RuboCop
 
         def on_return(node)
           # Check Lint/NonLocalExitFromIterator first before this cop
-          node.each_ancestor(:block, :def, :defs) do |n|
+          node.each_ancestor(:block, :any_def) do |n|
             break if scoped_node?(n)
 
             send_node, args_node, _body_node = *n
@@ -79,7 +83,7 @@ module RuboCop
         end
 
         def scoped_node?(node)
-          node.def_type? || node.defs_type? || node.lambda?
+          node.any_def_type? || node.lambda?
         end
 
         # @!method chained_send?(node)

@@ -8,26 +8,52 @@ module RuboCop
   class Runner # rubocop:disable Metrics/ClassLength
     # An exception indicating that the inspection loop got stuck correcting
     # offenses back and forth.
-    class InfiniteCorrectionLoop < RuntimeError
+    class InfiniteCorrectionLoop < StandardError
       attr_reader :offenses
 
       def initialize(path, offenses_by_iteration, loop_start: -1)
         @offenses = offenses_by_iteration.flatten.uniq
-        root_cause = offenses_by_iteration[loop_start..-1]
+        root_cause = offenses_by_iteration[loop_start..]
                      .map { |x| x.map(&:cop_name).uniq.join(', ') }
                      .join(' -> ')
 
         message = 'Infinite loop detected'
         message += " in #{path}" if path
         message += " and caused by #{root_cause}" if root_cause
-        super message
+        super(message)
+      end
+    end
+
+    class << self
+      # @return [Array<#call>]
+      def ruby_extractors
+        @ruby_extractors ||= [default_ruby_extractor]
+      end
+
+      private
+
+      # @return [#call]
+      def default_ruby_extractor
+        lambda do |processed_source|
+          [
+            {
+              offset: 0,
+              processed_source: processed_source
+            }
+          ]
+        end
       end
     end
 
     # @api private
     MAX_ITERATIONS = 200
 
-    attr_reader :errors, :warnings
+    # @api private
+    REDUNDANT_COP_DISABLE_DIRECTIVE_RULES = %w[
+      Lint/RedundantCopDisableDirective RedundantCopDisableDirective Lint
+    ].freeze
+
+    attr_reader :errors, :warnings, :diffs
     attr_writer :aborting
 
     def initialize(options, config_store)
@@ -36,14 +62,24 @@ module RuboCop
       @errors = []
       @warnings = []
       @aborting = false
+      @inspected_files = []
+      @diffs = []
+      @report_queue = {}
     end
 
     def run(paths)
-      target_files = find_target_files(paths)
+      @inspection_team_by_config = {}.compare_by_identity
+
+      # Compute the cache source checksum once to avoid potential
+      # inconsistencies between workers.
+      ResultCache.source_checksum
+
+      target_files = only_changed(find_target_files(paths))
+      build_project_index(target_files)
+
       if @options[:list_target_files]
         list_files(target_files)
       else
-        warm_cache(target_files) if @options[:parallel]
         inspect_files(target_files)
       end
     rescue Interrupt
@@ -60,11 +96,14 @@ module RuboCop
 
     private
 
-    # Warms up the RuboCop cache by forking a suitable number of rubocop
-    # instances that each inspects its allotted group of files.
-    def warm_cache(target_files)
-      puts 'Running parallel inspection' if @options[:debug]
-      Parallel.each(target_files) { |target_file| file_offenses(target_file) }
+    # The project index is deliberately built from the unfiltered file list:
+    # cross-file offenses must not depend on which files happen to have changed.
+    def only_changed(target_files)
+      return target_files unless @options[:changed]
+
+      changed = ChangedFiles.new(@options[:changed]).paths
+
+      target_files.select { |file| changed.include?(file) }.freeze
     end
 
     def find_target_files(paths)
@@ -78,12 +117,54 @@ module RuboCop
       target_files.each(&:freeze).freeze
     end
 
-    def inspect_files(files)
-      inspected_files = []
+    def build_project_index(target_files)
+      return unless project_index_enabled?
 
+      @project_index = ProjectIndexLoader.build_index(project_index_files(target_files))
+    end
+
+    # The index always covers the whole project, not just the files being
+    # inspected: cross-file offenses must not depend on which files a
+    # particular run happens to include, or single-file runs (editors, CI
+    # sharding) would see different offenses than full runs. The project is
+    # rooted at the directory of the configuration that enabled the index.
+    def project_index_files(target_files)
+      root = @config_store.for_pwd.base_dir_for_path_parameters
+      project_files = begin
+        find_target_files([root]) | target_files
+      rescue Errno::ENOENT
+        target_files
+      end
+
+      (project_files | bundled_gem_files).sort
+    end
+
+    def bundled_gem_files
+      return [] unless @config_store.for_pwd.for_all_cops['ProjectIndexIncludesGems']
+
+      ProjectIndexLoader.bundled_gem_source_files
+    end
+
+    def project_index_enabled?
+      return false unless @config_store.for_pwd.for_all_cops['UseProjectIndex']
+
+      unless ProjectIndexLoader.available?
+        ProjectIndexLoader.warn_unavailable
+        return false
+      end
+
+      true
+    end
+
+    def inspect_files(files) # rubocop:disable Metrics/AbcSize
       formatter_set.started(files)
+      formatters_started = true
+      file_iterator(files) do |file|
+        offenses = process_file(file)
+        succeeded = offenses.none? { |o| considered_failure?(o) && offense_displayed?(o) }
 
-      each_inspected_file(files) { |file| inspected_files << file }
+        [offenses, succeeded]
+      end
     ensure
       # OPTIMIZE: Calling `ResultCache.cleanup` takes time. This optimization
       # mainly targets editors that integrates RuboCop. When RuboCop is run
@@ -91,23 +172,97 @@ module RuboCop
       if files.size > 1 && cached_run?
         ResultCache.cleanup(@config_store, @options[:debug], @options[:cache_root])
       end
-
-      formatter_set.finished(inspected_files.freeze)
+      formatter_set.finished(@inspected_files.freeze) if formatters_started
       formatter_set.close_output_files
     end
 
-    def each_inspected_file(files)
-      files.reduce(true) do |all_passed, file|
-        offenses = process_file(file)
-        yield file
+    def file_iterator(files, &block)
+      all_passed = true
 
-        if offenses.any? { |o| considered_failure?(o) }
-          break false if @options[:fail_fast]
+      on_start = ->(file, _index) { file_started(file) }
+      on_finish = lambda do |file, index, (offenses, passed)|
+        all_passed &&= passed
+        finished_report(file, index, offenses)
+      end
 
-          next false
-        end
+      if run_in_parallel?(files)
+        parallel_file_iterator(files, on_start, on_finish, &block)
+      else
+        serial_file_iterator(files, on_start, on_finish, &block)
+      end
 
-        all_passed
+      process_remaining_report_queue
+
+      all_passed
+    end
+
+    def finished_report(file, index, offenses)
+      @report_queue[index] = [file, offenses]
+      @next_index_to_report ||= 0
+      while @report_queue.key?(@next_index_to_report)
+        process_report_queue_entry(@next_index_to_report)
+        @next_index_to_report += 1
+      end
+    end
+
+    def process_report_queue_entry(index)
+      file, offenses = @report_queue.delete(index)
+      file_finished(file, offenses)
+    end
+
+    def process_remaining_report_queue
+      @report_queue.keys.sort.each do |index|
+        process_report_queue_entry(index)
+      end
+    end
+
+    def run_in_parallel?(files)
+      return false unless parallel_supported_by_options?
+
+      if files.size <= 1
+        puts 'Skipping parallel inspection: only a single file needs inspection' if @options[:debug]
+        return false
+      end
+
+      return false if project_index_disables_parallel?
+
+      puts 'Running parallel inspection' if @options[:debug]
+
+      true
+    end
+
+    # `--auto-gen-config` needs the offenses of every file in one place, and
+    # `--diff` collects the diffs in this process, where a worker's copy of
+    # them would be lost.
+    def parallel_supported_by_options?
+      @options[:parallel] && !@options[:auto_gen_config] && !@options[:diff]
+    end
+
+    def project_index_disables_parallel?
+      return false if @project_index.nil? || !Gem.win_platform?
+
+      if @options[:debug]
+        puts 'Skipping parallel inspection: the project index is enabled and parallel ' \
+             'inspection is not yet supported on Windows.'
+      end
+
+      true
+    end
+
+    def parallel_file_iterator(files, on_start, on_finish, &block)
+      Parallel.each(files, start: on_start, finish: on_finish, &block)
+    end
+
+    def serial_file_iterator(files, on_start, on_finish, &block)
+      files.each_with_index do |file, index|
+        on_start.call(file, index)
+        result = yield file
+        on_finish.call(file, index, result)
+
+        # Report and count the offending file before stopping so `--fail-fast`
+        # still shows its offenses and exits with a failing status.
+        _offenses, succeeded = result
+        break if @options[:fail_fast] && !succeeded
       end
     end
 
@@ -116,20 +271,21 @@ module RuboCop
     end
 
     def process_file(file)
-      file_started(file)
-      offenses = file_offenses(file)
+      file_offenses(file)
     rescue InfiniteCorrectionLoop => e
-      offenses = e.offenses.compact.sort.freeze
-      raise
-    ensure
-      file_finished(file, offenses || [])
+      raise e if @options[:raise_cop_error]
+
+      errors << e
+      warn Rainbow(e.message).red
+      e.offenses.compact.sort.freeze
     end
 
     def file_offenses(file)
       file_offense_cache(file) do
         source, offenses = do_inspection_loop(file)
         offenses = add_redundant_disables(file, offenses.compact.sort, source)
-        offenses.sort.reject(&:disabled?).freeze
+        offenses = offenses.reject(&:disabled?) unless @options[:display_suppressed]
+        offenses.sort.freeze
       end
     end
 
@@ -143,17 +299,17 @@ module RuboCop
 
       if cache&.valid?
         offenses = cache.load
-        # If we're running --auto-correct and the cache says there are
+        # If we're running --autocorrect and the cache says there are
         # offenses, we need to actually inspect the file. If the cache shows no
         # offenses, we're good.
-        real_run_needed = @options[:auto_correct] && offenses.any?
+        real_run_needed = @options[:autocorrect] && offenses.any?
       else
         real_run_needed = true
       end
 
       if real_run_needed
         offenses = yield
-        save_in_cache(cache, offenses)
+        save_in_cache(cache, offenses) unless Cop::Registry.global.warnings?(file)
       end
 
       offenses
@@ -186,7 +342,15 @@ module RuboCop
     end
 
     def check_for_redundant_disables?(source)
-      !source.disabled_line_ranges.empty? && !filtered_run?
+      return false if except_redundant_cop_disable_directive?
+      # Detached `disable-next` directives produce no disabled ranges but must
+      # still be reported as redundant.
+      if source.disabled_line_ranges.empty? &&
+         source.comment_config.detached_next_directives.empty?
+        return false
+      end
+
+      !@options[:only]
     end
 
     def redundant_cop_disable_directive(file)
@@ -197,8 +361,8 @@ module RuboCop
       yield cop if cop.relevant_file?(file)
     end
 
-    def filtered_run?
-      @options[:except] || @options[:only]
+    def except_redundant_cop_disable_directive?
+      @options[:except] && (@options[:except] & REDUNDANT_COP_DISABLE_DIRECTIVE_RULES).any?
     end
 
     def file_started(file)
@@ -207,9 +371,8 @@ module RuboCop
     end
 
     def file_finished(file, offenses)
-      if @options[:display_only_fail_level_offenses]
-        offenses = offenses.select { |o| considered_failure?(o) }
-      end
+      @inspected_files << file
+      offenses = offenses_to_report(offenses)
       formatter_set.file_finished(file, offenses)
     end
 
@@ -217,10 +380,6 @@ module RuboCop
       @cached_run ||=
         (@options[:cache] == 'true' ||
          (@options[:cache] != 'false' && @config_store.for_pwd.for_all_cops['UseCache'])) &&
-        # When running --auto-gen-config, there's some processing done in the
-        # cops related to calculating the Max parameters for Metrics cops. We
-        # need to do that processing and cannot use caching.
-        !@options[:auto_gen_config] &&
         # We can't cache results from code which is piped in to stdin
         !@options[:stdin]
     end
@@ -236,34 +395,100 @@ module RuboCop
     end
 
     def do_inspection_loop(file)
-      processed_source = get_processed_source(file)
+      # We can reuse the prism result since the source did not change yet.
+      processed_source = get_processed_source(file, @prism_result)
+      original_source = processed_source.raw_source
       # This variable is 2d array used to track corrected offenses after each
       # inspection iteration. This is used to output meaningful infinite loop
       # error message.
       offenses_by_iteration = []
+      corrected_source = nil
 
-      # When running with --auto-correct, we need to inspect the file (which
-      # includes writing a corrected version of it) until no more corrections
-      # are made. This is because automatic corrections can introduce new
-      # offenses. In the normal case the loop is only executed once.
+      # When running with --autocorrect, we need to inspect the file until no
+      # more corrections are made. This is because automatic corrections can
+      # introduce new offenses. In the normal case the loop is only executed
+      # once. The corrections are kept in memory while iterating and written
+      # back to the file when the loop is done.
       iterate_until_no_changes(processed_source, offenses_by_iteration) do
-        # The offenses that couldn't be corrected will be found again so we
-        # only keep the corrected ones in order to avoid duplicate reporting.
-        !offenses_by_iteration.empty? && offenses_by_iteration.last.select!(&:corrected?)
-        new_offenses, updated_source_file = inspect_file(processed_source)
-        offenses_by_iteration.push(new_offenses)
+        team, updated_source_file = inspect_and_correct(processed_source, offenses_by_iteration)
 
         # We have to reprocess the source to pickup the changes. Since the
         # change could (theoretically) introduce parsing errors, we break the
         # loop if we find any.
         break unless updated_source_file
 
-        processed_source = get_processed_source(file)
+        # Autocorrect has happened, don't use the prism result since it is stale.
+        # With --stdin the corrected source is kept in @options[:stdin] instead.
+        corrected_source = team.updated_source
+        processed_source = get_processed_source(file, nil, source: corrected_source)
       end
 
       # Return summary of corrected offenses after all iterations
-      offenses = offenses_by_iteration.flatten.uniq
-      [processed_source, offenses]
+      [processed_source, offenses_by_iteration.flatten.uniq]
+    ensure
+      finalize_corrections(file, original_source, corrected_source)
+    end
+
+    def inspect_and_correct(processed_source, offenses_by_iteration)
+      # The offenses that couldn't be corrected will be found again so we
+      # only keep the corrected ones in order to avoid duplicate reporting.
+      !offenses_by_iteration.empty? && offenses_by_iteration.last.select!(&:corrected?)
+      team, new_offenses, updated_source_file = inspect_iteration(processed_source)
+      offenses_by_iteration.push(new_offenses)
+
+      [team, updated_source_file]
+    end
+
+    # Write the file once, even when the loop was left through an exception
+    # (e.g. an infinite correction loop), like the per-iteration writes used
+    # to be. Under `--diff` nothing is written at all.
+    def finalize_corrections(file, original_source, corrected_source)
+      if @options[:diff]
+        record_diff(file, original_source, corrected_source)
+      elsif corrected_source
+        File.write(file, corrected_source)
+      end
+    end
+
+    # `--diff` reports what autocorrection would do instead of doing it. With
+    # `--stdin` the corrected source is handed back through the options rather
+    # than deferred, so that is where the new source comes from.
+    def record_diff(file, original_source, corrected_source)
+      new_source = @options[:stdin] || corrected_source
+      return unless original_source && new_source
+
+      # The original source is the file as it is on disk, so the corrected one
+      # has to go through the same line ending conversion `File.write` would
+      # apply, or on Windows every single line reads as changed.
+      new_source = emulate_write_read_cycle(new_source)
+
+      diff = UnifiedDiff.new(PathUtil.smart_path(file), original_source, new_source).to_s
+      @diffs << diff unless diff.empty?
+    end
+
+    def inspect_iteration(processed_source)
+      team = mobilize_team(processed_source)
+      team.defer_corrections = @options[:diff] || in_memory_corrections_possible?
+      offenses, updated_source_file = inspect_file(processed_source, team)
+      [team, offenses, updated_source_file]
+    end
+
+    # When corrections were written to disk and read back between iterations,
+    # the text-mode write converted LF to CRLF on Windows, and cops like
+    # `Layout/EndOfLine` rely on seeing the source as it would be on disk.
+    # Apply the same conversion to the in-memory source. The final `File.write`
+    # still performs it for the file itself.
+    def emulate_write_read_cycle(source)
+      return source unless Platform.windows?
+
+      source.encode(source.encoding, crlf_newline: true)
+    end
+
+    # Custom ruby extractors may derive their fragments from the file on
+    # disk rather than from the passed processed source, so corrections can
+    # only be kept in memory when the default extractor is used.
+    def in_memory_corrections_possible?
+      self.class.ruby_extractors.one?
     end
 
     def iterate_until_no_changes(source, offenses_by_iteration)
@@ -306,38 +531,58 @@ module RuboCop
     end
 
     def inspect_file(processed_source, team = mobilize_team(processed_source))
-      report = team.investigate(processed_source)
+      extracted_ruby_sources = extract_ruby_sources(processed_source)
+      offenses = team.investigate_fragments(extracted_ruby_sources, original: processed_source)
       @errors.concat(team.errors)
       @warnings.concat(team.warnings)
-      [report.offenses, team.updated_source_file?]
+      [offenses, team.updated_source_file?]
+    end
+
+    def extract_ruby_sources(processed_source)
+      self.class.ruby_extractors.find do |ruby_extractor|
+        result = ruby_extractor.call(processed_source)
+        break result if result
+      rescue StandardError
+        location = if ruby_extractor.is_a?(Proc)
+                     ruby_extractor.source_location
+                   else
+                     ruby_extractor.method(:call).source_location
+                   end
+        raise Error, "Ruby extractor #{location[0]} failed to process #{processed_source.path}."
+      end
     end
 
     def mobilize_team(processed_source)
       config = @config_store.for_file(processed_source.path)
-      Cop::Team.mobilize(mobilized_cop_classes(config), config, @options)
+      @inspection_team_by_config ||= {}.compare_by_identity
+      @inspection_team_by_config[config] ||= assemble_team(config)
     end
 
-    def mobilized_cop_classes(config) # rubocop:disable Metrics/AbcSize
+    def mobilized_cop_classes(config)
       @mobilized_cop_classes ||= {}.compare_by_identity
       @mobilized_cop_classes[config] ||= begin
-        cop_classes = Cop::Registry.all
-
         # `@options[:only]` and `@options[:except]` are not qualified until
-        # needed so that the Registry can be fully loaded, including any
-        # cops added by `require`s.
+        # needed so that the registry contains any cops added by `require`s,
+        # which register eagerly when their files are loaded.
         qualify_option_cop_names
 
         OptionsValidator.new(@options).validate_cop_options
 
-        if @options[:only]
-          cop_classes.select! { |c| c.match?(@options[:only]) }
-        else
-          filter_cop_classes(cop_classes, config)
-        end
+        # Filtering by badge keeps lazy-loaded cops unloaded; only the cops
+        # that survive the filter and are enabled will be loaded.
+        Cop::Registry.global.filter_by_badge(@options) { |badge| mobilize_cop_badge?(badge, config) }
+      end
+    end
 
-        cop_classes.reject! { |c| c.match?(@options[:except]) }
+    def mobilize_cop_badge?(badge, config)
+      return false if badge.department == :Test
+      return false if badge.match_name?(@options[:except])
 
-        Cop::Registry.new(cop_classes, @options)
+      if @options[:only]
+        badge.match_name?(@options[:only])
+      else
+        # use only cops that link to a style guide if requested.
+        !style_guide_cops_only?(config) || config.for_cop(badge.to_s)['StyleGuide']
       end
     end
 
@@ -349,13 +594,6 @@ module RuboCop
           Cop::Registry.qualified_cop_name(cop_name, "--#{option} option")
         end
       end
-    end
-
-    def filter_cop_classes(cop_classes, config)
-      # use only cops that link to a style guide if requested
-      return unless style_guide_cops_only?(config)
-
-      cop_classes.select! { |cop| config.for_cop(cop)['StyleGuide'] }
     end
 
     def style_guide_cops_only?(config)
@@ -372,34 +610,84 @@ module RuboCop
     end
 
     def considered_failure?(offense)
-      # For :autocorrect level, any offense - corrected or not - is a failure.
       return false if offense.disabled?
 
-      return true if @options[:fail_level] == :autocorrect
+      # For :autocorrect level, any correctable offense is a failure, regardless of severity
+      return true if @options[:fail_level] == :autocorrect && offense.correctable?
 
       !offense.corrected? && offense.severity >= minimum_severity_to_fail
     end
 
-    def minimum_severity_to_fail
-      @minimum_severity_to_fail ||= begin
-        # Unless given explicitly as `fail_level`, `:info` severity offenses do not fail
-        name = @options[:fail_level] || :refactor
-        RuboCop::Cop::Severity.new(name)
+    def offense_displayed?(offense)
+      if @options[:display_only_fail_level_offenses]
+        considered_failure?(offense)
+      elsif @options[:display_only_safe_correctable]
+        supports_safe_autocorrect?(offense)
+      elsif @options[:display_only_correctable]
+        offense.correctable?
+      else
+        true
       end
     end
 
-    def get_processed_source(file)
-      ruby_version = @config_store.for_file(file).target_ruby_version
+    def offenses_to_report(offenses)
+      offenses.select { |o| offense_displayed?(o) }
+    end
 
-      if @options[:stdin]
-        ProcessedSource.new(@options[:stdin], ruby_version, file)
-      else
-        begin
-          ProcessedSource.from_file(file, ruby_version)
-        rescue Errno::ENOENT
-          raise RuboCop::Error, "No such file or directory: #{file}"
-        end
-      end
+    def supports_safe_autocorrect?(offense)
+      cop_class = Cop::Registry.global.find_by_cop_name(offense.cop_name)
+      default_cfg = default_config(offense.cop_name)
+
+      offense.correctable? &&
+        cop_class&.support_autocorrect? && mark_as_safe_by_config?(default_cfg)
+    end
+
+    def mark_as_safe_by_config?(config)
+      config.nil? || (config.fetch('Safe', true) && config.fetch('SafeAutoCorrect', true))
+    end
+
+    def default_config(cop_name)
+      RuboCop::ConfigLoader.default_configuration[cop_name]
+    end
+
+    def minimum_severity_to_fail
+      @minimum_severity_to_fail ||=
+        RuboCop::Cop::Severity.minimum_to_fail(@options, @config_store.for_pwd)
+    end
+
+    # rubocop:disable-next Metrics/MethodLength
+    def get_processed_source(file, prism_result, source: nil)
+      config = @config_store.for_file(file)
+      ruby_version = config.target_ruby_version
+      parser_engine = config.parser_engine
+
+      processed_source = if source
+                           ProcessedSource.new(
+                             emulate_write_read_cycle(source),
+                             ruby_version,
+                             file,
+                             parser_engine: parser_engine
+                           )
+                         elsif @options[:stdin]
+                           ProcessedSource.new(
+                             @options[:stdin],
+                             ruby_version,
+                             file,
+                             parser_engine: parser_engine,
+                             prism_result: prism_result
+                           )
+                         else
+                           begin
+                             ProcessedSource.from_file(
+                               file, ruby_version, parser_engine: parser_engine
+                             )
+                           rescue Errno::ENOENT
+                             raise RuboCop::Error, "No such file or directory: #{file}"
+                           end
+                         end
+      processed_source.config = config
+      processed_source.registry = mobilized_cop_classes(config)
+      processed_source
     end
 
     # A Cop::Team instance is stateful and may change when inspecting.
@@ -407,9 +695,20 @@ module RuboCop
     # otherwise dormant team that can be used for config- and option-
     # level caching in ResultCache.
     def standby_team(config)
-      @team_by_config ||= {}.compare_by_identity
-      @team_by_config[config] ||=
-        Cop::Team.mobilize(mobilized_cop_classes(config), config, @options)
+      @standby_team_by_config ||= {}.compare_by_identity
+      @standby_team_by_config[config] ||= assemble_team(config)
+    end
+
+    def assemble_team(config)
+      team = Cop::Team.mobilize(mobilized_cop_classes(config), config, @options)
+
+      if @project_index
+        team.cops.each do |cop|
+          cop.project_index = @project_index
+        end
+      end
+
+      team
     end
   end
 end

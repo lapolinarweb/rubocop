@@ -3,9 +3,13 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for missing documentation comment for public methods.
+      # Checks for missing documentation comment for public methods.
       # It can optionally be configured to also require documentation for
       # non-public methods.
+      #
+      # NOTE: This cop allows `initialize` method because `initialize` is
+      # a special method called from `new`. In some programming languages
+      # they are called constructor to distinguish it from method.
       #
       # @example
       #
@@ -91,20 +95,34 @@ module RuboCop
       #     end
       #   end
       #
+      # @example AllowedMethods: ['method_missing', 'respond_to_missing?']
+      #
+      #   # good
+      #   class Foo
+      #     def method_missing(name, *args)
+      #     end
+      #
+      #     def respond_to_missing?(symbol, include_private)
+      #     end
+      #   end
+      #
       class DocumentationMethod < Base
         include DocumentationComment
         include DefNode
 
         MSG = 'Missing method documentation comment.'
 
-        # @!method module_function_node?(node)
-        def_node_matcher :module_function_node?, <<~PATTERN
-          (send nil? :module_function ...)
+        # @!method modifier_node?(node)
+        def_node_matcher :modifier_node?, <<~PATTERN
+          (send nil? {:module_function :ruby2_keywords} ...)
         PATTERN
 
         def on_def(node)
+          return if node.method?(:initialize)
+          return if allowed_methods.include?(node.method_name)
+
           parent = node.parent
-          module_function_node?(parent) ? check(parent) : check(node)
+          modifier_node?(parent) ? check(parent) : check(node)
         end
         alias on_defs on_def
 
@@ -119,6 +137,10 @@ module RuboCop
 
         def require_for_non_public_methods?
           cop_config['RequireForNonPublicMethods']
+        end
+
+        def allowed_methods
+          @allowed_methods ||= cop_config.fetch('AllowedMethods', []).map(&:to_sym)
         end
       end
     end

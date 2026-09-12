@@ -11,7 +11,6 @@ of the RuboCop core team, listed in the order of joining it:
 * https://github.com/bbatsov[Bozhidar Batsov] (author & head maintainer)
 * https://github.com/jonas054[Jonas Arvidsson]
 * https://github.com/drenmi[Ted Johansson]
-* https://github.com/pocke[Masataka Kuwabara]
 * https://github.com/koic[Koichi Ito] (also head maintainer of RuboCop Rails, RuboCop Performance and RuboCop Minitest)
 * https://github.com/darhazer[Maxim Krizhanovski]
 * https://github.com/bquorning[Benjamin Quorning] (also head maintainer of RuboCop RSpec)
@@ -20,11 +19,12 @@ of the RuboCop core team, listed in the order of joining it:
 
 == RuboCop Alumni
 
-In addition, we'd like to extend a special thanks the following retired RuboCop
+In addition, we'd like to extend a special thanks to the following retired RuboCop
 core team members. Lovingly known as The Alumni:
 
 * https://github.com/yujinakayama[Yuji Nakayama] (also author of `guard-rubocop`)
 * https://github.com/edzhelyov[Evgeni Dzhelyov]
+* https://github.com/pocke[Masataka Kuwabara]
 
 == Joining the Core Team
 

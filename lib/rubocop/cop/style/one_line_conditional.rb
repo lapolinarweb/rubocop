@@ -3,10 +3,11 @@
 module RuboCop
   module Cop
     module Style
-      # Checks for uses of if/then/else/end constructs on a single line.
-      # AlwaysCorrectToMultiline config option can be set to true to auto-convert all offenses to
-      # multi-line constructs. When AlwaysCorrectToMultiline is false (default case) the
-      # auto-correct will first try converting them to ternary operators.
+      # Checks for uses of `if/then/else/end` constructs on a single line.
+      # A ternary operator (`?:`) or multi-line `if` is more readable.
+      # `AlwaysCorrectToMultiline` config option can be set to `true` to autocorrect all offenses to
+      # multi-line constructs. When `AlwaysCorrectToMultiline` is `false` (default case) the
+      # autocorrect will first try converting them to ternary operators.
       #
       # @example
       #   # bad
@@ -30,84 +31,93 @@ module RuboCop
       #   else
       #     baz
       #   end
+      #
+      # @example AlwaysCorrectToMultiline: false (default)
+      #   # bad
+      #   if cond then run else dont end
+      #
+      #   # good
+      #   cond ? run : dont
+      #
+      # @example AlwaysCorrectToMultiline: true
+      #   # bad
+      #   if cond then run else dont end
+      #
+      #   # good
+      #   if cond
+      #     run
+      #   else
+      #     dont
+      #   end
+      #
       class OneLineConditional < Base
+        include Alignment
         include ConfigurableEnforcedStyle
         include OnNormalIfUnless
         extend AutoCorrector
 
-        MSG = 'Favor the ternary operator (`?:`) or multi-line constructs ' \
-              'over single-line `%<keyword>s/then/else/end` constructs.'
+        MSG_SUFFIX = 'over single-line `%<keyword>s/then/else/end` constructs.'
+        MSG_TERNARY = "Favor the ternary operator (`?:`) #{MSG_SUFFIX}"
+        MSG_MULTILINE = "Favor multi-line `%<keyword>s` #{MSG_SUFFIX}"
 
         def on_normal_if_unless(node)
           return unless node.single_line?
           return unless node.else_branch
-          return if node.elsif?
+          return if node.elsif? || node.if_branch&.begin_type?
 
-          message = message(node)
-          add_offense(node, message: message) do |corrector|
-            corrector.replace(node, replacement(node))
+          multiline = multiline?(node)
+
+          add_offense(node, message: message(node, multiline)) do |corrector|
+            next if part_of_ignored_node?(node)
+
+            autocorrect(corrector, node, multiline)
+
+            ignore_node(node)
           end
         end
 
         private
 
-        def message(node)
-          format(MSG, keyword: node.keyword)
+        def multiline?(node)
+          always_multiline? || cannot_replace_to_ternary?(node)
         end
 
-        def replacement(node)
-          if always_multiline? || cannot_replace_to_ternary?(node)
-            multiline_replacement(node)
-          else
-            replaced_node = ternary_replacement(node)
-            return replaced_node unless node.parent
-            return "(#{replaced_node})" if %i[and or].include?(node.parent.type)
-            return "(#{replaced_node})" if node.parent.send_type? && node.parent.operator_method?
+        def message(node, multiline)
+          template = multiline ? MSG_MULTILINE : MSG_TERNARY
 
-            replaced_node
+          format(template, keyword: node.keyword)
+        end
+
+        def autocorrect(corrector, node, multiline)
+          if multiline
+            IfThenCorrector.new(node, indentation: configured_indentation_width).call(corrector)
+          else
+            corrector.replace(node, ternary_correction(node))
           end
+        end
+
+        def ternary_correction(node)
+          replaced_node = ternary_replacement(node)
+
+          return replaced_node unless node.parent
+          return "(#{replaced_node})" if node.parent.operator_keyword?
+          return "(#{replaced_node})" if node.parent.send_type? && node.parent.operator_method?
+
+          replaced_node
         end
 
         def always_multiline?
-          @config.for_cop('Style/OneLineConditional')['AlwaysCorrectToMultiline']
+          cop_config['AlwaysCorrectToMultiline']
         end
 
         def cannot_replace_to_ternary?(node)
-          node.elsif_conditional?
-        end
+          return true if node.elsif_conditional?
 
-        def multiline_replacement(node, indentation = nil)
-          indentation = ' ' * node.source_range.column if indentation.nil?
-          if_branch_source = node.if_branch&.source || 'nil'
-          elsif_indentation = indentation if node.respond_to?(:elsif?) && node.elsif?
-          if_branch = <<~RUBY
-            #{elsif_indentation}#{node.keyword} #{node.condition.source}
-            #{indentation}#{branch_body_indentation}#{if_branch_source}
-          RUBY
-          else_branch = else_branch_to_multiline(node.else_branch, indentation)
-          if_branch + else_branch
-        end
-
-        def else_branch_to_multiline(else_branch, indentation)
-          if else_branch.nil?
-            'end'
-          elsif else_branch.if_type? && else_branch.elsif?
-            multiline_replacement(else_branch, indentation)
-          else
-            <<~RUBY.chomp
-              #{indentation}else
-              #{indentation}#{branch_body_indentation}#{else_branch.source}
-              #{indentation}end
-            RUBY
-          end
-        end
-
-        def branch_body_indentation
-          ' ' * (@config.for_cop('Layout/IndentationWidth')['Width'] || 2)
+          node.else_branch.begin_type? && node.else_branch.children.compact.count >= 2
         end
 
         def ternary_replacement(node)
-          condition, if_branch, else_branch = *node
+          condition, if_branch, else_branch = *node # rubocop:disable InternalAffairs/NodeDestructuring -- takes all three branches in one step
 
           "#{expr_replacement(condition)} ? " \
             "#{expr_replacement(if_branch)} : " \

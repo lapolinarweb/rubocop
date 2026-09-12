@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Lint
-      # This cop checks for `private` or `protected` access modifiers which are
+      # Checks for `private` or `protected` access modifiers which are
       # applied to a singleton method. These access modifiers do not make
       # singleton methods private/protected. `private_class_method` can be
       # used for that.
@@ -11,7 +11,6 @@ module RuboCop
       # @example
       #
       #   # bad
-      #
       #   class C
       #     private
       #
@@ -20,10 +19,7 @@ module RuboCop
       #     end
       #   end
       #
-      # @example
-      #
       #   # good
-      #
       #   class C
       #     def self.method
       #       puts 'hi'
@@ -32,10 +28,7 @@ module RuboCop
       #     private_class_method :method
       #   end
       #
-      # @example
-      #
       #   # good
-      #
       #   class C
       #     class << self
       #       private
@@ -83,11 +76,11 @@ module RuboCop
                           ALTERNATIVE_PROTECTED
                         end
           format(MSG, modifier: visibility,
-                      line: modifier.location.expression.line,
+                      line: modifier.source_range.line,
                       alternative: alternative)
         end
 
-        # rubocop:disable Metrics/CyclomaticComplexity
+        # rubocop:disable-next Metrics/CyclomaticComplexity
         def ineffective_modifier(node, ignored_methods = nil, modifier = nil, &block)
           node.each_child_node do |child|
             case child.type
@@ -104,7 +97,6 @@ module RuboCop
             end
           end
         end
-        # rubocop:enable Metrics/CyclomaticComplexity
 
         def access_modifier?(node)
           node.bare_access_modifier? && !node.method?(:module_function)

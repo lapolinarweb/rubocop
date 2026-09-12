@@ -3,32 +3,30 @@
 module RuboCop
   module Cop
     module Lint
-      # This cop checks for the ordering of a method call where
+      # Checks for the ordering of a method call where
       # the receiver of the call is a HEREDOC.
       #
       # @example
       #   # bad
+      #   <<-SQL
+      #     bar
+      #   SQL
+      #   .strip_indent
       #
-      #      <<-SQL
-      #        bar
-      #      SQL
-      #      .strip_indent
-      #
-      #      <<-SQL
-      #        bar
-      #      SQL
-      #      .strip_indent
-      #      .trim
+      #   <<-SQL
+      #     bar
+      #   SQL
+      #   .strip_indent
+      #   .trim
       #
       #   # good
+      #   <<~SQL
+      #     bar
+      #   SQL
       #
-      #      <<~SQL
-      #        bar
-      #      SQL
-      #
-      #      <<~SQL.trim
-      #        bar
-      #      SQL
+      #   <<~SQL.trim
+      #     bar
+      #   SQL
       #
       class HeredocMethodCallPosition < Base
         include RangeHelp
@@ -67,7 +65,7 @@ module RuboCop
         end
 
         def send_node?(node)
-          return nil unless node
+          return false unless node
 
           node.call_type?
         end

@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 RSpec.describe RuboCop::Cop::Style::PerlBackrefs, :config do
-  it 'auto-corrects puts $1 to puts Regexp.last_match(1)' do
+  it 'autocorrects puts $1 to puts Regexp.last_match(1)' do
     expect_offense(<<~RUBY)
       puts $1
            ^^ Prefer `Regexp.last_match(1)` over `$1`.
@@ -12,7 +12,7 @@ RSpec.describe RuboCop::Cop::Style::PerlBackrefs, :config do
     RUBY
   end
 
-  it 'auto-corrects $9 to Regexp.last_match(9)' do
+  it 'autocorrects $9 to Regexp.last_match(9)' do
     expect_offense(<<~RUBY)
       $9
       ^^ Prefer `Regexp.last_match(9)` over `$9`.
@@ -23,7 +23,7 @@ RSpec.describe RuboCop::Cop::Style::PerlBackrefs, :config do
     RUBY
   end
 
-  it 'auto-corrects $& to Regexp.last_match(0)' do
+  it 'autocorrects $& to Regexp.last_match(0)' do
     expect_offense(<<~RUBY)
       $&
       ^^ Prefer `Regexp.last_match(0)` over `$&`.
@@ -34,7 +34,7 @@ RSpec.describe RuboCop::Cop::Style::PerlBackrefs, :config do
     RUBY
   end
 
-  it 'auto-corrects $` to Regexp.last_match.pre_match' do
+  it 'autocorrects $` to Regexp.last_match.pre_match' do
     expect_offense(<<~RUBY)
       $`
       ^^ Prefer `Regexp.last_match.pre_match` over `$``.
@@ -45,7 +45,7 @@ RSpec.describe RuboCop::Cop::Style::PerlBackrefs, :config do
     RUBY
   end
 
-  it 'auto-corrects $\' to Regexp.last_match.post_match' do
+  it 'autocorrects $\' to Regexp.last_match.post_match' do
     expect_offense(<<~RUBY)
       $'
       ^^ Prefer `Regexp.last_match.post_match` over `$'`.
@@ -56,18 +56,13 @@ RSpec.describe RuboCop::Cop::Style::PerlBackrefs, :config do
     RUBY
   end
 
-  it 'auto-corrects $+ to Regexp.last_match(-1)' do
-    expect_offense(<<~RUBY)
+  it 'does not register an offense for $+, which has no concise equivalent' do
+    expect_no_offenses(<<~RUBY)
       $+
-      ^^ Prefer `Regexp.last_match(-1)` over `$+`.
-    RUBY
-
-    expect_correction(<<~RUBY)
-      Regexp.last_match(-1)
     RUBY
   end
 
-  it 'auto-corrects $MATCH to Regexp.last_match(0)' do
+  it 'autocorrects $MATCH to Regexp.last_match(0)' do
     expect_offense(<<~RUBY)
       $MATCH
       ^^^^^^ Prefer `Regexp.last_match(0)` over `$MATCH`.
@@ -78,7 +73,7 @@ RSpec.describe RuboCop::Cop::Style::PerlBackrefs, :config do
     RUBY
   end
 
-  it 'auto-corrects $PREMATCH to Regexp.last_match.pre_match' do
+  it 'autocorrects $PREMATCH to Regexp.last_match.pre_match' do
     expect_offense(<<~RUBY)
       $PREMATCH
       ^^^^^^^^^ Prefer `Regexp.last_match.pre_match` over `$PREMATCH`.
@@ -89,7 +84,7 @@ RSpec.describe RuboCop::Cop::Style::PerlBackrefs, :config do
     RUBY
   end
 
-  it 'auto-corrects $POSTMATCH to Regexp.last_match.post_match' do
+  it 'autocorrects $POSTMATCH to Regexp.last_match.post_match' do
     expect_offense(<<~RUBY)
       $POSTMATCH
       ^^^^^^^^^^ Prefer `Regexp.last_match.post_match` over `$POSTMATCH`.
@@ -100,18 +95,13 @@ RSpec.describe RuboCop::Cop::Style::PerlBackrefs, :config do
     RUBY
   end
 
-  it 'auto-corrects $LAST_PAREN_MATCH to Regexp.last_match(-1)' do
-    expect_offense(<<~RUBY)
+  it 'does not register an offense for $LAST_PAREN_MATCH, which has no concise equivalent' do
+    expect_no_offenses(<<~RUBY)
       $LAST_PAREN_MATCH
-      ^^^^^^^^^^^^^^^^^ Prefer `Regexp.last_match(-1)` over `$LAST_PAREN_MATCH`.
-    RUBY
-
-    expect_correction(<<~RUBY)
-      Regexp.last_match(-1)
     RUBY
   end
 
-  it 'auto-corrects "#$1" to "#{Regexp.last_match(1)}"' do
+  it 'autocorrects "#$1" to "#{Regexp.last_match(1)}"' do
     expect_offense(<<~'RUBY')
       "#$1"
         ^^ Prefer `Regexp.last_match(1)` over `$1`.
@@ -122,7 +112,7 @@ RSpec.describe RuboCop::Cop::Style::PerlBackrefs, :config do
     RUBY
   end
 
-  it 'auto-corrects `#$1` to `#{Regexp.last_match(1)}`' do
+  it 'autocorrects `#$1` to `#{Regexp.last_match(1)}`' do
     expect_offense(<<~'RUBY')
       `#$1`
         ^^ Prefer `Regexp.last_match(1)` over `$1`.
@@ -133,7 +123,7 @@ RSpec.describe RuboCop::Cop::Style::PerlBackrefs, :config do
     RUBY
   end
 
-  it 'auto-corrects /#$1/ to /#{Regexp.last_match(1)}/' do
+  it 'autocorrects /#$1/ to /#{Regexp.last_match(1)}/' do
     expect_offense(<<~'RUBY')
       /#$1/
         ^^ Prefer `Regexp.last_match(1)` over `$1`.
@@ -141,6 +131,27 @@ RSpec.describe RuboCop::Cop::Style::PerlBackrefs, :config do
 
     expect_correction(<<~'RUBY')
       /#{Regexp.last_match(1)}/
+    RUBY
+  end
+
+  it 'autocorrects $1 to ::Regexp.last_match(1) in namespace' do
+    expect_offense(<<~RUBY)
+      module Foo
+        class Regexp
+        end
+
+        puts $1
+             ^^ Prefer `::Regexp.last_match(1)` over `$1`.
+      end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      module Foo
+        class Regexp
+        end
+
+        puts ::Regexp.last_match(1)
+      end
     RUBY
   end
 end

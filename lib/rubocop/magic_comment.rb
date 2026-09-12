@@ -5,12 +5,16 @@ module RuboCop
   #
   # @abstract parent of three different magic comment handlers
   class MagicComment
-    # @see https://git.io/vMC1C IRB's pattern for matching magic comment tokens
-    TOKEN = /[[:alnum:]\-_]+/.freeze
+    # IRB's pattern for matching magic comment tokens.
+    # @see https://github.com/ruby/ruby/blob/b4a55c1/lib/irb/magic-file.rb#L5
+    TOKEN = '(?<token>[[:alnum:]\-_]+)'
     KEYWORDS = {
       encoding: '(?:en)?coding',
       frozen_string_literal: 'frozen[_-]string[_-]literal',
-      shareable_constant_value: 'shareable[_-]constant[_-]value'
+      rbs_inline: 'rbs_inline',
+      warn_indent: 'warn[_-]indent',
+      shareable_constant_value: 'shareable[_-]constant[_-]value',
+      typed: 'typed'
     }.freeze
 
     # Detect magic comment format and pass it to the appropriate wrapper.
@@ -32,7 +36,12 @@ module RuboCop
     end
 
     def any?
-      frozen_string_literal_specified? || encoding_specified? || shareable_constant_value_specified?
+      frozen_string_literal_specified? ||
+        encoding_specified? ||
+        rbs_inline_specified? ||
+        warn_indent_specified? ||
+        shareable_constant_value_specified? ||
+        typed_specified?
     end
 
     def valid?
@@ -55,6 +64,10 @@ module RuboCop
       [true, false].include?(frozen_string_literal)
     end
 
+    def valid_rbs_inline_value?
+      %w[enabled disabled].include?(extract_rbs_inline_value)
+    end
+
     def valid_shareable_constant_value?
       %w[none literal experimental_everything experimental_copy].include?(shareable_constant_value)
     end
@@ -66,6 +79,13 @@ module RuboCop
       specified?(frozen_string_literal)
     end
 
+    # Was a warn_indent specified?
+    #
+    # @return [Boolean]
+    def warn_indent_specified?
+      specified?(warn_indent)
+    end
+
     # Was a shareable_constant_value specified?
     #
     # @return [Boolean]
@@ -75,18 +95,25 @@ module RuboCop
 
     # Expose the `frozen_string_literal` value coerced to a boolean if possible.
     #
-    # @return [Boolean] if value is `true` or `false`
+    # @return [Boolean] if value is `true` or `false` in any case
     # @return [nil] if frozen_string_literal comment isn't found
     # @return [String] if comment is found but isn't true or false
     def frozen_string_literal
       return unless (setting = extract_frozen_string_literal)
 
-      case setting
+      case setting.downcase
       when 'true'  then true
       when 'false' then false
       else
         setting
       end
+    end
+
+    # Expose the `warn_indent` value.
+    #
+    # @return [String] for warn_indent config
+    def warn_indent
+      extract_warn_indent
     end
 
     # Expose the `shareable_constant_value` value coerced to a boolean if possible.
@@ -98,6 +125,21 @@ module RuboCop
 
     def encoding_specified?
       specified?(encoding)
+    end
+
+    def rbs_inline_specified?
+      valid_rbs_inline_value?
+    end
+
+    # Was the Sorbet `typed` sigil specified?
+    #
+    # @return [Boolean]
+    def typed_specified?
+      specified?(extract_typed)
+    end
+
+    def typed
+      extract_typed
     end
 
     private
@@ -113,7 +155,7 @@ module RuboCop
     # @return [String] if pattern matched
     # @return [nil] otherwise
     def extract(pattern)
-      @comment[pattern, 1]
+      @comment[pattern, :token]
     end
 
     # Parent to Vim and Emacs magic comment handling.
@@ -141,10 +183,10 @@ module RuboCop
       # @return [String] extracted value if it is found
       # @return [nil] otherwise
       def match(keyword)
-        pattern = /\A#{keyword}\s*#{self.class::OPERATOR}\s*(#{TOKEN})\z/
+        pattern = /\A#{keyword}\s*#{self.class::OPERATOR}\s*#{TOKEN}\z/
 
         tokens.each do |token|
-          next unless (value = token[pattern, 1])
+          next unless (value = token[pattern, :token])
 
           return value.downcase
         end
@@ -170,12 +212,16 @@ module RuboCop
     #   comment.encoding # => 'ascii-8bit'
     #
     # @see https://www.gnu.org/software/emacs/manual/html_node/emacs/Specify-Coding.html
-    # @see https://git.io/vMCXh Emacs handling in Ruby's parse.y
+    # @see https://github.com/ruby/ruby/blob/3f306dc/parse.y#L6873-L6892 Emacs handling in parse.y
     class EmacsComment < EditorComment
-      REGEXP    = /-\*-(.+)-\*-/.freeze
+      REGEXP    = /-\*-(?<token>.+)-\*-/.freeze
       FORMAT    = '# -*- %s -*-'
       SEPARATOR = ';'
       OPERATOR  = ':'
+
+      def new_frozen_string_literal(value)
+        "# -*- frozen_string_literal: #{value} -*-"
+      end
 
       private
 
@@ -183,9 +229,19 @@ module RuboCop
         match(KEYWORDS[:frozen_string_literal])
       end
 
+      # Emacs comments cannot specify RBS::inline behavior.
+      def extract_rbs_inline_value; end
+
+      def extract_warn_indent
+        match(KEYWORDS[:warn_indent])
+      end
+
       def extract_shareable_constant_value
         match(KEYWORDS[:shareable_constant_value])
       end
+
+      # Emacs comments cannot specify Sorbet typechecking behavior.
+      def extract_typed; end
     end
 
     # Wrapper for Vim style magic comments.
@@ -197,7 +253,7 @@ module RuboCop
     #
     #   comment.encoding # => 'ascii-8bit'
     class VimComment < EditorComment
-      REGEXP    = /#\s*vim:\s*(.+)/.freeze
+      REGEXP    = /#\s*vim:\s*(?<token>.+)/.freeze
       FORMAT    = '# vim: %s'
       SEPARATOR = ', '
       OPERATOR  = '='
@@ -219,8 +275,17 @@ module RuboCop
       # Vim comments cannot specify frozen string literal behavior.
       def frozen_string_literal; end
 
+      # Vim comments cannot specify RBS::inline behavior.
+      def extract_rbs_inline_value; end
+
+      # Vim comments cannot specify indentation warning behavior.
+      def warn_indent; end
+
       # Vim comments cannot specify shareable constant values behavior.
       def shareable_constant_value; end
+
+      # Vim comments cannot specify Sorbet typechecking behavior.
+      def extract_typed; end
     end
 
     # Wrapper for regular magic comments not bound to an editor.
@@ -237,18 +302,24 @@ module RuboCop
     #   comment2.frozen_string_literal # => nil
     #   comment2.encoding              # => 'utf-8'
     class SimpleComment < MagicComment
+      FSTRING_LITERAL_COMMENT = 'frozen_string_literal:\s*(true|false)'
+
       # Match `encoding` or `coding`
       def encoding
-        extract(/\A\s*\#.*\b#{KEYWORDS[:encoding]}: (#{TOKEN})/io)
+        extract(/\A\s*\#\s*(#{FSTRING_LITERAL_COMMENT})?\s*#{KEYWORDS[:encoding]}: (#{TOKEN})/io)
       end
 
       # Rewrite the comment without a given token type
       def without(type)
-        if @comment.match?(/\A#\s*#{self.class::KEYWORDS[type.to_sym]}/)
+        if @comment.match?(/\A#\s*#{self.class::KEYWORDS[type.to_sym]}/io)
           ''
         else
           @comment
         end
+      end
+
+      def new_frozen_string_literal(value)
+        "# frozen_string_literal: #{value}"
       end
 
       private
@@ -259,13 +330,25 @@ module RuboCop
       # is the only text in the comment.
       #
       # Case-insensitive and dashes/underscores are acceptable.
-      # @see https://git.io/vM7Mg
+      # @see https://github.com/ruby/ruby/blob/78b95b49f8/parse.y#L7134-L7138
       def extract_frozen_string_literal
-        extract(/\A\s*#\s*#{KEYWORDS[:frozen_string_literal]}:\s*(#{TOKEN})\s*\z/io)
+        extract(/\A\s*#\s*#{KEYWORDS[:frozen_string_literal]}:\s*#{TOKEN}\s*\z/io)
+      end
+
+      def extract_rbs_inline_value
+        extract(/\A\s*#\s*#{KEYWORDS[:rbs_inline]}:\s*#{TOKEN}\s*\z/io)
+      end
+
+      def extract_warn_indent
+        extract(/\A\s*#\s*#{KEYWORDS[:warn_indent]}:\s*#{TOKEN}\s*\z/io)
       end
 
       def extract_shareable_constant_value
-        extract(/\A\s*#\s*#{KEYWORDS[:shareable_constant_value]}:\s*(#{TOKEN})\s*\z/io)
+        extract(/\A\s*#\s*#{KEYWORDS[:shareable_constant_value]}:\s*#{TOKEN}\s*\z/io)
+      end
+
+      def extract_typed
+        extract(/\A\s*#\s*#{KEYWORDS[:typed]}:\s*#{TOKEN}\s*\z/io)
       end
     end
   end

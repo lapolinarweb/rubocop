@@ -3,27 +3,28 @@
 module RuboCop
   module Cop
     module Layout
-      # This cop checks the indentation of the right hand side operand in
-      # binary operations that span more than one line.
+      # Checks the indentation of the right hand side operand in binary operations that
+      # span more than one line.
       #
-      # The `aligned` style checks that operators are aligned if they are part
-      # of an `if` or `while` condition, a `return` statement, etc. In other
-      # contexts, the second operand should be indented regardless of enforced
-      # style.
+      # The `aligned` style checks that operators are aligned if they are part of an `if` or `while`
+      # condition, an explicit `return` statement, etc. In other contexts, the second operand should
+      # be indented regardless of enforced style.
+      #
+      # In both styles, operators should be aligned when an assignment begins on the next line.
       #
       # @example EnforcedStyle: aligned (default)
       #   # bad
       #   if a +
       #       b
       #     something &&
-      #       something_else
+      #     something_else
       #   end
       #
       #   # good
       #   if a +
       #      b
       #     something &&
-      #     something_else
+      #       something_else
       #   end
       #
       # @example EnforcedStyle: indented
@@ -58,8 +59,8 @@ module RuboCop
         def validate_config
           return unless style == :aligned && cop_config['IndentationWidth']
 
-          raise ValidationError, 'The `Layout/MultilineOperationIndentation`' \
-                                 ' cop only accepts an `IndentationWidth` ' \
+          raise ValidationError, 'The `Layout/MultilineOperationIndentation` ' \
+                                 'cop only accepts an `IndentationWidth` ' \
                                  'configuration parameter when ' \
                                  '`EnforcedStyle` is `indented`.'
         end
@@ -77,9 +78,8 @@ module RuboCop
         end
 
         def check_and_or(node)
-          lhs, rhs = *node
-          range = offending_range(node, lhs, rhs.source_range, style)
-          check(range, node, lhs, rhs.source_range)
+          range = offending_range(node, node.lhs, node.rhs.source_range, style)
+          check(range, node, node.lhs, node.rhs.source_range)
         end
 
         def offending_range(node, lhs, rhs, given_style)
@@ -102,10 +102,12 @@ module RuboCop
             return true if begins_its_line?(assignment_rhs.source_range)
           end
 
-          given_style == :aligned &&
-            (kw_node_with_special_indentation(node) ||
-             assignment_node ||
-             argument_in_method_call(node, :with_or_without_parentheses))
+          return false unless given_style == :aligned
+          return true if kw_node_with_special_indentation(node) || assignment_node
+
+          node = argument_in_method_call(node, :with_or_without_parentheses)
+
+          node.respond_to?(:def_modifier?) && !node.def_modifier?
         end
 
         def message(node, lhs, rhs)
@@ -120,7 +122,7 @@ module RuboCop
         end
 
         def right_hand_side(send_node)
-          send_node.first_argument.source_range
+          send_node.first_argument&.source_range
         end
       end
     end

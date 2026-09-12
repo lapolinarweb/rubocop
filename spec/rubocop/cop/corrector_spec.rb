@@ -65,6 +65,10 @@ RSpec.describe RuboCop::Cop::Corrector do
       expect { |corrector| corrector.remove_trailing(operator, 2) }.to rewrite_to 'true a false'
     end
 
+    it 'allows swapping sources of two nodes' do
+      expect { |corrector| corrector.swap(node.lhs, node.rhs) }.to rewrite_to 'false and true'
+    end
+
     it 'accepts a node instead of a range' do
       expect { |corrector| corrector.replace(node.rhs, 'maybe') }.to rewrite_to 'true and maybe'
     end
@@ -72,7 +76,7 @@ RSpec.describe RuboCop::Cop::Corrector do
     it 'raises a useful error if not given a node or a range' do
       expect do
         do_rewrite { |corr| corr.replace(1..3, 'oops') }
-      end.to raise_error(TypeError, 'Expected a Parser::Source::Range, '\
+      end.to raise_error(TypeError, 'Expected a Parser::Source::Range, ' \
                                     'Comment or RuboCop::AST::Node, got Range')
     end
 
@@ -94,8 +98,8 @@ RSpec.describe RuboCop::Cop::Corrector do
           expect do
             do_rewrite { |corr| corr.public_send(method, op_string, *params) }
           end.to raise_error(RuntimeError,
-                             'Corrector expected range source buffer to be'\
-                             ' a Parser::Source::Buffer, but got String')
+                             'Corrector expected range source buffer to be ' \
+                             'a Parser::Source::Buffer, but got String')
           expect do
             do_rewrite { |corr| corr.public_send(method, op_other, *params) }
           end.to raise_error(RuntimeError,

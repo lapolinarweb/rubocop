@@ -5,7 +5,7 @@ require 'uri'
 module RuboCop
   module Cop
     module Layout
-      # This cop checks the length of lines in the source code.
+      # Checks the length of lines in the source code.
       # The maximum length is configurable.
       # The tab size is configured in the `IndentationWidth`
       # of the `Layout/IndentationStyle` cop.
@@ -17,27 +17,29 @@ module RuboCop
       # split across lines. These include arrays, hashes, and
       # method calls with argument lists.
       #
-      # If autocorrection is enabled, the following Layout cops
+      # If autocorrection is enabled, the following cops
       # are recommended to further format the broken lines.
       # (Many of these are enabled by default.)
       #
-      # * ArgumentAlignment
-      # * BlockAlignment
-      # * BlockDelimiters
-      # * BlockEndNewline
-      # * ClosingParenthesisIndentation
-      # * FirstArgumentIndentation
-      # * FirstArrayElementIndentation
-      # * FirstHashElementIndentation
-      # * FirstParameterIndentation
-      # * HashAlignment
-      # * IndentationWidth
-      # * MultilineArrayLineBreaks
-      # * MultilineBlockLayout
-      # * MultilineHashBraceLayout
-      # * MultilineHashKeyLineBreaks
-      # * MultilineMethodArgumentLineBreaks
-      # * ParameterAlignment
+      # * `Layout/ArgumentAlignment`
+      # * `Layout/ArrayAlignment`
+      # * `Layout/BlockAlignment`
+      # * `Layout/BlockEndNewline`
+      # * `Layout/ClosingParenthesisIndentation`
+      # * `Layout/FirstArgumentIndentation`
+      # * `Layout/FirstArrayElementIndentation`
+      # * `Layout/FirstHashElementIndentation`
+      # * `Layout/FirstParameterIndentation`
+      # * `Layout/HashAlignment`
+      # * `Layout/IndentationWidth`
+      # * `Layout/MultilineArrayLineBreaks`
+      # * `Layout/MultilineBlockLayout`
+      # * `Layout/MultilineHashBraceLayout`
+      # * `Layout/MultilineHashKeyLineBreaks`
+      # * `Layout/MultilineMethodArgumentLineBreaks`
+      # * `Layout/MultilineMethodParameterLineBreaks`
+      # * `Layout/ParameterAlignment`
+      # * `Style/BlockDelimiters`
       #
       # Together, these cops will pretty print hashes, arrays,
       # method calls, etc. For example, let's say the max columns
@@ -58,11 +60,12 @@ module RuboCop
       #     bar: "0000000000",
       #     baz: "0000000000",
       #   }
-      class LineLength < Base
+      class LineLength < Base # rubocop:disable Metrics/ClassLength
         include CheckLineBreakable
-        include IgnoredPattern
+        include AllowedPattern
         include RangeHelp
         include LineLengthHelp
+        include EndlessMethodRewriter
         extend AutoCorrector
 
         exclude_limit 'Max'
@@ -72,6 +75,16 @@ module RuboCop
         def on_block(node)
           check_for_breakable_block(node)
         end
+        alias on_numblock on_block
+        alias on_itblock on_block
+
+        def on_str(node)
+          check_for_breakable_str(node)
+        end
+
+        def on_dstr(node)
+          check_for_breakable_dstr(node)
+        end
 
         def on_potential_breakable_node(node)
           check_for_breakable_node(node)
@@ -79,8 +92,25 @@ module RuboCop
         alias on_array on_potential_breakable_node
         alias on_hash on_potential_breakable_node
         alias on_send on_potential_breakable_node
+        alias on_csend on_potential_breakable_node
+
+        def on_def(node)
+          if node.endless?
+            track_endless_method(node)
+          else
+            check_for_breakable_node(node)
+          end
+        end
+        alias on_defs on_def
 
         def on_new_investigation
+          @breakable_range_by_line_index = {}
+          @breakable_string_delimiters = {}
+          @endless_methods_by_line = {}
+          @heredocs = nil
+
+          return unless processed_source.raw_source.include?(';')
+
           check_for_breakable_semicolons(processed_source)
         end
 
@@ -93,6 +123,70 @@ module RuboCop
         private
 
         attr_accessor :breakable_range
+
+        def track_endless_method(node)
+          line_index = node.first_line - processed_source.buffer.first_line
+          endless_methods_by_line[line_index] = node
+        end
+
+        def handle_endless_method_line(line, line_index)
+          if require_endless_methods?
+            return register_required_endless_method_offense(line, line_index)
+          end
+
+          register_endless_method_offense(line, line_index)
+        end
+
+        def require_endless_methods?
+          config.cop_enabled?('Style/EndlessMethod') &&
+            config.for_cop('Style/EndlessMethod')['EnforcedStyle'] == 'require_always'
+        end
+
+        def register_endless_method_offense(line, line_index)
+          message = format(MSG, length: line_length(line), max: max)
+          loc = excess_range(nil, line, line_index)
+
+          add_offense(loc, message: message) do |corrector|
+            self.max = line_length(line)
+
+            correct_to_multiline(corrector, endless_methods_by_line[line_index])
+          end
+        end
+
+        def register_required_endless_method_offense(line, line_index)
+          node = endless_methods_by_line[line_index]
+          loc = excess_range(nil, line, line_index)
+
+          add_offense(loc, message: format(MSG, length: line_length(line), max: max)) do |corrector|
+            self.max = line_length(line)
+
+            if correctable_endless_method_block?(node)
+              correct_endless_method_block_to_multiline(corrector, node)
+            end
+          end
+        end
+
+        def correctable_endless_method_block?(node)
+          block_node = node.body
+
+          block_node&.type?(:any_block) &&
+            block_node.braces? &&
+            block_node.single_line? &&
+            block_node.body &&
+            !receiver_contains_heredoc?(block_node)
+        end
+
+        def correct_endless_method_block_to_multiline(corrector, node)
+          block_node = node.body
+          block_arguments = block_node.arguments? ? " #{block_node.arguments.source}" : ''
+          replacement = [
+            "#{block_node.send_node.source} do#{block_arguments}",
+            "#{indent(node, offset: 2)}#{block_node.body.source}",
+            "#{indent(node)}end"
+          ].join("\n")
+
+          corrector.replace(block_node, replacement)
+        end
 
         def check_for_breakable_node(node)
           breakable_node = extract_breakable_node(node, max)
@@ -117,6 +211,7 @@ module RuboCop
 
         def check_for_breakable_block(block_node)
           return unless block_node.single_line?
+          return if receiver_contains_heredoc?(block_node)
 
           line_index = block_node.loc.line - 1
           range = breakable_block_range(block_node)
@@ -125,11 +220,47 @@ module RuboCop
           breakable_range_by_line_index[line_index] = range_between(pos, pos + 1)
         end
 
+        def check_for_breakable_str(node)
+          line_index = node.loc.line - 1
+          return if breakable_range_by_line_index[line_index]
+
+          return unless breakable_string?(node)
+          return unless (delimiter = string_delimiter(node))
+          return unless (pos = breakable_string_position(node))
+
+          breakable_range_by_line_index[line_index] = range_between(pos, pos + 1)
+          breakable_string_delimiters[line_index] = delimiter
+        end
+
+        def check_for_breakable_dstr(node) # rubocop:disable Metrics/AbcSize
+          line_index = node.loc.line - 1
+          return if breakable_range_by_line_index[line_index]
+
+          return unless breakable_dstr?(node)
+          return unless (delimiter = string_delimiter(node))
+
+          node.each_child_node(:begin).detect do |begin_node|
+            next unless (pos = breakable_dstr_begin_position(begin_node))
+
+            breakable_range_by_line_index[line_index] = range_between(pos, pos + 1)
+            breakable_string_delimiters[line_index] = delimiter
+          end
+        end
+
+        def breakable_string?(node)
+          allow_string_split? &&
+            node.single_line? &&
+            !node.heredoc? &&
+            # TODO: strings inside hashes, kwargs and arrays are currently ignored,
+            # but could be considered in the future
+            !node.parent&.type?(:pair, :kwoptarg, :array)
+        end
+
         def breakable_block_range(block_node)
           if block_node.arguments? && !block_node.lambda?
             block_node.arguments.loc.end
           else
-            block_node.loc.begin
+            block_node.braces? ? block_node.loc.begin : block_node.loc.begin.adjust(begin_pos: 1)
           end
         end
 
@@ -137,7 +268,7 @@ module RuboCop
           range = semicolon_token.pos
           end_pos = range.end_pos
           next_range = range_between(end_pos, end_pos + 1)
-          return nil unless next_range.line == range.line
+          return nil unless same_line?(next_range, range)
 
           next_char = next_range.source
           return nil if /[\r\n]/.match?(next_char)
@@ -146,8 +277,62 @@ module RuboCop
           next_range
         end
 
+        def breakable_string_position(node)
+          source_range = node.source_range
+          return if source_range.last_column < max
+          return unless (pos = breakable_string_range(node))
+
+          pos.end_pos unless pos.end_pos == source_range.begin_pos
+        end
+
+        # Locate where to break a string that is too long, ensuring that escape characters
+        # are not bisected.
+        # If the string contains spaces, use them to determine a place for a clean break;
+        # otherwise, the string will be broken at the line length limit.
+        def breakable_string_range(node)
+          source_range = node.source_range
+          relevant_substr = largest_possible_string(node)
+
+          if (space_pos = breakable_space_position(node, relevant_substr))
+            source_range.resize(space_pos + 1)
+          elsif (escape_pos = relevant_substr.rindex(/\\(u[\da-f]{0,4}|x[\da-f]{0,2})?\z/))
+            source_range.resize(escape_pos)
+          else
+            adjustment = max - source_range.last_column - 3
+            return if adjustment.abs > source_range.size
+
+            source_range.adjust(end_pos: adjustment)
+          end
+        end
+
+        def breakable_space_position(node, substr)
+          limit = string_content_length(node) - 1
+          space_pos = substr.rindex(/\s/)
+          space_pos = substr[0, limit].rindex(/\s/) if space_pos && space_pos + 1 > limit
+          space_pos
+        end
+
+        def string_content_length(node)
+          content_end = node.loc?(:end) ? node.loc.end.begin_pos : node.source_range.end_pos
+
+          content_end - node.source_range.begin_pos
+        end
+
+        def breakable_dstr_begin_position(node)
+          source_range = node.source_range
+          source_range.begin_pos if source_range.column < max && source_range.last_column >= max
+        end
+
         def breakable_range_by_line_index
           @breakable_range_by_line_index ||= {}
+        end
+
+        def endless_methods_by_line
+          @endless_methods_by_line ||= {}
+        end
+
+        def breakable_string_delimiters
+          @breakable_string_delimiters ||= {}
         end
 
         def heredocs
@@ -161,20 +346,29 @@ module RuboCop
           [max - indentation_difference(line), 0].max
         end
 
+        # rubocop:disable-next Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
         def check_line(line, line_index)
           return if line_length(line) <= max
-          return if ignored_line?(line, line_index)
+          return if allowed_line?(line, line_index)
 
-          if ignore_cop_directives? && directive_on_source_line?(line_index)
+          if endless_methods_by_line.key?(line_index)
+            return handle_endless_method_line(line, line_index)
+          end
+
+          if allow_rbs_inline_annotation? && rbs_inline_annotation_on_source_line?(line_index)
+            return
+          end
+
+          if allow_cop_directives? && directive_on_source_line?(line_index)
             return check_directive_line(line, line_index)
           end
-          return check_uri_line(line, line_index) if allow_uri?
+          return check_line_for_exemptions(line, line_index) if allow_uri? || allow_qualified_name?
 
           register_offense(excess_range(nil, line, line_index), line, line_index)
         end
 
-        def ignored_line?(line, line_index)
-          matches_ignored_pattern?(line) ||
+        def allowed_line?(line, line_index)
+          matches_allowed_pattern?(line) ||
             shebang?(line, line_index) ||
             (heredocs && line_in_permitted_heredoc?(line_index.succ))
         end
@@ -190,7 +384,14 @@ module RuboCop
 
           add_offense(loc, message: message) do |corrector|
             self.max = line_length(line)
-            corrector.insert_before(breakable_range, "\n") unless breakable_range.nil?
+
+            insertion = if (delimiter = breakable_string_delimiters[line_index])
+                          [delimiter, " \\\n", delimiter].join
+                        else
+                          "\n"
+                        end
+
+            corrector.insert_before(breakable_range, insertion) unless breakable_range.nil?
           end
         end
 
@@ -208,19 +409,20 @@ module RuboCop
         def max
           cop_config['Max']
         end
-
-        def allow_heredoc?
-          allowed_heredoc
-        end
+        alias max_line_length max
 
         def allowed_heredoc
           cop_config['AllowHeredoc']
         end
 
+        def allow_string_split?
+          cop_config['SplitStrings']
+        end
+
         def extract_heredocs(ast)
           return [] unless ast
 
-          ast.each_node(:str, :dstr, :xstr).select(&:heredoc?).map do |node|
+          ast.each_node(:any_str).select(&:heredoc?).map do |node|
             body = node.location.heredoc_body
             delimiter = node.location.heredoc_end.source.strip
             [body.first_line...body.last_line, delimiter]
@@ -236,8 +438,11 @@ module RuboCop
           end
         end
 
-        def line_in_heredoc?(line_number)
-          heredocs.any? { |range, _delimiter| range.cover?(line_number) }
+        def receiver_contains_heredoc?(node)
+          return false unless (receiver = node.receiver)
+          return true if receiver.any_str_type? && receiver.heredoc?
+
+          receiver.each_descendant(:any_str).any?(&:heredoc?)
         end
 
         def check_directive_line(line, line_index)
@@ -257,11 +462,65 @@ module RuboCop
           )
         end
 
-        def check_uri_line(line, line_index)
-          uri_range = find_excessive_uri_range(line)
-          return if uri_range && allowed_uri_position?(line, uri_range)
+        def check_line_for_exemptions(line, line_index)
+          uri_range            = range_if_applicable(line, :uri)
+          qualified_name_range = range_if_applicable(line, :qualified_name)
 
-          register_offense(excess_range(uri_range, line, line_index), line, line_index)
+          return if allowed_combination?(line, uri_range, qualified_name_range)
+
+          range = uri_range || qualified_name_range
+          register_offense(excess_range(range, line, line_index), line, line_index)
+        end
+
+        def range_if_applicable(line, type)
+          return unless type == :uri ? allow_uri? : allow_qualified_name?
+
+          find_excessive_range(line, type)
+        end
+
+        def allowed_combination?(line, uri_range, qualified_name_range)
+          if uri_range && qualified_name_range
+            allowed_position?(line, uri_range) && allowed_position?(line, qualified_name_range)
+          elsif uri_range
+            allowed_position?(line, uri_range)
+          elsif qualified_name_range
+            allowed_position?(line, qualified_name_range)
+          else
+            false
+          end
+        end
+
+        def breakable_dstr?(node)
+          # If the `dstr` only contains one child, it cannot be broken
+          breakable_string?(node) && !node.child_nodes.one?
+        end
+
+        def string_delimiter(node)
+          delimiter = if node.loc?(:begin)
+                        node.loc.begin
+                      elsif node.parent&.dstr_type? && node.parent.loc?(:begin)
+                        node.parent.loc.begin
+                      end&.source
+
+          delimiter if %w[' "].include?(delimiter)
+        end
+
+        # Find the largest possible substring of a string node to retain before a break
+        def largest_possible_string(node)
+          # The maximum allowed length of a string value is:
+          # `Max` - end delimiter (quote) - continuation characters (space and slash)
+          max_length = max - 3
+          # Offset by the string's starting column so the broken line actually fits
+          # within `Max`. When on the same line as its parent, use the column difference;
+          # otherwise the string is indented on its own line, so subtract that indentation.
+          # (Without this, an indented string under a multi-line parent never shortens
+          # below `Max` and the autocorrect loops, inserting empty `"" \` fragments.)
+          max_length -= if same_line?(node, node.parent)
+                          column_offset_between(node.loc, node.parent.loc)
+                        else
+                          node.loc.column
+                        end
+          node.source[0...(max_length)]
         end
       end
     end

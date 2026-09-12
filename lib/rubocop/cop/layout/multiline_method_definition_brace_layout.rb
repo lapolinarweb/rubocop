@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Layout
-      # This cop checks that the closing brace in a method definition is either
+      # Checks that the closing brace in a method definition is either
       # on the same line as the last method parameter, or a new line.
       #
       # When using the `symmetrical` (default) style:
@@ -12,7 +12,7 @@ module RuboCop
       # first parameter of the definition, then the closing brace should be
       # on the same line as the last parameter of the definition.
       #
-      # If an method definition's opening brace is on the line above the first
+      # If a method definition's opening brace is on the line above the first
       # parameter of the definition, then the closing brace should be on the
       # line below the last parameter of the definition.
       #

@@ -7,48 +7,48 @@ module RuboCop
       # ref, or tag) are either required or forbidden.
       #
       # @example EnforcedStyle: required (default)
-      #  # bad
-      #  gem 'rubocop'
+      #   # bad
+      #   gem 'rubocop'
       #
-      #  # good
-      #  gem 'rubocop', '~> 1.12'
+      #   # good
+      #   gem 'rubocop', '~> 1.12'
       #
-      #  # good
-      #  gem 'rubocop', '>= 1.10.0'
+      #   # good
+      #   gem 'rubocop', '>= 1.10.0'
       #
-      #  # good
-      #  gem 'rubocop', '>= 1.5.0', '< 1.10.0'
+      #   # good
+      #   gem 'rubocop', '>= 1.5.0', '< 1.10.0'
       #
-      #  # good
-      #  gem 'rubocop', branch: 'feature-branch'
+      #   # good
+      #   gem 'rubocop', branch: 'feature-branch'
       #
-      #  # good
-      #  gem 'rubocop', ref: '74b5bfbb2c4b6fd6cdbbc7254bd7084b36e0c85b'
+      #   # good
+      #   gem 'rubocop', ref: '74b5bfbb2c4b6fd6cdbbc7254bd7084b36e0c85b'
       #
-      #  # good
-      #  gem 'rubocop', tag: 'v1.17.0'
+      #   # good
+      #   gem 'rubocop', tag: 'v1.17.0'
       #
       # @example EnforcedStyle: forbidden
-      #  # good
-      #  gem 'rubocop'
+      #   # good
+      #   gem 'rubocop'
       #
-      #  # bad
-      #  gem 'rubocop', '~> 1.12'
+      #   # bad
+      #   gem 'rubocop', '~> 1.12'
       #
-      #  # bad
-      #  gem 'rubocop', '>= 1.10.0'
+      #   # bad
+      #   gem 'rubocop', '>= 1.10.0'
       #
-      #  # bad
-      #  gem 'rubocop', '>= 1.5.0', '< 1.10.0'
+      #   # bad
+      #   gem 'rubocop', '>= 1.5.0', '< 1.10.0'
       #
-      #  # bad
-      #  gem 'rubocop', branch: 'feature-branch'
+      #   # bad
+      #   gem 'rubocop', branch: 'feature-branch'
       #
-      #  # bad
-      #  gem 'rubocop', ref: '74b5bfbb2c4b6fd6cdbbc7254bd7084b36e0c85b'
+      #   # bad
+      #   gem 'rubocop', ref: '74b5bfbb2c4b6fd6cdbbc7254bd7084b36e0c85b'
       #
-      #  # bad
-      #  gem 'rubocop', tag: 'v1.17.0'
+      #   # bad
+      #   gem 'rubocop', tag: 'v1.17.0'
       #
       class GemVersion < Base
         include ConfigurableEnforcedStyle
@@ -56,6 +56,7 @@ module RuboCop
 
         REQUIRED_MSG = 'Gem version specification is required.'
         FORBIDDEN_MSG = 'Gem version specification is forbidden.'
+        RESTRICT_ON_SEND = %i[gem].freeze
         VERSION_SPECIFICATION_REGEX = /^\s*[~<>=]*\s*[0-9.]+/.freeze
 
         # @!method includes_version_specification?(node)
@@ -90,13 +91,11 @@ module RuboCop
           Array(cop_config['AllowedGems'])
         end
 
-        def message(range)
-          gem_specification = range.source
-
+        def message(_range)
           if required_style?
-            format(REQUIRED_MSG, gem_specification: gem_specification)
+            REQUIRED_MSG
           elsif forbidden_style?
-            format(FORBIDDEN_MSG, gem_specification: gem_specification)
+            FORBIDDEN_MSG
           end
         end
 
@@ -105,13 +104,13 @@ module RuboCop
         end
 
         def required_offense?(node)
-          return unless required_style?
+          return false unless required_style?
 
           !includes_version_specification?(node) && !includes_commit_reference?(node)
         end
 
         def forbidden_offense?(node)
-          return unless forbidden_style?
+          return false unless forbidden_style?
 
           includes_version_specification?(node) || includes_commit_reference?(node)
         end

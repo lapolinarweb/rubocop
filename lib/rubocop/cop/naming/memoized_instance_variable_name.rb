@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Naming
-      # This cop checks for memoized methods whose instance variable name
+      # Checks for memoized methods whose instance variable name
       # does not match the method name. Applies to both regular methods
       # (defined with `def`) and dynamic methods (defined with
       # `define_method` or `define_singleton_method`).
@@ -17,7 +17,8 @@ module RuboCop
       # @safety
       #   This cop relies on the pattern `@instance_var ||= ...`,
       #   but this is sometimes used for other purposes than memoization
-      #   so this cop is considered unsafe.
+      #   so this cop is considered unsafe. Also, its autocorrection is unsafe
+      #   because it may conflict with instance variable names already in use.
       #
       # @example EnforcedStyleForLeadingUnderscores: disallowed (default)
       #   # bad
@@ -108,7 +109,7 @@ module RuboCop
       #     @_foo = calculate_expensive_thing
       #   end
       #
-      # @example EnforcedStyleForLeadingUnderscores :optional
+      # @example EnforcedStyleForLeadingUnderscores: optional
       #   # bad
       #   def foo
       #     @something ||= calculate_expensive_thing
@@ -145,6 +146,8 @@ module RuboCop
       #     @_foo ||= calculate_expensive_thing
       #   end
       class MemoizedInstanceVariableName < Base
+        extend AutoCorrector
+
         include ConfigurableEnforcedStyle
 
         MSG = 'Memoized variable `%<var>s` does not match ' \
@@ -152,6 +155,7 @@ module RuboCop
         UNDERSCORE_REQUIRED = 'Memoized variable `%<var>s` does not start ' \
                               'with `_`. Use `@%<suggested_var>s` instead.'
         DYNAMIC_DEFINE_METHODS = %i[define_method define_singleton_method].to_set.freeze
+        INITIALIZE_METHODS = %i[initialize initialize_clone initialize_copy initialize_dup].freeze
 
         # @!method method_definition?(node)
         def_node_matcher :method_definition?, <<~PATTERN
@@ -163,25 +167,30 @@ module RuboCop
         PATTERN
 
         # rubocop:disable Metrics/AbcSize
+        # rubocop:disable-next Metrics/MethodLength
         def on_or_asgn(node)
-          lhs, _value = *node
+          lhs = node.lhs
           return unless lhs.ivasgn_type?
 
           method_node, method_name = find_definition(node)
           return unless method_node
+          return unless nameable_method?(method_name)
 
           body = method_node.body
           return unless body == node || body.children.last == node
 
           return if matches?(method_name, lhs)
 
+          suggested_var = suggested_var(method_name)
           msg = format(
-            message(lhs.children.first.to_s),
-            var: lhs.children.first.to_s,
-            suggested_var: suggested_var(method_name),
+            message(lhs.name),
+            var: lhs.name,
+            suggested_var: suggested_var,
             method: method_name
           )
-          add_offense(lhs, message: msg)
+          add_offense(lhs, message: msg) do |corrector|
+            corrector.replace(lhs.loc.name, "@#{suggested_var}")
+          end
         end
         # rubocop:enable Metrics/AbcSize
 
@@ -193,30 +202,36 @@ module RuboCop
             $(ivasgn %1 _))
         PATTERN
 
-        # rubocop:disable Metrics/AbcSize, Metrics/MethodLength
+        # rubocop:disable-next Metrics/AbcSize, Metrics/MethodLength
         def on_defined?(node)
-          arg = node.arguments.first
-          return unless arg.ivar_type?
+          arg = node.first_argument
+          return false unless arg.ivar_type?
 
           method_node, method_name = find_definition(node)
-          return unless method_node
+          return false unless method_node
+          return false unless nameable_method?(method_name)
 
-          var_name = arg.children.first
-          defined_memoized?(method_node.body, var_name) do |defined_ivar, return_ivar, ivar_assign|
-            return if matches?(method_name, ivar_assign)
+          defined_memoized?(method_node.body, arg.name) do |defined_ivar, return_ivar, ivar_assign|
+            return false if matches?(method_name, ivar_assign)
 
+            suggested_var = suggested_var(method_name)
             msg = format(
-              message(var_name.to_s),
-              var: var_name.to_s,
-              suggested_var: suggested_var(method_name),
+              message(arg.name),
+              var: arg.name,
+              suggested_var: suggested_var,
               method: method_name
             )
-            add_offense(defined_ivar, message: msg)
-            add_offense(return_ivar, message: msg)
-            add_offense(ivar_assign.loc.name, message: msg)
+            add_offense(defined_ivar, message: msg) do |corrector|
+              corrector.replace(defined_ivar, "@#{suggested_var}")
+            end
+            add_offense(return_ivar, message: msg) do |corrector|
+              corrector.replace(return_ivar, "@#{suggested_var}")
+            end
+            add_offense(ivar_assign.loc.name, message: msg) do |corrector|
+              corrector.replace(ivar_assign.loc.name, "@#{suggested_var}")
+            end
           end
         end
-        # rubocop:enable Metrics/AbcSize, Metrics/MethodLength
 
         private
 
@@ -227,7 +242,7 @@ module RuboCop
         def find_definition(node)
           # Methods can be defined in a `def` or `defs`,
           # or dynamically via a `block` node.
-          node.each_ancestor(:def, :defs, :block).each do |ancestor|
+          node.each_ancestor(:any_def, :block).each do |ancestor|
             method_node, method_name = method_definition?(ancestor)
             return [method_node, method_name] if method_node
           end
@@ -235,12 +250,18 @@ module RuboCop
           nil
         end
 
-        def matches?(method_name, ivar_assign)
-          return true if ivar_assign.nil? || method_name == :initialize
+        # Operator and other non-word method names (e.g. `[]`, `+`, `<=>`) cannot form a
+        # valid instance variable name, so there is no matching ivar to enforce and a
+        # suggested correction like `@[]` would be invalid Ruby.
+        def nameable_method?(method_name)
+          /\A[a-zA-Z_]\w*\z/.match?(method_name.to_s.delete('!?='))
+        end
 
-          method_name = method_name.to_s.delete('!?')
-          variable = ivar_assign.children.first
-          variable_name = variable.to_s.sub('@', '')
+        def matches?(method_name, ivar_assign)
+          return true if ivar_assign.nil? || INITIALIZE_METHODS.include?(method_name)
+
+          method_name = method_name.to_s.delete('!?=')
+          variable_name = ivar_assign.name.to_s.sub('@', '')
 
           variable_name_candidates(method_name).include?(variable_name)
         end
@@ -254,7 +275,7 @@ module RuboCop
         end
 
         def suggested_var(method_name)
-          suggestion = method_name.to_s.delete('!?')
+          suggestion = method_name.to_s.delete('!?=')
 
           style == :required ? "_#{suggestion}" : suggestion
         end

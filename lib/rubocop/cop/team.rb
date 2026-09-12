@@ -9,90 +9,46 @@ module RuboCop
     # For performance reasons, Team will first dispatch cops & forces in two groups,
     # first the ones needed for autocorrection (if any), then the rest
     # (unless autocorrections happened).
+    # rubocop:disable-next Metrics/ClassLength
     class Team
-      attr_reader :errors, :warnings, :updated_source_file, :cops
-
-      alias updated_source_file? updated_source_file
-
-      def initialize(cops, config = nil, options = {})
-        @cops = cops
-        @config = config
-        @options = options
-        reset
-        @ready = true
-
-        validate_config
-      end
+      InvestigationResult = Struct.new(:report, :corrector)
+      private_constant :InvestigationResult
 
       # @return [Team]
       def self.new(cop_or_classes, config, options = {})
         # Support v0 api:
-        return mobilize(cop_or_classes, config, options) if cop_or_classes.first.is_a?(Class)
+        if cop_or_classes.first.is_a?(Class)
+          warn Rainbow(<<~WARNING).yellow, uplevel: 1
+            `Team.new` with cop classes is deprecated. Use `Team.mobilize` instead.
+          WARNING
+          return mobilize(cop_or_classes, config, options)
+        end
 
         super
       end
 
       # @return [Team] with cops assembled from the given `cop_classes`
       def self.mobilize(cop_classes, config, options = {})
-        cops = mobilize_cops(cop_classes, config, options)
-        new(cops, config, options)
+        if cop_classes.is_a?(Registry)
+          # Instantiate only the enabled cops so that disabled lazy-loaded cops are not loaded.
+          # The registry is kept on standby to mobilize a disabled cop when a comment directive
+          # opts it back in.
+          cops = cop_classes.enabled(config).map { |cop_class| cop_class.new(config, options) }
+          team = new(cops, config, options)
+          team.standby_registry = cop_classes
+          team
+        else
+          new(mobilize_cops(cop_classes, config, options), config, options)
+        end
       end
 
-      # @return [Array<Cop::Cop>]
+      # @return [Array<Cop::Base>]
       def self.mobilize_cops(cop_classes, config, options = {})
-        cop_classes = Registry.new(cop_classes.to_a) unless cop_classes.is_a?(Registry)
-        only = options.fetch(:only, [])
-        safe = options.fetch(:safe, false)
-        cop_classes.enabled(config, only, only_safe: safe).map do |cop_class|
+        cop_classes = Registry.new(cop_classes.to_a, options) unless cop_classes.is_a?(Registry)
+
+        cop_classes.map do |cop_class|
           cop_class.new(config, options)
         end
-      end
-
-      def autocorrect?
-        @options[:auto_correct]
-      end
-
-      def debug?
-        @options[:debug]
-      end
-
-      # @deprecated. Use investigate
-      # @return Array<offenses>
-      def inspect_file(processed_source)
-        investigate(processed_source).offenses
-      end
-
-      # @return [Commissioner::InvestigationReport]
-      def investigate(processed_source)
-        be_ready
-
-        # The autocorrection process may have to be repeated multiple times
-        # until there are no corrections left to perform
-        # To speed things up, run auto-correcting cops by themselves, and only
-        # run the other cops when no corrections are left
-        on_duty = roundup_relevant_cops(processed_source.file_path)
-
-        autocorrect_cops, other_cops = on_duty.partition(&:autocorrect?)
-
-        report = investigate_partial(autocorrect_cops, processed_source)
-
-        unless autocorrect(processed_source, report)
-          # If we corrected some errors, another round of inspection will be
-          # done, and any other offenses will be caught then, so only need
-          # to check other_cops if no correction was done
-          report = report.merge(investigate_partial(other_cops, processed_source))
-        end
-
-        process_errors(processed_source.path, report.errors)
-
-        report
-      ensure
-        @ready = false
-      end
-
-      # @deprecated
-      def forces
-        @forces ||= self.class.forces_for(cops)
       end
 
       # @return [Array<Force>] needed for the given cops
@@ -110,30 +66,120 @@ module RuboCop
         needed.map { |force_class, joining_cops| force_class.new(joining_cops) }
       end
 
+      attr_reader :errors, :warnings, :updated_source_file, :cops
+
+      # When set to true, the corrected source is not written back to the
+      # inspected file; it is exposed through `#updated_source` instead.
+      # @api private
+      attr_accessor :defer_corrections
+
+      # The corrected source of the last investigation, if corrections were
+      # made with `#defer_corrections` enabled.
+      # @api private
+      attr_reader :updated_source
+
+      # Registry used to mobilize cops that were not instantiated because they are disabled in
+      # the config, when a comment directive opts them back in for a file.
+      #
+      # @api private
+      attr_writer :standby_registry
+
+      alias updated_source_file? updated_source_file
+
+      def initialize(cops, config = nil, options = {})
+        @cops = cops
+        @config = config
+        @options = options
+        @standby_registry = nil
+        @standby_cops = {}
+        reset
+        @ready = true
+        @registry = Registry.new(cops, options.dup)
+
+        validate_config
+      end
+
+      def autocorrect?
+        @options[:autocorrect]
+      end
+
+      def debug?
+        @options[:debug]
+      end
+
+      # @deprecated. Use investigate
+      # @return Array<offenses>
+      def inspect_file(processed_source)
+        warn Rainbow(<<~WARNING).yellow, uplevel: 1
+          `inspect_file` is deprecated. Use `investigate` instead.
+        WARNING
+
+        investigate(processed_source).offenses
+      end
+
+      # @return [Commissioner::InvestigationReport]
+      def investigate(processed_source, offset: 0, original: processed_source)
+        result = investigate_with_corrector(processed_source, offset: offset, original: original)
+        autocorrect(processed_source, result.corrector)
+        result.report
+      end
+
+      # @return [Array<Offense>]
+      def investigate_fragments(fragments, original:)
+        @updated_source_file = false
+
+        offenses, errors, warnings, corrector =
+          fragments.each_with_object([[], [], [], nil]) do |fragment, data|
+            investigate_fragment(fragment, original, data)
+          end
+
+        autocorrect(original, corrector)
+        @errors = errors
+        @warnings = warnings
+
+        offenses
+      end
+
+      # @deprecated
+      def forces
+        warn Rainbow(<<~WARNING).yellow, uplevel: 1
+          `forces` is deprecated.
+        WARNING
+
+        @forces ||= self.class.forces_for(cops)
+      end
+
       def external_dependency_checksum
-        keys = cops.map(&:external_dependency_checksum).compact
-        Digest::SHA1.hexdigest(keys.join)
+        # The external dependency checksums are cached per RuboCop team so that
+        # the checksums don't need to be recomputed for each file.
+        @external_dependency_checksum ||= begin
+          keys = cops.filter_map(&:external_dependency_checksum)
+          Digest::SHA1.hexdigest(keys.join)
+        end
       end
 
       private
 
-      def autocorrect(processed_source, report)
+      def autocorrect(processed_source, corrector)
         @updated_source_file = false
+        @updated_source = nil
         return unless autocorrect?
-        return if report.processed_source.parser_error
+        return unless corrector
+        return if corrector.empty?
 
-        new_source = autocorrect_report(report)
+        apply_correction(processed_source, corrector.rewrite)
+        @updated_source_file = true
+      end
 
-        return unless new_source
-
+      def apply_correction(processed_source, new_source)
         if @options[:stdin]
           # holds source read in from stdin, when --stdin option is used
           @options[:stdin] = new_source
+        elsif defer_corrections
+          @updated_source = new_source
         else
-          filename = processed_source.buffer.name
-          File.open(filename, 'w') { |f| f.write(new_source) }
+          File.write(processed_source.file_path, new_source)
         end
-        @updated_source_file = true
       end
 
       def be_ready
@@ -141,6 +187,7 @@ module RuboCop
 
         reset
         @cops.map!(&:ready)
+        @standby_cops.transform_values! { |cop| cop&.ready }
         @ready = true
       end
 
@@ -150,18 +197,104 @@ module RuboCop
       end
 
       # @return [Commissioner::InvestigationReport]
-      def investigate_partial(cops, processed_source)
+      def investigate_partial(cops, processed_source, offset:, original:)
         commissioner = Commissioner.new(cops, self.class.forces_for(cops), @options)
-        commissioner.investigate(processed_source)
+        commissioner.investigate(processed_source, offset: offset, original: original)
+      end
+
+      def investigate_with_corrector(processed_source, offset:, original:)
+        be_ready
+
+        # The autocorrection process may have to be repeated multiple times
+        # until there are no corrections left to perform
+        # To speed things up, run autocorrecting cops by themselves, and only
+        # run the other cops when no corrections are left
+        on_duty = roundup_relevant_cops(processed_source)
+
+        autocorrect_cops, other_cops = partition_by_correcting(on_duty)
+        report = investigate_partial(autocorrect_cops, processed_source,
+                                     offset: offset, original: original)
+
+        corrector = collated_corrector(report, offset: offset, original: original)
+
+        unless corrector
+          # If we corrected some errors, another round of inspection will be
+          # done, and any other offenses will be caught then, so only need
+          # to check other_cops if no correction was done
+          report = report.merge(investigate_partial(other_cops, processed_source,
+                                                    offset: offset, original: original))
+        end
+
+        process_errors(processed_source.path, report.errors)
+
+        InvestigationResult.new(report, corrector)
+      ensure
+        @ready = false
+      end
+
+      def investigate_fragment(fragment, original, data)
+        offenses, errors, warnings, corrector = data
+        result = investigate_with_corrector(
+          fragment[:processed_source],
+          offset: fragment[:offset],
+          original: original
+        )
+
+        offenses.concat(result.report.offenses)
+        if result.corrector
+          corrector ||= Corrector.new(original)
+          merge_corrector!(corrector, result.corrector, offset: 0)
+          data[3] = corrector
+        end
+        errors.concat(@errors)
+        warnings.concat(@warnings)
       end
 
       # @return [Array<cop>]
-      def roundup_relevant_cops(filename)
-        cops.reject do |cop|
-          cop.excluded_file?(filename) ||
-            !support_target_ruby_version?(cop) ||
-            !support_target_rails_version?(cop)
+      # A cop whose unsafe correction is skipped still inserts todo comments
+      # under `--disable-uncorrectable`, so it must run with the correcting
+      # cops - correctors of the later `other_cops` round are never applied.
+      def partition_by_correcting(cops)
+        cops.partition do |cop|
+          cop.autocorrect? || cop.skipped_unsafe_correction_with_disable_uncorrectable?
         end
+      end
+
+      def roundup_relevant_cops(processed_source)
+        (cops + opted_in_standby_cops(processed_source)).select do |cop|
+          next false if cop.excluded_file?(processed_source.file_path)
+          next true if processed_source.comment_config.cop_opted_in?(cop)
+          next false unless @registry.enabled?(cop, @config)
+
+          support_target_ruby_version?(cop) && support_target_rails_version?(cop)
+        end
+      end
+
+      # Cops that were not mobilized because they are disabled in the config,
+      # but are opted back in for the given file by an `enable` comment directive.
+      # Their classes are loaded on demand.
+      #
+      # @return [Array<cop>]
+      def opted_in_standby_cops(processed_source)
+        return [] unless @standby_registry
+
+        opted_in_names = processed_source.comment_config.opt_in_cops
+        return [] if opted_in_names.empty?
+
+        @mobilized_cop_names ||= Set.new(cops.map(&:cop_name))
+        opted_in_names.filter_map do |cop_name|
+          next if @mobilized_cop_names.include?(cop_name)
+
+          standby_cop(cop_name)
+        end
+      end
+
+      def standby_cop(cop_name)
+        return @standby_cops[cop_name] if @standby_cops.key?(cop_name)
+
+        cop_class = @standby_registry.find_by_cop_name(cop_name)
+
+        @standby_cops[cop_name] = cop_class&.new(@config, @options)
       end
 
       def support_target_ruby_version?(cop)
@@ -171,27 +304,41 @@ module RuboCop
       end
 
       def support_target_rails_version?(cop)
+        # In this case, the rails version was already checked by `#excluded_file?`
+        return true if defined?(RuboCop::Rails::TargetRailsVersion::USES_REQUIRES_GEM_API)
+
         return true unless cop.class.respond_to?(:support_target_rails_version?)
 
         cop.class.support_target_rails_version?(cop.target_rails_version)
       end
 
-      def autocorrect_report(report)
-        corrector = collate_corrections(report)
+      def collated_corrector(report, offset:, original:)
+        return unless autocorrect?
+        return if report.processed_source.parser_error
 
-        corrector.rewrite unless corrector.empty?
+        corrector = collate_corrections(report, offset: offset, original: original)
+
+        corrector unless corrector.empty?
       end
 
-      def collate_corrections(report)
-        corrector = Corrector.new(report.processed_source)
+      def collate_corrections(report, offset:, original:)
+        corrector = Corrector.new(original)
 
         each_corrector(report) do |to_merge|
-          suppress_clobbering do
-            corrector.merge!(to_merge)
-          end
+          merge_corrector!(corrector, to_merge, offset: offset)
         end
 
         corrector
+      end
+
+      def merge_corrector!(corrector, to_merge, offset:)
+        suppress_clobbering do
+          if corrector.source_buffer == to_merge.source_buffer
+            corrector.merge!(to_merge)
+          else
+            corrector.import!(to_merge, offset: offset)
+          end
+        end
       end
 
       def each_corrector(report)
@@ -230,6 +377,8 @@ module RuboCop
 
           if cause.is_a?(Warning)
             handle_warning(cause, location)
+          elsif cause.is_a?(Force::HookError)
+            handle_error(cause.cause, location, cause.joining_cop)
           else
             handle_error(cause, location, error.cop)
           end
@@ -249,7 +398,7 @@ module RuboCop
         @errors << message
         warn message
         if debug?
-          puts error.message, error.backtrace
+          puts error.full_message
         else
           warn 'To see the complete backtrace run rubocop -d.'
         end

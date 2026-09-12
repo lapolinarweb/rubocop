@@ -8,7 +8,7 @@ RSpec.describe RuboCop::Cop::Style::EmptyCaseCondition, :config do
       expect_correction(corrected_source)
     end
 
-    let(:source_with_case) { source.sub(/case/, 'case :a').sub(/^\s*\^.*\n/, '') }
+    let(:source_with_case) { source.sub('case', 'case :a').sub(/^\s*\^.*\n/, '') }
 
     it 'accepts the source with case' do
       expect_no_offenses(source_with_case)
@@ -237,25 +237,43 @@ RSpec.describe RuboCop::Cop::Style::EmptyCaseCondition, :config do
       it_behaves_like 'detect/correct empty case, accept non-empty case'
     end
 
+    context 'with comma-delimited alternatives that bind looser than `||`' do
+      it 'parenthesizes them so the `||` keeps its meaning' do
+        expect_offense(<<~RUBY)
+          case
+          ^^^^ Do not use empty `case` condition, instead use an `if` expression.
+          when x ? a : b, c
+            something
+          end
+        RUBY
+
+        expect_correction(<<~RUBY)
+          if (x ? a : b) || c
+            something
+          end
+        RUBY
+      end
+    end
+
     context 'when used as an argument of a method without comment' do
       let(:source) do
         <<~RUBY
-          do_some_work case
-                       ^^^^ Do not use empty `case` condition, instead use an `if` expression.
-                       when object.nil?
-                         Object.new
-                       else
-                         object
-                       end
+          case
+          ^^^^ Do not use empty `case` condition, instead use an `if` expression.
+          when object.nil?
+            Object.new
+          else
+            object
+          end
         RUBY
       end
       let(:corrected_source) do
         <<~RUBY
-          do_some_work if object.nil?
-                         Object.new
-                       else
-                         object
-                       end
+          if object.nil?
+            Object.new
+          else
+            object
+          end
         RUBY
       end
 
@@ -266,27 +284,57 @@ RSpec.describe RuboCop::Cop::Style::EmptyCaseCondition, :config do
       let(:source) do
         <<~RUBY
           # example.rb
-          do_some_work case
-                       ^^^^ Do not use empty `case` condition, instead use an `if` expression.
-                       when object.nil?
-                         Object.new
-                       else
-                         object
-                       end
+          case
+          ^^^^ Do not use empty `case` condition, instead use an `if` expression.
+          when object.nil?
+            Object.new
+          else
+            object
+          end
         RUBY
       end
       let(:corrected_source) do
         <<~RUBY
           # example.rb
-          do_some_work if object.nil?
-                         Object.new
-                       else
-                         object
-                       end
+          if object.nil?
+            Object.new
+          else
+            object
+          end
         RUBY
       end
 
       it_behaves_like 'detect/correct empty case, accept non-empty case'
+    end
+
+    context 'when used as an argument of `yield`' do
+      it 'does not register an offense' do
+        expect_no_offenses(<<~RUBY)
+          def foo
+            yield case
+                  when true
+                    1
+                  else
+                    2
+                  end
+          end
+        RUBY
+      end
+    end
+
+    context 'when used as an argument of `super`' do
+      it 'does not register an offense' do
+        expect_no_offenses(<<~RUBY)
+          def foo
+            super case
+                  when true
+                    1
+                  else
+                    2
+                  end
+          end
+        RUBY
+      end
     end
 
     context 'when using `return` in `when` clause and assigning the return value of `case`' do
@@ -339,6 +387,71 @@ RSpec.describe RuboCop::Cop::Style::EmptyCaseCondition, :config do
               else
                 return 2 if foo
               end
+        RUBY
+      end
+    end
+
+    context 'when using `return` before empty case condition' do
+      it 'does not register an offense' do
+        expect_no_offenses(<<~RUBY)
+          return case
+                 when foo
+                   1
+                 else
+                   2
+                 end
+        RUBY
+      end
+    end
+
+    context 'when using `break` before empty case condition', :ruby32, unsupported_on: :prism do
+      it 'does not register an offense' do
+        expect_no_offenses(<<~RUBY)
+          break case
+                when foo
+                  1
+                else
+                  2
+                end
+        RUBY
+      end
+    end
+
+    context 'when using `next` before empty case condition', :ruby32, unsupported_on: :prism do
+      it 'does not register an offense' do
+        expect_no_offenses(<<~RUBY)
+          next case
+               when foo
+                 1
+               else
+                 2
+               end
+        RUBY
+      end
+    end
+
+    context 'when using method call before empty case condition' do
+      it 'does not register an offense' do
+        expect_no_offenses(<<~RUBY)
+          do_something case
+                       when foo
+                         1
+                       else
+                         2
+                       end
+        RUBY
+      end
+    end
+
+    context 'when using safe navigation method call before empty case condition' do
+      it 'does not register an offense' do
+        expect_no_offenses(<<~RUBY)
+          obj&.do_something case
+                            when foo
+                              1
+                            else
+                              2
+                            end
         RUBY
       end
     end

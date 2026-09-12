@@ -4,11 +4,20 @@ module RuboCop
   # The kind of Ruby that code inspected by RuboCop is written in.
   # @api private
   class TargetRuby
-    KNOWN_RUBIES = [2.5, 2.6, 2.7, 3.0, 3.1].freeze
-    DEFAULT_VERSION = KNOWN_RUBIES.first
+    KNOWN_RUBIES = [
+      2.0, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 3.0, 3.1, 3.2, 3.3, 3.4, 4.0, 4.1
+    ].freeze
+    DEFAULT_VERSION = 2.7
 
     OBSOLETE_RUBIES = {
-      1.9 => '0.41', 2.0 => '0.50', 2.1 => '0.57', 2.2 => '0.68', 2.3 => '0.81', 2.4 => '1.12'
+      1.9 => '0.41',
+      2.0 => '0.50',
+      2.1 => '0.57',
+      2.2 => '0.68',
+      2.3 => '0.81',
+      2.4 => '1.12',
+      2.5 => '1.28',
+      2.6 => '1.50'
     }.freeze
     private_constant :KNOWN_RUBIES, :OBSOLETE_RUBIES
 
@@ -27,6 +36,20 @@ module RuboCop
       end
     end
 
+    # The target ruby version may be configured by setting the
+    # `RUBOCOP_TARGET_RUBY_VERSION` environment variable.
+    class RuboCopEnvVar < Source
+      def name
+        '`RUBOCOP_TARGET_RUBY_VERSION` environment variable'
+      end
+
+      private
+
+      def find_version
+        ENV.fetch('RUBOCOP_TARGET_RUBY_VERSION', nil)&.to_f
+      end
+    end
+
     # The target ruby version may be configured in RuboCop's config.
     # @api private
     class RuboCopConfig < Source
@@ -41,24 +64,114 @@ module RuboCop
       end
     end
 
+    # The target ruby version may be found in a .gemspec file.
+    # @api private
+    class GemspecFile < Source
+      extend NodePattern::Macros
+
+      # @!method required_ruby_version(node)
+      def_node_search :required_ruby_version, <<~PATTERN
+        (send _ :required_ruby_version= $_)
+      PATTERN
+
+      # @!method gem_requirement_versions(node)
+      def_node_matcher :gem_requirement_versions, <<~PATTERN
+        (send (const(const _ :Gem):Requirement) :new
+          {$str+ | (send $str :freeze)+ | (array $str+) | (array (send $str :freeze)+)}
+        )
+      PATTERN
+
+      def name
+        "`required_ruby_version` parameter (in #{gemspec_filepath})"
+      end
+
+      private
+
+      def find_version
+        file = gemspec_filepath
+        return unless file && File.file?(file)
+
+        right_hand_side = version_from_gemspec_file(file)
+        return if right_hand_side.nil?
+
+        find_minimal_known_ruby(right_hand_side)
+      end
+
+      def gemspec_filepath
+        return @gemspec_filepath if defined?(@gemspec_filepath)
+
+        @gemspec_filepath =
+          @config.traverse_directories_upwards(@config.base_dir_for_path_parameters) do |dir|
+            # NOTE: Can't use `dir.glob` because of JRuby 9.4.8.0 incompatibility:
+            # https://github.com/jruby/jruby/issues/8358
+            candidates = Pathname.glob("#{dir}/*.gemspec")
+            # Bundler will use a gemspec whatever the filename is, as long as its the only one in
+            # the folder.
+            break candidates.first if candidates.one?
+          end
+      end
+
+      def version_from_gemspec_file(file)
+        # When using parser_prism, we need to use a Ruby version that Prism supports (3.3+)
+        # for parsing the gemspec file. This doesn't affect the detected Ruby version,
+        # it's just for the parsing step.
+        ruby_version_for_parsing = if @config.parser_engine == :parser_prism
+                                     3.3
+                                   else
+                                     DEFAULT_VERSION
+                                   end
+
+        processed_source = ProcessedSource.from_file(
+          file, ruby_version_for_parsing, parser_engine: @config.parser_engine
+        )
+        return unless processed_source.valid_syntax?
+
+        required_ruby_version(processed_source.ast).first
+      end
+
+      def version_from_right_hand_side(right_hand_side)
+        gem_requirement_versions = gem_requirement_versions(right_hand_side)
+
+        if right_hand_side.array_type? && right_hand_side.children.all?(&:str_type?)
+          version_from_array(right_hand_side)
+        elsif gem_requirement_versions
+          gem_requirement_versions.map(&:value)
+        elsif right_hand_side.str_type?
+          right_hand_side.value
+        end
+      end
+
+      def version_from_array(array)
+        array.children.map(&:value)
+      end
+
+      def find_minimal_known_ruby(right_hand_side)
+        version = version_from_right_hand_side(right_hand_side)
+        return unless version
+
+        requirement = Gem::Requirement.new(version)
+
+        KNOWN_RUBIES.detect do |v|
+          requirement.satisfied_by?(Gem::Version.new("#{v}.99"))
+        end
+      end
+    end
+
     # The target ruby version may be found in a .ruby-version file.
     # @api private
     class RubyVersionFile < Source
-      RUBY_VERSION_FILENAME = '.ruby-version'
-      RUBY_VERSION_PATTERN = /\A(?:ruby-)?(?<version>\d+\.\d+)/.freeze
-
       def name
-        "`#{RUBY_VERSION_FILENAME}`"
+        "`#{filename}`"
       end
 
       private
 
       def filename
-        RUBY_VERSION_FILENAME
+        '.ruby-version'
       end
 
       def pattern
-        RUBY_VERSION_PATTERN
+        /\A(?:ruby-)?(?<version>\d+\.\d+)/.freeze
       end
 
       def find_version
@@ -77,21 +190,29 @@ module RuboCop
     # starting with `ruby`.
     # @api private
     class ToolVersionsFile < RubyVersionFile
-      TOOL_VERSIONS_FILENAME = '.tool-versions'
-      TOOL_VERSIONS_PATTERN = /\Aruby (?:ruby-)?(?<version>\d+\.\d+)/.freeze
-
-      def name
-        "`#{TOOL_VERSIONS_FILENAME}`"
-      end
-
       private
 
       def filename
-        TOOL_VERSIONS_FILENAME
+        '.tool-versions'
       end
 
       def pattern
-        TOOL_VERSIONS_PATTERN
+        /^(?:ruby )(?<version>\d+\.\d+)/.freeze
+      end
+    end
+
+    # The target ruby version may be found in a mise.toml file, in a line
+    # starting with `ruby = "`.
+    # @api private
+    class MiseTomlFile < RubyVersionFile
+      private
+
+      def filename
+        'mise.toml'
+      end
+
+      def pattern
+        /^ruby = ["'](?<version>\d+\.\d+)/.freeze
       end
     end
 
@@ -136,78 +257,6 @@ module RuboCop
       end
     end
 
-    # The target ruby version may be found in a .gemspec file.
-    # @api private
-    class GemspecFile < Source
-      extend NodePattern::Macros
-
-      GEMSPEC_EXTENSION = '.gemspec'
-
-      # @!method required_ruby_version(node)
-      def_node_search :required_ruby_version, <<~PATTERN
-        (send _ :required_ruby_version= $_)
-      PATTERN
-
-      # @!method gem_requirement?(node)
-      def_node_matcher :gem_requirement?, <<~PATTERN
-        (send (const(const _ :Gem):Requirement) :new $str)
-      PATTERN
-
-      def name
-        "`required_ruby_version` parameter (in #{gemspec_filename})"
-      end
-
-      private
-
-      def find_version
-        file = gemspec_filepath
-        return unless file && File.file?(file)
-
-        right_hand_side = version_from_gemspec_file(file)
-        return if right_hand_side.nil?
-
-        find_minimal_known_ruby(right_hand_side)
-      end
-
-      def gemspec_filename
-        @gemspec_filename ||= begin
-          basename = Pathname.new(@config.base_dir_for_path_parameters).basename.to_s
-          "#{basename}#{GEMSPEC_EXTENSION}"
-        end
-      end
-
-      def gemspec_filepath
-        @gemspec_filepath ||=
-          @config.find_file_upwards(gemspec_filename, @config.base_dir_for_path_parameters)
-      end
-
-      def version_from_gemspec_file(file)
-        processed_source = ProcessedSource.from_file(file, DEFAULT_VERSION)
-        required_ruby_version(processed_source.ast).first
-      end
-
-      def version_from_right_hand_side(right_hand_side)
-        if right_hand_side.array_type?
-          version_from_array(right_hand_side)
-        elsif gem_requirement?(right_hand_side)
-          right_hand_side.children.last.value
-        else
-          right_hand_side.value
-        end
-      end
-
-      def version_from_array(array)
-        array.children.map(&:value)
-      end
-
-      def find_minimal_known_ruby(right_hand_side)
-        version = version_from_right_hand_side(right_hand_side)
-        requirement = Gem::Requirement.new(version)
-
-        KNOWN_RUBIES.detect { |v| requirement.satisfied_by?(Gem::Version.new("#{v}.99")) }
-      end
-    end
-
     # If all else fails, a default version will be picked.
     # @api private
     class Default < Source
@@ -227,16 +276,17 @@ module RuboCop
     end
 
     SOURCES = [
+      RuboCopEnvVar,
       RuboCopConfig,
+      GemspecFile,
       RubyVersionFile,
+      MiseTomlFile,
       ToolVersionsFile,
       BundlerLockFile,
-      GemspecFile,
       Default
     ].freeze
 
     private_constant :SOURCES
-
     def initialize(config)
       @config = config
     end
@@ -255,7 +305,7 @@ module RuboCop
 
     def rubocop_version_with_support
       if supported?
-        RuboCop::Version.version
+        RuboCop::Version::STRING
       else
         OBSOLETE_RUBIES[version]
       end

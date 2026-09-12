@@ -7,9 +7,21 @@ RSpec.describe RuboCop::ConfigObsoletion do
 
   let(:configuration) { RuboCop::Config.new(hash, loaded_path) }
   let(:loaded_path) { 'example/.rubocop.yml' }
+  let(:plugin_names) { [] }
+  let(:plugins) { plugin_names.map { |name| plugin_stub(name) } }
   let(:requires) { [] }
 
-  before { allow(configuration).to receive(:loaded_features).and_return(requires) }
+  def plugin_stub(name)
+    about = Struct.new(:name).new(name)
+    Struct.new(:about).new(about)
+  end
+
+  before do
+    allow(configuration).to receive_messages(loaded_plugins: plugins, loaded_features: requires)
+    described_class.files = [described_class::DEFAULT_RULES_FILE]
+  end
+
+  after { described_class.files = [described_class::DEFAULT_RULES_FILE] }
 
   describe '#validate', :isolated_environment do
     context 'when the configuration includes any obsolete cop name' do
@@ -163,8 +175,6 @@ RSpec.describe RuboCop::ConfigObsoletion do
           (obsolete configuration found in example/.rubocop.yml, please update it)
           The `Style/OpMethod` cop has been renamed to `Naming/BinaryOperatorParameterName`.
           (obsolete configuration found in example/.rubocop.yml, please update it)
-          The `Style/PredicateName` cop has been moved to `Naming/PredicateName`.
-          (obsolete configuration found in example/.rubocop.yml, please update it)
           The `Style/SingleSpaceBeforeFirstArg` cop has been renamed to `Layout/SpaceBeforeFirstArg`.
           (obsolete configuration found in example/.rubocop.yml, please update it)
           The `Style/UnneededCapitalW` cop has been renamed to `Style/RedundantCapitalW`.
@@ -208,11 +218,39 @@ RSpec.describe RuboCop::ConfigObsoletion do
         OUTPUT
       end
 
+      let(:expected_warnings) do
+        [
+          <<~OUTPUT.chomp
+            The `Style/PredicateName` cop has been renamed to `Naming/PredicatePrefix`.
+            (obsolete configuration found in example/.rubocop.yml, please update it)
+          OUTPUT
+        ]
+      end
+
       it 'prints a warning message' do
         config_obsoletion.reject_obsolete!
         raise 'Expected a RuboCop::ValidationError'
       rescue RuboCop::ValidationError => e
-        expect(expected_message).to eq(e.message)
+        expect(e.message).to eq(expected_message)
+        expect(config_obsoletion.warnings).to eq(expected_warnings)
+      end
+    end
+
+    context 'when the configuration includes a removed cop that only warns' do
+      let(:hash) { { 'Style/DoubleCopDisableDirective' => { Enabled: true } } }
+
+      let(:expected_warnings) do
+        [
+          <<~OUTPUT.chomp
+            The `Style/DoubleCopDisableDirective` cop has been removed since it has been superseded by `Lint/CopDirectiveSyntax`. Please use `Lint/CopDirectiveSyntax` instead.
+            (obsolete configuration found in example/.rubocop.yml, please update it)
+          OUTPUT
+        ]
+      end
+
+      it 'warns instead of failing' do
+        expect { config_obsoletion.reject_obsolete! }.not_to raise_error
+        expect(config_obsoletion.warnings).to eq(expected_warnings)
       end
     end
 
@@ -224,6 +262,32 @@ RSpec.describe RuboCop::ConfigObsoletion do
           'Rails/Date' => { Enabled: true },
           'Rails/DynamicFindBy' => { Enabled: true }
         }
+      end
+
+      context 'when the plugin extensions are loaded' do
+        let(:plugin_names) { %w[rubocop-rails rubocop-performance] }
+
+        it 'does not print a warning message' do
+          expect { config_obsoletion.reject_obsolete! }.not_to raise_error
+        end
+      end
+
+      context 'when only one plugin extension is loaded' do
+        let(:plugin_names) { %w[rubocop-performance] }
+
+        let(:expected_message) do
+          <<~OUTPUT.chomp
+            `Rails` cops have been extracted to the `rubocop-rails` gem.
+            (obsolete configuration found in example/.rubocop.yml, please update it)
+          OUTPUT
+        end
+
+        it 'prints a warning message' do
+          config_obsoletion.reject_obsolete!
+          raise 'Expected a RuboCop::ValidationError'
+        rescue RuboCop::ValidationError => e
+          expect(e.message).to eq(expected_message)
+        end
       end
 
       context 'when the extensions are loaded' do
@@ -248,7 +312,7 @@ RSpec.describe RuboCop::ConfigObsoletion do
           config_obsoletion.reject_obsolete!
           raise 'Expected a RuboCop::ValidationError'
         rescue RuboCop::ValidationError => e
-          expect(expected_message).to eq(e.message)
+          expect(e.message).to eq(expected_message)
         end
       end
 
@@ -262,18 +326,24 @@ RSpec.describe RuboCop::ConfigObsoletion do
           OUTPUT
         end
 
-        # FIXME: Workaround for the following random failure test.
-        # https://app.circleci.com/pipelines/github/rubocop/rubocop/5075/workflows/758481f3-39fa-4a89-9fb2-c6e78d3b4ff8/jobs/194419
-        xit 'prints a warning message' do
+        it 'prints a warning message' do
           config_obsoletion.reject_obsolete!
           raise 'Expected a RuboCop::ValidationError'
         rescue RuboCop::ValidationError => e
-          expect(expected_message).to eq(e.message)
+          expect(e.message).to eq(expected_message)
         end
       end
     end
 
     context 'when the extensions are loaded via inherit_gem', :restore_registry do
+      include_context 'mock console output'
+
+      # Resolving the inherited gem config requires `rubocop-performance` in-process,
+      # which may only lazily register its cops (rubocop-performance 1.27+). Load them while
+      # the temporary global registry is still in place, so that their deferred class definitions
+      # cannot fire later and enlist into the frozen global registry.
+      after { RuboCop::Cop::Registry.global.load_all_lazy_cops }
+
       let(:resolver) { RuboCop::ConfigLoaderResolver.new }
       let(:gem_root) { File.expand_path('gems') }
 
@@ -388,22 +458,99 @@ RSpec.describe RuboCop::ConfigObsoletion do
         OUTPUT
       end
 
-      it 'prints a error message' do
+      it 'prints an error message' do
         config_obsoletion.reject_obsolete!
         raise 'Expected a RuboCop::ValidationError'
       rescue RuboCop::ValidationError => e
-        expect(expected_message).to eq(e.message)
+        expect(e.message).to eq(expected_message)
+      end
+    end
+
+    context 'when the configuration includes deprecated parameters for the TargetRubyVersion' do
+      let(:hash) do
+        {
+          'AllCops' => { 'TargetRubyVersion' => target_ruby_version },
+          **cop_config
+        }
+      end
+      let(:warning_message) { config_obsoletion.warnings.join("\n") }
+
+      context 'with Style/ArgumentsForwarding AllowOnlyRestArgument' do
+        let(:cop_config) do
+          { 'Style/ArgumentsForwarding' => { 'AllowOnlyRestArgument' => false } }
+        end
+
+        context 'with TargetRubyVersion 3.2' do
+          let(:target_ruby_version) { 3.2 }
+
+          it 'prints a warning message' do
+            expected_message = <<~OUTPUT.chomp
+              obsolete parameter `AllowOnlyRestArgument` (for `Style/ArgumentsForwarding`) found in example/.rubocop.yml
+              `AllowOnlyRestArgument` has no effect with TargetRubyVersion >= 3.2.
+            OUTPUT
+
+            expect { config_obsoletion.reject_obsolete! }.not_to raise_error
+            expect(warning_message).to eq(expected_message)
+          end
+        end
+
+        context 'with TargetRubyVersion 3.1' do
+          let(:target_ruby_version) { 3.1 }
+
+          it 'does not print a warning message' do
+            expect { config_obsoletion.reject_obsolete! }.not_to raise_error
+            expect(warning_message).to eq('')
+          end
+        end
       end
     end
 
     context 'when the configuration includes any deprecated parameters' do
       let(:hash) do
         {
+          'Lint/AmbiguousBlockAssociation' => {
+            'IgnoredMethods' => %w[foo bar]
+          },
+          'Lint/NumberConversion' => {
+            'IgnoredMethods' => %w[foo bar]
+          },
+          'Metrics/AbcSize' => {
+            'IgnoredMethods' => %w[foo bar]
+          },
           'Metrics/BlockLength' => {
-            'ExcludedMethods' => %w[foo bar]
+            'ExcludedMethods' => %w[foo bar],
+            'IgnoredMethods' => %w[foo bar]
+          },
+          'Metrics/CyclomaticComplexity' => {
+            'IgnoredMethods' => %w[foo bar]
           },
           'Metrics/MethodLength' => {
-            'ExcludedMethods' => %w[foo bar]
+            'ExcludedMethods' => %w[foo bar],
+            'IgnoredMethods' => %w[foo bar]
+          },
+          'Metrics/PerceivedComplexity' => {
+            'IgnoredMethods' => %w[foo bar]
+          },
+          'Style/BlockDelimiters' => {
+            'IgnoredMethods' => %w[foo bar]
+          },
+          'Style/ClassEqualityComparison' => {
+            'IgnoredMethods' => %w[foo bar]
+          },
+          'Style/FormatStringToken' => {
+            'IgnoredMethods' => %w[foo bar]
+          },
+          'Style/MethodCallWithArgsParentheses' => {
+            'IgnoredMethods' => %w[foo bar]
+          },
+          'Style/MethodCallWithoutArgsParentheses' => {
+            'IgnoredMethods' => %w[foo bar]
+          },
+          'Style/NumericPredicate' => {
+            'IgnoredMethods' => %w[foo bar]
+          },
+          'Style/SymbolLiteral' => {
+            'IgnoredMethods' => %w[foo bar]
           }
         }
       end
@@ -413,9 +560,37 @@ RSpec.describe RuboCop::ConfigObsoletion do
       let(:expected_message) do
         <<~OUTPUT.chomp
           obsolete parameter `ExcludedMethods` (for `Metrics/BlockLength`) found in example/.rubocop.yml
-          `ExcludedMethods` has been renamed to `IgnoredMethods`.
+          `ExcludedMethods` has been renamed to `AllowedMethods` and/or `AllowedPatterns`.
           obsolete parameter `ExcludedMethods` (for `Metrics/MethodLength`) found in example/.rubocop.yml
-          `ExcludedMethods` has been renamed to `IgnoredMethods`.
+          `ExcludedMethods` has been renamed to `AllowedMethods` and/or `AllowedPatterns`.
+          obsolete parameter `IgnoredMethods` (for `Lint/AmbiguousBlockAssociation`) found in example/.rubocop.yml
+          `IgnoredMethods` has been renamed to `AllowedMethods` and/or `AllowedPatterns`.
+          obsolete parameter `IgnoredMethods` (for `Lint/NumberConversion`) found in example/.rubocop.yml
+          `IgnoredMethods` has been renamed to `AllowedMethods` and/or `AllowedPatterns`.
+          obsolete parameter `IgnoredMethods` (for `Metrics/AbcSize`) found in example/.rubocop.yml
+          `IgnoredMethods` has been renamed to `AllowedMethods` and/or `AllowedPatterns`.
+          obsolete parameter `IgnoredMethods` (for `Metrics/BlockLength`) found in example/.rubocop.yml
+          `IgnoredMethods` has been renamed to `AllowedMethods` and/or `AllowedPatterns`.
+          obsolete parameter `IgnoredMethods` (for `Metrics/CyclomaticComplexity`) found in example/.rubocop.yml
+          `IgnoredMethods` has been renamed to `AllowedMethods` and/or `AllowedPatterns`.
+          obsolete parameter `IgnoredMethods` (for `Metrics/MethodLength`) found in example/.rubocop.yml
+          `IgnoredMethods` has been renamed to `AllowedMethods` and/or `AllowedPatterns`.
+          obsolete parameter `IgnoredMethods` (for `Metrics/PerceivedComplexity`) found in example/.rubocop.yml
+          `IgnoredMethods` has been renamed to `AllowedMethods` and/or `AllowedPatterns`.
+          obsolete parameter `IgnoredMethods` (for `Style/BlockDelimiters`) found in example/.rubocop.yml
+          `IgnoredMethods` has been renamed to `AllowedMethods` and/or `AllowedPatterns`.
+          obsolete parameter `IgnoredMethods` (for `Style/ClassEqualityComparison`) found in example/.rubocop.yml
+          `IgnoredMethods` has been renamed to `AllowedMethods` and/or `AllowedPatterns`.
+          obsolete parameter `IgnoredMethods` (for `Style/FormatStringToken`) found in example/.rubocop.yml
+          `IgnoredMethods` has been renamed to `AllowedMethods` and/or `AllowedPatterns`.
+          obsolete parameter `IgnoredMethods` (for `Style/MethodCallWithArgsParentheses`) found in example/.rubocop.yml
+          `IgnoredMethods` has been renamed to `AllowedMethods` and/or `AllowedPatterns`.
+          obsolete parameter `IgnoredMethods` (for `Style/MethodCallWithoutArgsParentheses`) found in example/.rubocop.yml
+          `IgnoredMethods` has been renamed to `AllowedMethods` and/or `AllowedPatterns`.
+          obsolete parameter `IgnoredMethods` (for `Style/NumericPredicate`) found in example/.rubocop.yml
+          `IgnoredMethods` has been renamed to `AllowedMethods` and/or `AllowedPatterns`.
+          obsolete parameter `IgnoredMethods` (for `Style/SymbolLiteral`) found in example/.rubocop.yml
+          `IgnoredMethods` has been renamed to `AllowedMethods` and/or `AllowedPatterns`.
         OUTPUT
       end
 
@@ -425,9 +600,41 @@ RSpec.describe RuboCop::ConfigObsoletion do
       end
     end
 
-    context 'when additional obsoletions are defined externally' do
-      after { described_class.files = [described_class::DEFAULT_RULES_FILE] }
+    context 'when the configuration includes parameters renamed for consistency' do
+      let(:hash) do
+        {
+          'Bundler/GemComment' => { 'IgnoredGems' => %w[rake] },
+          'Lint/MissingCopEnableDirective' => { 'MaximumRangeSize' => 2 },
+          'Lint/NumberConversion' => { 'IgnoredClasses' => %w[Time] },
+          'Metrics/CollectionLiteralLength' => { 'LengthThreshold' => 100 },
+          'Style/FetchEnvVar' => { 'AllowedVars' => %w[FOO] }
+        }
+      end
 
+      let(:warning_message) { config_obsoletion.warnings.join("\n") }
+
+      let(:expected_message) do
+        <<~OUTPUT.chomp
+          obsolete parameter `IgnoredGems` (for `Bundler/GemComment`) found in example/.rubocop.yml
+          `IgnoredGems` has been renamed to `AllowedGems`.
+          obsolete parameter `IgnoredClasses` (for `Lint/NumberConversion`) found in example/.rubocop.yml
+          `IgnoredClasses` has been renamed to `AllowedClasses`.
+          obsolete parameter `MaximumRangeSize` (for `Lint/MissingCopEnableDirective`) found in example/.rubocop.yml
+          `MaximumRangeSize` has been renamed to `MaxRangeSize`.
+          obsolete parameter `LengthThreshold` (for `Metrics/CollectionLiteralLength`) found in example/.rubocop.yml
+          `LengthThreshold` has been renamed to `Max`.
+          obsolete parameter `AllowedVars` (for `Style/FetchEnvVar`) found in example/.rubocop.yml
+          `AllowedVars` has been renamed to `AllowedVariables`.
+        OUTPUT
+      end
+
+      it 'prints a warning message and does not raise' do
+        expect { config_obsoletion.reject_obsolete! }.not_to raise_error
+        expect(warning_message).to eq(expected_message)
+      end
+    end
+
+    context 'when additional obsoletions are defined externally' do
       let(:hash) do
         {
           'Foo/Bar' => { Enabled: true },
@@ -438,7 +645,7 @@ RSpec.describe RuboCop::ConfigObsoletion do
         }
       end
 
-      let(:file1) do
+      let(:file_with_renamed_config) do
         create_file('obsoletions1.yml', <<~YAML)
           renamed:
             Foo/Bar: Foo/Baz
@@ -446,7 +653,7 @@ RSpec.describe RuboCop::ConfigObsoletion do
         YAML
       end
 
-      let(:file2) do
+      let(:file_with_removed_and_split_config) do
         create_file('obsoletions2.yml', <<~YAML)
           removed:
             Legacy/Test:
@@ -458,6 +665,12 @@ RSpec.describe RuboCop::ConfigObsoletion do
               alternatives:
                 - Style/One
                 - Style/Two
+        YAML
+      end
+
+      let(:file_with_comments_only) do
+        create_file('obsoletions3.yml', <<~YAML)
+          # Placeholder for eventual obsoletions, so we can hook up the file regardless
         YAML
       end
 
@@ -477,21 +690,20 @@ RSpec.describe RuboCop::ConfigObsoletion do
       end
 
       it 'includes obsoletions from all sources' do
-        described_class.files << file1
-        described_class.files << file2
+        described_class.files << file_with_renamed_config
+        described_class.files << file_with_removed_and_split_config
+        described_class.files << file_with_comments_only
 
         begin
           config_obsoletion.reject_obsolete!
           raise 'Expected a RuboCop::ValidationError'
         rescue RuboCop::ValidationError => e
-          expect(expected_message).to eq(e.message)
+          expect(e.message).to eq(expected_message)
         end
       end
     end
 
     context 'when extractions are disabled by an external library' do
-      after { described_class.files = [described_class::DEFAULT_RULES_FILE] }
-
       let(:hash) { { 'Performance/CollectionLiteralInLoop' => { Enabled: true } } }
 
       let(:external_obsoletions) do
@@ -505,6 +717,75 @@ RSpec.describe RuboCop::ConfigObsoletion do
         described_class.files << external_obsoletions
 
         expect { config_obsoletion.reject_obsolete! }.not_to raise_error
+      end
+    end
+
+    context 'when using `changed_parameters` by an external library' do
+      let(:hash) { {} }
+      let(:external_obsoletions) do
+        create_file('external/obsoletions.yml', <<~YAML)
+          changed_parameters:
+            - cops: Rails/FindEach
+              parameters: IgnoredMethods
+              alternatives:
+                - AllowedMethods
+                - AllowedPatterns
+              severity: warning
+        YAML
+      end
+
+      it 'allows the extracted cops' do
+        described_class.files << external_obsoletions
+
+        expect { config_obsoletion.reject_obsolete! }.not_to raise_error
+      end
+    end
+  end
+
+  describe '.deprecated_cop_name?' do
+    RSpec::Matchers.alias_matcher(:have_deprecated_cop_name, :be_deprecated_cop_name)
+
+    it 'returns true for a cop name that is deprecated' do
+      expect(described_class).to have_deprecated_cop_name('Layout/AlignArguments')
+    end
+
+    it 'returns true for a cop name that is not deprecated' do
+      expect(described_class).not_to have_deprecated_cop_name('Layout/ArgumentAlignment')
+    end
+
+    it 'returns true for a cop name that is unknown' do
+      expect(described_class).not_to have_deprecated_cop_name('Foo/Bar')
+    end
+  end
+
+  describe '.deprecated_names_for', :isolated_environment, :mock_obsoletion do
+    before do
+      create_file(obsoletion_configuration_path, <<~YAML)
+        renamed:
+          Layout/AlignArguments: Layout/ArgumentAlignment
+          Style/PredicateName: Naming/PredicatePrefix
+          Naming/PredicateName: Naming/PredicatePrefix
+      YAML
+    end
+
+    context 'when a cop has been moved once' do
+      it 'returns the deprecated name for a cop' do
+        described_class.deprecated_names_for('Layout/ArgumentAlignment')
+        expect(described_class.deprecated_names_for('Layout/ArgumentAlignment'))
+          .to contain_exactly('Layout/AlignArguments')
+      end
+    end
+
+    context 'when a cop has been moved multiple times' do
+      it 'returns the deprecated names for a cop' do
+        expect(described_class.deprecated_names_for('Naming/PredicatePrefix'))
+          .to contain_exactly('Style/PredicateName', 'Naming/PredicateName')
+      end
+    end
+
+    context 'when a cop has not been moved' do
+      it 'returns an empty array' do
+        expect(described_class.deprecated_names_for('Foo/Bar')).to be_empty
       end
     end
   end

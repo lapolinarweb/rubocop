@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Lint
-      # This cop checks for a block that is known to need more positional
+      # Checks for a block that is known to need more positional
       # block arguments than are given (by default this is configured for
       # `Enumerable` methods needing 2 arguments). Optional arguments are allowed,
       # although they don't generally make sense as the default value will
@@ -53,6 +53,7 @@ module RuboCop
         end
 
         alias on_numblock on_block
+        alias on_itblock on_block
 
         private
 
@@ -74,6 +75,7 @@ module RuboCop
 
         def arg_count(node)
           return node.children[1] if node.numblock_type? # the maximum numbered param for the block
+          return 1 if node.itblock_type? # `it` block parameter is always one
 
           # Only `arg`, `optarg` and `mlhs` (destructuring) count as arguments that
           # can be used. Keyword arguments are not used for these methods so are
@@ -81,7 +83,7 @@ module RuboCop
           node.arguments.count do |arg|
             return Float::INFINITY if arg.restarg_type?
 
-            arg.arg_type? || arg.optarg_type? || arg.mlhs_type?
+            arg.type?(:arg, :optarg, :mlhs)
           end
         end
       end

@@ -3,9 +3,13 @@
 module RuboCop
   module Cop
     module Style
+      # Looks for uses of Perl-style global variables.
+      # Perl-style global variables like `$;` or `$/` are cryptic
+      # and hard to understand without consulting documentation.
+      # The `English` library provides descriptive aliases like
+      # `$FIELD_SEPARATOR` and `$INPUT_RECORD_SEPARATOR`.
       #
-      # This cop looks for uses of Perl-style global variables.
-      # Correcting to global variables in the 'English' library
+      # Correcting to global variables in the `English` library
       # will add a require statement to the top of the file if
       # enabled by RequireEnglish config.
       #
@@ -57,6 +61,33 @@ module RuboCop
       #   puts $=
       #   puts $*
       #
+      # @example EnforcedStyle: use_builtin_english_names
+      #
+      #   # good
+      #   # Like `use_perl_names` but allows builtin global vars.
+      #   puts $LOAD_PATH
+      #   puts $LOADED_FEATURES
+      #   puts $PROGRAM_NAME
+      #   puts ARGV
+      #   puts $:
+      #   puts $"
+      #   puts $0
+      #   puts $!
+      #   puts $@
+      #   puts $;
+      #   puts $,
+      #   puts $/
+      #   puts $\
+      #   puts $.
+      #   puts $_
+      #   puts $>
+      #   puts $<
+      #   puts $$
+      #   puts $?
+      #   puts $~
+      #   puts $=
+      #   puts $*
+      #
       class SpecialGlobalVars < Base
         include ConfigurableEnforcedStyle
         include RangeHelp
@@ -70,7 +101,7 @@ module RuboCop
                       'module (don\'t forget to require it) over `%<global>s`.'
         MSG_REGULAR = 'Prefer `%<prefer>s` over `%<global>s`.'
 
-        ENGLISH_VARS = { # rubocop:disable Style/MutableConstant
+        ENGLISH_VARS = { # rubocop:disable Style/MutableConstant -- merged into below, then frozen
           :$: => [:$LOAD_PATH],
           :$" => [:$LOADED_FEATURES],
           :$0 => [:$PROGRAM_NAME],
@@ -91,27 +122,46 @@ module RuboCop
           :$* => %i[$ARGV ARGV]
         }
 
+        # Anything *not* in this set is provided by the English library.
+        NON_ENGLISH_VARS = Set.new(%i[$LOAD_PATH $LOADED_FEATURES $PROGRAM_NAME ARGV]).freeze
+
         PERL_VARS = ENGLISH_VARS.flat_map { |k, vs| vs.map { |v| [v, [k]] } }.to_h
 
         ENGLISH_VARS.merge!(ENGLISH_VARS.flat_map { |_, vs| vs.map { |v| [v, [v]] } }.to_h)
         PERL_VARS.merge!(PERL_VARS.flat_map { |_, vs| vs.map { |v| [v, [v]] } }.to_h)
+        BUILTIN_VARS = PERL_VARS.merge(
+          NON_ENGLISH_VARS
+            .select { |v| v.to_s.start_with?('$') }
+            .flat_map { |v| [[v, [v]], PERL_VARS[v].flat_map { |a| [a, [v]] }] }
+            .to_h
+        )
+
         ENGLISH_VARS.each_value(&:freeze).freeze
         PERL_VARS.each_value(&:freeze).freeze
+        BUILTIN_VARS.each_value(&:freeze).freeze
 
-        # Anything *not* in this set is provided by the English library.
-        NON_ENGLISH_VARS = Set.new(%i[$LOAD_PATH $LOADED_FEATURES $PROGRAM_NAME ARGV]).freeze
+        STYLE_VARS_MAP = {
+          use_english_names: ENGLISH_VARS,
+          use_perl_names: PERL_VARS,
+          use_builtin_english_names: BUILTIN_VARS
+        }.freeze
 
         LIBRARY_NAME = 'English'
 
+        def on_new_investigation
+          super
+          @required_english = false
+        end
+
         def on_gvar(node)
-          global_var, = *node
+          global_var = node.name
 
           return unless (preferred = preferred_names(global_var))
 
           if preferred.include?(global_var)
             correct_style_detected
           else
-            opposite_style_detected
+            style_detected(matching_styles(global_var))
 
             add_offense(node, message: message(global_var)) do |corrector|
               autocorrect(corrector, node, global_var)
@@ -130,7 +180,11 @@ module RuboCop
         def autocorrect(corrector, node, global_var)
           node = node.parent while node.parent&.begin_type? && node.parent.children.one?
 
-          ensure_required(corrector, node, LIBRARY_NAME) if should_require_english?(global_var)
+          if should_require_english?(global_var)
+            ensure_required(corrector, node, LIBRARY_NAME)
+
+            @required_english = true
+          end
 
           corrector.replace(node, replacement(node, global_var))
         end
@@ -175,10 +229,16 @@ module RuboCop
         end
 
         def preferred_names(global)
-          if style == :use_english_names
-            ENGLISH_VARS[global]
-          else
-            PERL_VARS[global]
+          vars = STYLE_VARS_MAP.fetch(style) do
+            raise ArgumentError, "Invalid style: #{style.inspect}"
+          end
+
+          vars[global]
+        end
+
+        def matching_styles(global)
+          STYLE_VARS_MAP.filter_map do |style, vars|
+            style if vars.values.flatten(1).include? global
           end
         end
 
@@ -195,6 +255,7 @@ module RuboCop
         def should_require_english?(global_var)
           style == :use_english_names &&
             add_require_english? &&
+            !@required_english &&
             !NON_ENGLISH_VARS.include?(preferred_names(global_var).first)
         end
       end

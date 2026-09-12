@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Style
-      # This cop enforces the use of shorthand-style swapping of 2 variables.
+      # Enforces the use of shorthand-style swapping of 2 variables.
       #
       # @safety
       #   Autocorrection is unsafe, because the temporary variable used to
@@ -22,7 +22,7 @@ module RuboCop
         include RangeHelp
         extend AutoCorrector
 
-        MSG = 'Replace this and assignments at lines %<x_line>d '\
+        MSG = 'Replace this and assignments at lines %<x_line>d ' \
               'and %<y_line>d with `%<replacement>s`.'
 
         SIMPLE_ASSIGNMENT_TYPES = %i[lvasgn ivasgn cvasgn gvasgn casgn].to_set.freeze
@@ -58,6 +58,8 @@ module RuboCop
         end
 
         def simple_assignment?(node)
+          return false unless node.respond_to?(:type)
+
           SIMPLE_ASSIGNMENT_TYPES.include?(node.type)
         end
 
@@ -77,26 +79,15 @@ module RuboCop
         end
 
         def lhs(node)
-          case node.type
-          when :casgn
-            namespace, name, = *node
-            if namespace
-              "#{namespace.const_name}::#{name}"
-            else
-              name.to_s
-            end
+          if node.casgn_type?
+            "#{'::' if node.absolute?}#{node.const_name}"
           else
-            node.children[0].to_s
+            node.name.to_s
           end
         end
 
         def rhs(node)
-          case node.type
-          when :casgn
-            node.children[2].source
-          else
-            node.children[1].source
-          end
+          node.expression.source
         end
 
         def correction_range(tmp_assign, y_assign)

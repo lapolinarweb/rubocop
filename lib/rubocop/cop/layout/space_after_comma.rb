@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Layout
-      # Checks for comma (,) not followed by some kind of space.
+      # Checks for comma (`,`) not followed by some kind of space.
       #
       # @example
       #
@@ -23,8 +23,8 @@ module RuboCop
           cfg['EnforcedStyle'] || 'space'
         end
 
-        def kind(token)
-          'comma' if token.comma?
+        def kind(token, next_token)
+          'comma' if token.comma? && !next_token.semicolon?
         end
       end
     end

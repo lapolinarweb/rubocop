@@ -17,8 +17,8 @@ RSpec.describe RuboCop::Formatter::PacmanFormatter do
       end
     end
 
-    context 'when a offense is detected in a file' do
-      let(:location) { OpenStruct.new(line: 1, column: 5) }
+    context 'when an offense is detected in a file' do
+      let(:location) { FakeLocation.new(line: 1, column: 5) }
       let(:expected_character) { Rainbow(described_class::GHOST).red }
       let(:offenses) { [RuboCop::Cop::Offense.new(:error, location, 'message', 'CopA')] }
 
@@ -108,7 +108,7 @@ RSpec.describe RuboCop::Formatter::PacmanFormatter do
       let(:character) { Rainbow(described_class::GHOST).red }
       let(:expected_progress_line) { format('..%s%s', character, described_class::PACDOT) }
 
-      it 'removes the first • and puts a ghosts' do
+      it 'removes the first • and puts ghosts' do
         step
         expect(formatter.progress_line).to eq(expected_progress_line)
       end

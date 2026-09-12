@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Lint
-      # This cops looks for references of Regexp captures that are out of range
+      # Looks for references of `Regexp` captures that are out of range
       # and thus always returns nil.
       #
       # @safety
@@ -53,6 +53,8 @@ module RuboCop
         end
 
         def after_send(node)
+          return if backrefs_unaffected?(node)
+
           @valid_ref = nil
 
           if regexp_first_argument?(node)
@@ -61,15 +63,22 @@ module RuboCop
             check_regexp(node.receiver)
           end
         end
+        alias after_csend after_send
 
         def on_when(node)
           regexp_conditions = node.conditions.select(&:regexp_type?)
 
-          @valid_ref = regexp_conditions.map { |condition| check_regexp(condition) }.compact.max
+          @valid_ref = regexp_conditions.filter_map { |condition| check_regexp(condition) }.max
+        end
+
+        def on_in_pattern(node)
+          regexp_patterns = regexp_patterns(node)
+
+          @valid_ref = regexp_patterns.filter_map { |pattern| check_regexp(pattern) }.max
         end
 
         def on_nth_ref(node)
-          backref, = *node
+          backref = node.children.first
           return if @valid_ref.nil? || backref <= @valid_ref
 
           message = format(
@@ -84,6 +93,15 @@ module RuboCop
 
         private
 
+        def regexp_patterns(in_node)
+          pattern = in_node.pattern
+          if pattern.regexp_type?
+            [pattern]
+          else
+            pattern.each_descendant(:regexp).to_a
+          end
+        end
+
         def check_regexp(node)
           return if node.interpolation?
 
@@ -95,6 +113,19 @@ module RuboCop
                        end
         end
 
+        # A call such as `hash[:key]` or `array[0]` cannot involve a regexp match:
+        # a non-string literal cannot act as a pattern (whereas `sub`, `gsub`,
+        # and `match` treat a string one as a pattern and do set backreferences),
+        # and `$~` is frame-local, so a user-defined method cannot change
+        # the caller's backreferences either.
+        def backrefs_unaffected?(send_node)
+          first_argument = send_node.first_argument
+          return false unless first_argument&.basic_literal?
+          return false if first_argument.str_type?
+
+          !regexp_receiver?(send_node)
+        end
+
         def regexp_first_argument?(send_node)
           send_node.first_argument&.regexp_type? \
             && REGEXP_ARGUMENT_METHODS.include?(send_node.method_name)
@@ -102,10 +133,6 @@ module RuboCop
 
         def regexp_receiver?(send_node)
           send_node.receiver&.regexp_type?
-        end
-
-        def nth_ref_receiver?(send_node)
-          send_node.receiver&.nth_ref_type?
         end
       end
     end

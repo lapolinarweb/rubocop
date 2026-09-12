@@ -102,6 +102,108 @@ RSpec.describe RuboCop::Cop::Style::ParenthesesAroundCondition, :config do
     RUBY
   end
 
+  it 'does not register an offense when using a method call with `do`...`end` block as a condition in `while` loop' do
+    expect_no_offenses(<<~RUBY)
+      while (foo do
+            end)
+      end
+    RUBY
+  end
+
+  it 'does not register an offense when using a method call with `do`...`end` block as a condition in `until` loop' do
+    expect_no_offenses(<<~RUBY)
+      until (foo do
+            end)
+      end
+    RUBY
+  end
+
+  it 'does not register an offense when using a method call with `do`...`end` numbered block as a condition in `while` loop' do
+    expect_no_offenses(<<~RUBY)
+      while (foo do
+              _1
+            end)
+      end
+    RUBY
+  end
+
+  it 'does not register an offense when using a method call with `do`...`end` numbered block as a condition in `until` loop' do
+    expect_no_offenses(<<~RUBY)
+      until (foo do
+              _1
+            end)
+      end
+    RUBY
+  end
+
+  it 'registers an offense when using method call with `{`...`}` block as a `while` condition' do
+    expect_offense(<<~RUBY)
+      while (foo {
+            ^^^^^^ Don't use parentheses around the condition of a `while`.
+            })
+      end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      while foo {
+            }
+      end
+    RUBY
+  end
+
+  it 'registers an offense when using method call with `{`...`}` block as a `until` condition' do
+    expect_offense(<<~RUBY)
+      until (foo {
+            ^^^^^^ Don't use parentheses around the condition of an `until`.
+            })
+      end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      until foo {
+            }
+      end
+    RUBY
+  end
+
+  it 'registers an offense when using method call with `do`...`end` block as a `if` condition' do
+    expect_offense(<<~RUBY)
+      if (foo do
+         ^^^^^^^ Don't use parentheses around the condition of an `if`.
+         end)
+      end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      if foo do
+         end
+      end
+    RUBY
+  end
+
+  it 'registers an offense when using method call with `{`...`}` block as a `if` condition' do
+    expect_offense(<<~RUBY)
+      if (foo {
+         ^^^^^^ Don't use parentheses around the condition of an `if`.
+         })
+      end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      if foo {
+         }
+      end
+    RUBY
+  end
+
+  it 'does not register an offense when parentheses in multiple expressions separated by semicolon' do
+    expect_no_offenses(<<~RUBY)
+      if (foo; bar)
+        do_something
+      end
+    RUBY
+  end
+
   context 'safe assignment is allowed' do
     it 'accepts variable assignment in condition surrounded with parentheses' do
       expect_no_offenses(<<~RUBY)
@@ -153,6 +255,35 @@ RSpec.describe RuboCop::Cop::Style::ParenthesesAroundCondition, :config do
         end
       RUBY
     end
+
+    context 'when `Lint/AssignmentInCondition` allows safe assignment' do
+      let(:config) do
+        RuboCop::Config.new(
+          'Style/ParenthesesAroundCondition' => cop_config,
+          'Lint/AssignmentInCondition' => { 'Enabled' => true, 'AllowSafeAssignment' => true }
+        )
+      end
+
+      it 'accepts variable assignment in condition surrounded with parentheses' do
+        expect_no_offenses(<<~RUBY)
+          if (test = 10)
+          end
+        RUBY
+      end
+
+      it 'does not accept parentheses around a non-assignment condition' do
+        expect_offense(<<~RUBY)
+          if (test == 10)
+             ^^^^^^^^^^^^ Don't use parentheses around the condition of an `if`.
+          end
+        RUBY
+
+        expect_correction(<<~RUBY)
+          if test == 10
+          end
+        RUBY
+      end
+    end
   end
 
   context 'parentheses in multiline conditions are allowed' do
@@ -200,10 +331,8 @@ RSpec.describe RuboCop::Cop::Style::ParenthesesAroundCondition, :config do
       RUBY
 
       expect_correction(<<~RUBY)
-        if#{trailing_whitespace}
-          x > 3 &&
+        if x > 3 &&
           x < 10
-
           return true
         end
       RUBY

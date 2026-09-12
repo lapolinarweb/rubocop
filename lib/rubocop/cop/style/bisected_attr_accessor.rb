@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for places where `attr_reader` and `attr_writer`
+      # Checks for places where `attr_reader` and `attr_writer`
       # for the same method can be combined into single `attr_accessor`.
       #
       # @example
@@ -33,7 +33,7 @@ module RuboCop
         def on_class(class_node)
           @macros_to_rewrite[class_node] = Set.new
 
-          find_macros(class_node.body).each do |_visibility, macros|
+          find_macros(class_node.body).each_value do |macros|
             bisected = find_bisection(macros)
             next unless bisected.any?
 
@@ -55,7 +55,7 @@ module RuboCop
         def after_class(class_node)
           @macros_to_rewrite[class_node].each do |macro|
             node = macro.node
-            range = range_by_whole_lines(node.loc.expression, include_final_newline: true)
+            range = range_by_whole_lines(node.source_range, include_final_newline: true)
 
             correct(range) do |corrector|
               if macro.writer?
@@ -74,7 +74,7 @@ module RuboCop
         def find_macros(class_def)
           # Find all the macros (`attr_reader`, `attr_writer`, etc.) in the class body
           # and turn them into `Macro` objects so that they can be processed.
-          return [] if !class_def || class_def.def_type?
+          return {} if !class_def || class_def.def_type?
 
           send_nodes =
             if class_def.send_type?

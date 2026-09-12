@@ -38,6 +38,8 @@ module RuboCop
       #   # bad
       #   foo[ ]
       #   foo[     ]
+      #   foo[
+      #   ]
       #
       #   # good
       #   foo[]
@@ -49,6 +51,8 @@ module RuboCop
       #   # bad
       #   foo[]
       #   foo[    ]
+      #   foo[
+      #   ]
       #
       #   # good
       #   foo[ ]
@@ -64,17 +68,17 @@ module RuboCop
         RESTRICT_ON_SEND = %i[[] []=].freeze
 
         def on_send(node)
-          return if node.multiline?
-
           tokens = processed_source.tokens_within(node)
           left_token = left_ref_bracket(node, tokens)
           return unless left_token
 
           right_token = closing_bracket(tokens, left_token)
 
-          if empty_brackets?(left_token, right_token)
+          if empty_brackets?(left_token, right_token, tokens: tokens)
             return empty_offenses(node, left_token, right_token, EMPTY_MSG)
           end
+
+          return if node.multiline?
 
           if style == :no_space
             no_space_offenses(node, left_token, right_token, MSG)
@@ -86,9 +90,9 @@ module RuboCop
         private
 
         def autocorrect(corrector, node)
-          left, right = reference_brackets(node)
+          tokens, left, right = reference_brackets(node)
 
-          if empty_brackets?(left, right)
+          if empty_brackets?(left, right, tokens: tokens)
             SpaceCorrector.empty_corrections(processed_source, corrector, empty_config, left, right)
           elsif style == :no_space
             SpaceCorrector.remove_space(processed_source, corrector, left, right)
@@ -100,7 +104,7 @@ module RuboCop
         def reference_brackets(node)
           tokens = processed_source.tokens_within(node)
           left = left_ref_bracket(node, tokens)
-          [left, closing_bracket(tokens, left)]
+          [tokens, left, closing_bracket(tokens, left)]
         end
 
         def left_ref_bracket(node, tokens)
@@ -118,7 +122,7 @@ module RuboCop
           i = tokens.index(opening_bracket)
           inner_left_brackets_needing_closure = 0
 
-          tokens[i..-1].each do |token|
+          tokens[i..].each do |token|
             inner_left_brackets_needing_closure += 1 if token.left_bracket?
             inner_left_brackets_needing_closure -= 1 if token.right_bracket?
             return token if inner_left_brackets_needing_closure.zero? && token.right_bracket?

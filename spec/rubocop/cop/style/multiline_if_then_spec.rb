@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
 RSpec.describe RuboCop::Cop::Style::MultilineIfThen, :config do
-  # if
-
   it 'does not get confused by empty elsif branch' do
     expect_no_offenses(<<~RUBY)
       if cond
@@ -58,6 +56,15 @@ RSpec.describe RuboCop::Cop::Style::MultilineIfThen, :config do
     expect_correction(<<~RUBY)
       if cond1
         a
+      elsif cond2
+        b
+      end
+    RUBY
+  end
+
+  it 'accepts `then` with a body on the same line followed by an `elsif` without `then`' do
+    expect_no_offenses(<<~RUBY)
+      if cond1 then a
       elsif cond2
         b
       end
@@ -137,5 +144,13 @@ RSpec.describe RuboCop::Cop::Style::MultilineIfThen, :config do
         end
       RUBY
     end.not_to raise_error
+  end
+
+  it 'does not register an offense for a single-line `if cond then end`' do
+    expect_no_offenses('if cond then end')
+  end
+
+  it 'does not register an offense for a single-line `unless cond then end`' do
+    expect_no_offenses('unless cond then end')
   end
 end

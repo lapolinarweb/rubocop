@@ -3,30 +3,13 @@
 module RuboCop
   module Cop
     module Naming
-      # This cop makes sure that all numbered variables use the
+      # Makes sure that all numbered variables use the
       # configured style, snake_case, normalcase, or non_integer,
       # for their numbering.
       #
       # Additionally, `CheckMethodNames` and `CheckSymbols` configuration options
       # can be used to specify whether method names and symbols should be checked.
       # Both are enabled by default.
-      #
-      # @example EnforcedStyle: snake_case
-      #   # bad
-      #   :some_sym1
-      #   variable1 = 1
-      #
-      #   def some_method1; end
-      #
-      #   def some_method_1(arg1); end
-      #
-      #   # good
-      #   :some_sym_1
-      #   variable_1 = 1
-      #
-      #   def some_method_1; end
-      #
-      #   def some_method_1(arg_1); end
       #
       # @example EnforcedStyle: normalcase (default)
       #   # bad
@@ -44,6 +27,23 @@ module RuboCop
       #   def some_method1; end
       #
       #   def some_method1(arg1); end
+      #
+      # @example EnforcedStyle: snake_case
+      #   # bad
+      #   :some_sym1
+      #   variable1 = 1
+      #
+      #   def some_method1; end
+      #
+      #   def some_method_1(arg1); end
+      #
+      #   # good
+      #   :some_sym_1
+      #   variable_1 = 1
+      #
+      #   def some_method_1; end
+      #
+      #   def some_method_1(arg_1); end
       #
       # @example EnforcedStyle: non_integer
       #   # bad
@@ -96,22 +96,31 @@ module RuboCop
       #   # good
       #   expect(Open3).to receive(:capture3)
       #
+      # @example AllowedPatterns: ['_v\d+\z']
+      #   # good
+      #   :some_sym_v1
+      #
       class VariableNumber < Base
         include AllowedIdentifiers
         include ConfigurableNumbering
+        include AllowedPattern
 
         MSG = 'Use %<style>s for %<identifier_type>s numbers.'
 
+        def valid_name?(node, name, given_style = style)
+          super || matches_allowed_pattern?(name)
+        end
+
         def on_arg(node)
           @node = node
-          name, = *node
-          return if allowed_identifier?(name)
+          return if allowed_identifier?(node.name)
 
-          check_name(node, name, node.loc.name)
+          check_name(node, node.name, node.loc.name)
         end
         alias on_lvasgn on_arg
         alias on_ivasgn on_arg
         alias on_cvasgn on_arg
+        alias on_gvasgn on_arg
 
         def on_def(node)
           @node = node
@@ -123,7 +132,9 @@ module RuboCop
 
         def on_sym(node)
           @node = node
-          return if allowed_identifier?(node.value)
+
+          # Prism parses a quoted empty hash key (`{ "": value }`) as an empty symbol node.
+          return if node.value.empty? || allowed_identifier?(node.value)
 
           check_name(node, node.value, node) if cop_config['CheckSymbols']
         end

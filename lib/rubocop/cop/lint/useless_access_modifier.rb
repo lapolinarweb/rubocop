@@ -3,11 +3,11 @@
 module RuboCop
   module Cop
     module Lint
-      # This cop checks for redundant access modifiers, including those with no
-      # code, those which are repeated, and leading `public` modifiers in a
-      # class or module body. Conditionally-defined methods are considered as
-      # always being defined, and thus access modifiers guarding such methods
-      # are not redundant.
+      # Checks for redundant access modifiers, including those with no
+      # code, those which are repeated, those which are on top-level, and
+      # leading `public` modifiers in a class or module body.
+      # Conditionally-defined methods are considered as always being defined,
+      # and thus access modifiers guarding such methods are not redundant.
       #
       # This cop has `ContextCreatingMethods` option. The default setting value
       # is an empty array that means no method is specified.
@@ -31,8 +31,8 @@ module RuboCop
       #   # bad
       #   class Foo
       #     # The following is redundant (methods defined on the class'
-      #     # singleton class are not affected by the public modifier)
-      #     public
+      #     # singleton class are not affected by the private modifier)
+      #     private
       #
       #     def self.method3
       #     end
@@ -56,6 +56,12 @@ module RuboCop
       #   # bad
       #   class Foo
       #     private # this is redundant (no following methods are defined)
+      #   end
+      #
+      #   # bad
+      #   private # this is useless (access modifiers have no effect on top-level)
+      #
+      #   def method
       #   end
       #
       #   # good
@@ -137,9 +143,23 @@ module RuboCop
         alias on_sclass on_class
 
         def on_block(node)
-          return unless eval_call?(node)
+          return unless eval_call?(node) || included_block?(node)
 
           check_node(node.body)
+        end
+
+        alias on_numblock on_block
+        alias on_itblock on_block
+
+        def on_begin(node)
+          return if node.parent
+
+          node.child_nodes.each do |child|
+            next unless child.send_type? && access_modifier?(child)
+
+            # This call always registers an offense for access modifier `child.method_name`
+            check_send_node(child, child.method_name, true)
+          end
         end
 
         private
@@ -157,17 +177,12 @@ module RuboCop
 
         # @!method dynamic_method_definition?(node)
         def_node_matcher :dynamic_method_definition?, <<~PATTERN
-          {(send nil? :define_method ...) (block (send nil? :define_method ...) ...)}
+          {(send nil? :define_method ...) (any_block (send nil? :define_method ...) ...)}
         PATTERN
 
         # @!method class_or_instance_eval?(node)
         def_node_matcher :class_or_instance_eval?, <<~PATTERN
-          (block (send _ {:class_eval :instance_eval}) ...)
-        PATTERN
-
-        # @!method class_or_module_or_struct_new_call?(node)
-        def_node_matcher :class_or_module_or_struct_new_call?, <<~PATTERN
-          (block (send (const {nil? cbase} {:Class :Module :Struct}) :new ...) ...)
+          (any_block (send _ {:class_eval :instance_eval}) ...)
         PATTERN
 
         def check_node(node)
@@ -195,10 +210,13 @@ module RuboCop
           end
         end
 
+        # rubocop:disable-next Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
         def check_child_nodes(node, unused, cur_vis)
           node.child_nodes.each do |child|
             if child.send_type? && access_modifier?(child)
               cur_vis, unused = check_send_node(child, cur_vis, unused)
+            elsif child.block_type? && included_block?(child)
+              next
             elsif method_definition?(child)
               unused = nil
             elsif start_of_new_scope?(child)
@@ -243,6 +261,10 @@ module RuboCop
           [new_vis, unused]
         end
 
+        def included_block?(block_node)
+          active_support_extensions_enabled? && block_node.method?(:included)
+        end
+
         def method_definition?(child)
           static_method_definition?(child) ||
             dynamic_method_definition?(child) ||
@@ -251,7 +273,11 @@ module RuboCop
 
         def any_method_definition?(child)
           cop_config.fetch('MethodCreatingMethods', []).any? do |m|
-            matcher_name = "#{m}_method?".to_sym
+            # Some users still have `"included"` in their `MethodCreatingMethods` configurations,
+            # so to prevent Ruby method redefinition warnings let's just skip this value.
+            next if m == 'included'
+
+            matcher_name = :"#{m}_method?"
             unless respond_to?(matcher_name)
               self.class.def_node_matcher matcher_name, <<~PATTERN
                 {def (send nil? :#{m} ...)}
@@ -263,21 +289,25 @@ module RuboCop
         end
 
         def start_of_new_scope?(child)
-          child.module_type? || child.class_type? || child.sclass_type? || eval_call?(child)
+          child.type?(:module, :class, :sclass) || eval_call?(child)
         end
 
         def eval_call?(child)
           class_or_instance_eval?(child) ||
-            class_or_module_or_struct_new_call?(child) ||
+            child.class_constructor? ||
             any_context_creating_methods?(child)
         end
 
         def any_context_creating_methods?(child)
+          # Some users still have `"included"` in their `ContextCreatingMethods` configurations,
+          # so to prevent Ruby method redefinition warnings let's just skip this value.
           cop_config.fetch('ContextCreatingMethods', []).any? do |m|
-            matcher_name = "#{m}_block?".to_sym
+            next if m == 'included'
+
+            matcher_name = :"#{m}_block?"
             unless respond_to?(matcher_name)
               self.class.def_node_matcher matcher_name, <<~PATTERN
-                (block (send {nil? const} {:#{m}} ...) ...)
+                (any_block (send {nil? const} {:#{m}} ...) ...)
               PATTERN
             end
 

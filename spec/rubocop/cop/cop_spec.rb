@@ -1,66 +1,197 @@
 # frozen_string_literal: true
 
 RSpec.describe RuboCop::Cop::Cop, :config do
+  include FileHelper
+
   let(:source) { 'code = {some: :ruby}' }
   let(:location) { source_range(0...1) }
 
   before { cop.send(:begin_investigation, processed_source) }
 
   it 'initially has 0 offenses' do
-    expect(cop.offenses.empty?).to be(true)
+    expect(cop.offenses).to be_empty
   end
 
-  describe '.qualified_cop_name' do
-    before { $stderr = StringIO.new }
-
-    after { $stderr = STDERR }
-
-    it 'adds namespace if the cop name is found in exactly one namespace' do
-      expect(described_class.qualified_cop_name('LineLength', '--only')).to eq('Layout/LineLength')
-    end
-
-    it 'returns the given cop name if it is not found in any namespace' do
-      expect(described_class.qualified_cop_name('UnknownCop', '--only')).to eq('UnknownCop')
-    end
-
-    it 'returns the given cop name if it already has a namespace' do
-      expect(described_class.qualified_cop_name('Layout/LineLength', '--only'))
-        .to eq('Layout/LineLength')
-    end
-
-    it 'returns the cop name in a different namespace if the provided namespace is incorrect' do
-      expect(described_class.qualified_cop_name('Style/LineLength', '--only'))
-        .to eq('Layout/LineLength')
-    end
-
-    # `Rails/SafeNavigation` was extracted to rubocop-rails gem,
-    # there were no cop whose names overlapped.
-    xit 'raises an error if the cop name is in more than one namespace' do
-      expect { described_class.qualified_cop_name('SafeNavigation', '--only') }
-        .to raise_error(RuboCop::Cop::AmbiguousCopName)
-    end
-
-    it 'returns the given cop name if it already has a namespace even when ' \
-       'the cop exists in multiple namespaces' do
-      qualified_cop_name = described_class.qualified_cop_name('Style/SafeNavigation', '--only')
-
-      expect(qualified_cop_name).to eq('Style/SafeNavigation')
-    end
+  it 'qualified_cop_name is deprecated' do
+    expect { described_class.qualified_cop_name('Layout/LineLength', '--only') }
+      .to output(/`Cop.qualified_cop_name` is deprecated/).to_stderr
   end
 
   describe '.documentation_url' do
-    subject(:url) { cop_class.documentation_url }
+    context 'without passing a config' do
+      subject(:url) { cop_class.documentation_url }
 
-    describe 'for a builtin cop class' do
-      let(:cop_class) { RuboCop::Cop::Layout::BlockEndNewline }
+      describe 'for a builtin cop class' do
+        let(:cop_class) { RuboCop::Cop::Layout::BlockEndNewline }
 
-      it { is_expected.to eq 'https://docs.rubocop.org/rubocop/cops_layout.html#layoutblockendnewline' } # rubocop:disable Layout/LineLength
+        it { is_expected.to eq 'https://docs.rubocop.org/rubocop/cops_layout.html#layoutblockendnewline' } # rubocop:disable Layout/LineLength -- the expected URL is verbatim
+      end
+
+      describe 'for a custom cop class without DocumentationBaseURL', :restore_registry do
+        let(:cop_class) { stub_cop_class('Some::Cop') { def foo; end } }
+
+        it { is_expected.to be_nil }
+      end
+
+      describe 'for a builtin cop class with only private methods' do
+        let(:cop_class) { RuboCop::Cop::Layout::AssignmentIndentation }
+
+        it 'returns the documentation URL' do
+          expect(cop_class.instance_methods(false)).to be_empty
+          expect(url).to eq 'https://docs.rubocop.org/rubocop/cops_layout.html#layoutassignmentindentation'
+        end
+      end
+
+      describe 'for an anonymous class' do
+        it 'is not considered builtin' do
+          expect(RuboCop::Cop::Documentation).not_to be_builtin(Class.new)
+        end
+      end
     end
 
-    describe 'for a custom cop class', :restore_registry do
-      let(:cop_class) { stub_cop_class('Some::Cop') { def foo; end } }
+    context 'when passing a config' do
+      subject(:url) { cop_class.documentation_url(config) }
 
-      it { is_expected.to eq nil }
+      describe 'for a builtin cop class' do
+        let(:cop_class) { RuboCop::Cop::Layout::BlockEndNewline }
+
+        it { is_expected.to eq 'https://docs.rubocop.org/rubocop/cops_layout.html#layoutblockendnewline' } # rubocop:disable Layout/LineLength -- the expected URL is verbatim
+      end
+
+      describe 'for a custom cop class without DocumentationBaseURL', :restore_registry do
+        let(:cop_class) { stub_cop_class('Some::Cop') { def foo; end } }
+
+        it { is_expected.to be_nil }
+      end
+
+      describe 'for a custom cop class with DocumentationBaseURL', :restore_registry do
+        let(:cop_class) { stub_cop_class('Rails::Exit') { def foo; end } }
+        let(:config) do
+          RuboCop::Config.new(
+            'Rails' => {
+              'DocumentationBaseURL' => 'https://docs.rubocop.org/rubocop-rails'
+            }
+          )
+        end
+
+        it { is_expected.to eq 'https://docs.rubocop.org/rubocop-rails/cops_rails.html#railsexit' }
+      end
+
+      describe 'for a custom cop class with DocumentationExtension', :restore_registry do
+        let(:cop_class) { stub_cop_class('Sorbet::FalseSigil') { def foo; end } }
+        let(:config) do
+          RuboCop::Config.new(
+            'Sorbet' => {
+              'DocumentationBaseURL' => 'https://github.com/Shopify/rubocop-sorbet/blob/main/manual',
+              'DocumentationExtension' => '.md'
+            }
+          )
+        end
+
+        it { is_expected.to eq 'https://github.com/Shopify/rubocop-sorbet/blob/main/manual/cops_sorbet.md#sorbetfalsesigil' }
+      end
+    end
+  end
+
+  describe 'requires_gem', :restore_registry do
+    context 'on a cop with no gem requirements' do
+      let(:cop_class) do
+        stub_cop_class('CopSpec::CopWithNoGemReqs') do
+          # no calls to `require_gem`
+        end
+      end
+
+      describe '.gem_requirements' do
+        it 'returns an empty hash' do
+          expect(cop_class.gem_requirements).to eq({})
+        end
+      end
+    end
+
+    context 'on a cop with a versionless gem requirement' do
+      let(:cop_class) do
+        stub_cop_class('CopSpec::CopWithVersionlessGemReq') do
+          requires_gem 'gem'
+        end
+      end
+
+      it 'returns a unconstrained requirement' do
+        expected = { 'gem' => Gem::Requirement.new('>= 0') }
+        expect(cop_class.gem_requirements).to eq(expected)
+      end
+    end
+
+    describe 'on a cop with gem version requirements' do
+      let(:cop_class) do
+        stub_cop_class('CopSpec::CopWithGemReqs') do
+          requires_gem 'gem1', '>= 1.2.3'
+          requires_gem 'gem2', '>= 4.5.6'
+        end
+      end
+
+      it 'can be retrieved with .gem_requirements' do
+        expected = {
+          'gem1' => Gem::Requirement.new('>= 1.2.3'),
+          'gem2' => Gem::Requirement.new('>= 4.5.6')
+        }
+        expect(cop_class.gem_requirements).to eq(expected)
+      end
+    end
+
+    it 'is heritable' do
+      superclass = stub_cop_class('CopSpec::SuperclassCopWithGemReqs') do
+        requires_gem 'gem1', '>= 1.2.3'
+      end
+
+      subclass = stub_cop_class('CopSpec::SubclassCopWithGemReqs', inherit: superclass) do
+        requires_gem 'gem2', '>= 4.5.6'
+      end
+
+      expected = {
+        'gem1' => Gem::Requirement.new('>= 1.2.3'),
+        'gem2' => Gem::Requirement.new('>= 4.5.6')
+      }
+      expect(subclass.gem_requirements).to eq(expected)
+
+      # Ensure the superclass wasn't modified:
+      expect(superclass.gem_requirements).to eq(expected.slice('gem1'))
+    end
+  end
+
+  describe '#target_gem_version', :isolated_environment do
+    let(:cop_class) { RuboCop::Cop::Style::HashSyntax }
+
+    before do
+      # Call the original to actually look at the provided Gemfile.lock
+      allow(config).to receive(:gem_versions_in_target).and_call_original
+    end
+
+    it 'returns nil when no lockfile exists' do
+      expect(cop.target_gem_version('foo')).to be_nil
+    end
+
+    context 'when the lockfile exists' do
+      before do
+        create_file('Gemfile.lock', <<~LOCKFILE)
+          GEM
+            specs:
+              rack (3.1.1)
+
+          PLATFORMS
+            ruby
+
+          DEPENDENCIES
+            rack (~> 3.0)
+        LOCKFILE
+      end
+
+      it 'returns nil when the gem is not found' do
+        expect(cop.target_gem_version('foo')).to be_nil
+      end
+
+      it 'returns the gem version for a matching gem' do
+        expect(cop.target_gem_version('rack')).to eq(Gem::Version.new('3.1.1'))
+      end
     end
   end
 
@@ -70,26 +201,41 @@ RSpec.describe RuboCop::Cop::Cop, :config do
     expect(cop.offenses.size).to eq(1)
   end
 
-  it 'will report registered offenses' do
+  it 'reports registered offenses' do
     cop.add_offense(nil, location: location, message: 'message')
 
-    expect(cop.offenses.empty?).to be(false)
+    expect(cop.offenses).not_to be_empty
   end
 
-  it 'will set default severity' do
+  it 'sets default severity' do
     cop.add_offense(nil, location: location, message: 'message')
 
     expect(cop.offenses.first.severity).to eq(:convention)
   end
 
-  it 'will set custom severity if present' do
+  { 'Lint' => :warning, 'Security' => :warning, 'Metrics' => :refactor,
+    'Style' => :convention }.each do |department, severity|
+    context "for a #{department} cop", :restore_registry do
+      # Inherits from `Base` rather than the deprecated class under test, whose
+      # inheritance warning would fail the run under strict warnings.
+      let(:cop_class) { stub_cop_class("RuboCop::Cop::#{department}::TestCop") }
+
+      it "defaults to #{severity} severity" do
+        cop.add_offense(location, message: 'message')
+
+        expect(cop.send(:complete_investigation).offenses.first.severity).to eq(severity)
+      end
+    end
+  end
+
+  it 'sets custom severity if present' do
     cop.config[cop.name] = { 'Severity' => 'warning' }
     cop.add_offense(nil, location: location, message: 'message')
 
     expect(cop.offenses.first.severity).to eq(:warning)
   end
 
-  it 'will warn if custom severity is invalid' do
+  it 'warns if custom severity is invalid' do
     cop.config[cop.name] = { 'Severity' => 'superbad' }
     expect { cop.add_offense(nil, location: location, message: 'message') }
       .to output(/Warning: Invalid severity 'superbad'./).to_stderr
@@ -102,14 +248,13 @@ RSpec.describe RuboCop::Cop::Cop, :config do
     end
 
     before do
-      allow(processed_source.comment_config).to receive(:cop_enabled_at_line?)
-        .and_return(false)
+      allow(processed_source.comment_config).to receive(:cop_enabled_at_lines?).and_return(false)
     end
 
     context 'ignore_disable_comments is false' do
       let(:cop_options) { { ignore_disable_comments: false } }
 
-      it 'will set offense as disabled' do
+      it 'sets offense as disabled' do
         expect(offense_status).to eq :disabled
       end
     end
@@ -117,7 +262,7 @@ RSpec.describe RuboCop::Cop::Cop, :config do
     context 'ignore_disable_comments is true' do
       let(:cop_options) { { ignore_disable_comments: true } }
 
-      it 'will not set offense as disabled' do
+      it 'does not set offense as disabled' do
         expect(offense_status).not_to eq :disabled
       end
     end
@@ -126,7 +271,7 @@ RSpec.describe RuboCop::Cop::Cop, :config do
   describe 'for a cop with a name' do
     let(:cop_class) { RuboCop::Cop::Style::For }
 
-    it 'registers offense with its name' do
+    it 'registers an offense with its name' do
       offenses = cop.add_offense(location, message: 'message')
       expect(offenses.first.cop_name).to eq('Style/For')
     end
@@ -138,7 +283,7 @@ RSpec.describe RuboCop::Cop::Cop, :config do
 
       it 'is not specified (set to nil)' do
         cop.add_offense(nil, location: location, message: 'message')
-        expect(cop.offenses.first.corrected?).to be(false)
+        expect(cop.offenses.first).not_to be_corrected
       end
 
       context 'when autocorrect is requested' do
@@ -146,7 +291,7 @@ RSpec.describe RuboCop::Cop::Cop, :config do
 
         it 'is not specified (set to nil)' do
           cop.add_offense(nil, location: location, message: 'message')
-          expect(cop.offenses.first.corrected?).to be(false)
+          expect(cop.offenses.first).not_to be_corrected
         end
 
         context 'when disable_uncorrectable is enabled' do
@@ -161,7 +306,7 @@ RSpec.describe RuboCop::Cop::Cop, :config do
 
           it 'is set to true' do
             cop.add_offense(node, location: location, message: 'message')
-            expect(cop.offenses.first.corrected?).to be(true)
+            expect(cop.offenses.first).to be_corrected
             expect(cop.offenses.first.status).to be(:corrected_with_todo)
           end
         end
@@ -170,22 +315,25 @@ RSpec.describe RuboCop::Cop::Cop, :config do
 
     context 'when cop supports autocorrection', :restore_registry do
       let(:cop_class) do
-        stub_cop_class('RuboCop::Cop::Test::StubCop', inherit: described_class) do
-          def autocorrect(node); end
-        end
+        cop_class = nil
+        expect do # rubocop:disable RSpec/ExpectInLet
+          cop_class = stub_cop_class('RuboCop::Cop::Test::StubCop', inherit: described_class) do
+            def autocorrect(node); end
+          end
+        end.to output(/Inheriting from `RuboCop::Cop::Cop` is deprecated/).to_stderr
+        cop_class
       end
 
       context 'when offense was corrected' do
         before do
-          allow(cop).to receive(:autocorrect?).and_return(true)
-          allow(cop).to receive(:autocorrect).and_return(lambda do |corrector|
+          allow(cop).to receive_messages(autocorrect?: true, autocorrect: lambda do |corrector|
             corrector.insert_before(location, 'hi!')
           end)
         end
 
         it 'is set to true' do
           cop.add_offense(nil, location: location, message: 'message')
-          expect(cop.offenses.first.corrected?).to eq(true)
+          expect(cop.offenses.first).to be_corrected
         end
       end
 
@@ -194,19 +342,18 @@ RSpec.describe RuboCop::Cop::Cop, :config do
 
         it 'is set to false' do
           cop.add_offense(nil, location: location, message: 'message')
-          expect(cop.offenses.first.corrected?).to eq(false)
+          expect(cop.offenses.first).not_to be_corrected
         end
       end
 
       context 'when offense was not corrected because of an error' do
         before do
-          allow(cop).to receive(:autocorrect?).and_return(true)
-          allow(cop).to receive(:autocorrect).and_return(false)
+          allow(cop).to receive_messages(autocorrect?: true, autocorrect: false)
         end
 
         it 'is set to false' do
           cop.add_offense(nil, location: location, message: 'message')
-          expect(cop.offenses.first.corrected?).to eq(false)
+          expect(cop.offenses.first).not_to be_corrected
         end
       end
     end
@@ -283,7 +430,7 @@ RSpec.describe RuboCop::Cop::Cop, :config do
     end
 
     context 'when the option is given' do
-      let(:cop_options) { { auto_correct: true } }
+      let(:cop_options) { { autocorrect: true } }
 
       it { is_expected.to be(true) }
 
@@ -329,6 +476,146 @@ RSpec.describe RuboCop::Cop::Cop, :config do
 
       it { is_expected.to be(true) }
     end
+
+    context 'when an Include pattern matches a directory above the project root' do
+      let(:cop_config) { { 'Include' => ['**/app/**/*.rb'] } }
+
+      before do
+        allow(config).to receive(:base_dir_for_path_parameters).and_return('/app/myproject')
+      end
+
+      context 'and the file is in an `app` subdirectory of the project' do
+        let(:file) { '/app/myproject/lib/app/file.rb' }
+
+        it { is_expected.to be(true) }
+      end
+
+      context 'and the file is not in an `app` subdirectory of the project' do
+        let(:file) { '/app/myproject/spec/file.rb' }
+
+        it { is_expected.to be(false) }
+      end
+    end
+
+    context 'when the Include configuration contains an absolute pattern' do
+      let(:cop_config) { { 'Include' => ['/app/myproject/lib/**/*.rb'] } }
+
+      before do
+        allow(config).to receive(:base_dir_for_path_parameters).and_return('/app/myproject')
+      end
+
+      context 'and the file matches the pattern' do
+        let(:file) { '/app/myproject/lib/file.rb' }
+
+        it { is_expected.to be(true) }
+      end
+
+      context 'and the file doesn\'t match the pattern' do
+        let(:file) { '/app/myproject/spec/file.rb' }
+
+        it { is_expected.to be(false) }
+      end
+    end
+
+    context 'when the file is outside of the configuration directory' do
+      let(:cop_config) { { 'Include' => ['**/foo.rb'] } }
+      let(:file) { '/elsewhere/foo.rb' }
+
+      before do
+        allow(config).to receive(:base_dir_for_path_parameters).and_return('/app/myproject')
+      end
+
+      it { is_expected.to be(true) }
+    end
+
+    describe 'for a cop with gem version requirements', :restore_registry do
+      subject { cop.relevant_file?(file) }
+
+      let(:file) { 'foo.rb' }
+
+      let(:cop_class) do
+        stub_cop_class('CopSpec::CopWithGemReqs') do
+          requires_gem 'gem1', '>= 1.2.3'
+        end
+      end
+
+      before do
+        allow(config).to receive(:gem_versions_in_target).and_return(gem_versions_in_target)
+      end
+
+      context 'the target doesn\'t satisfy any of the gem requirements' do
+        let(:gem_versions_in_target) { {} }
+
+        it { is_expected.to be(false) }
+      end
+
+      context 'the target has a required gem, but in a version that\'s too old' do
+        let(:gem_versions_in_target) { { 'gem1' => Gem::Version.new('1.2.2') } }
+
+        it { is_expected.to be(false) }
+      end
+
+      context 'the target has a required gem, in a supported version' do
+        let(:gem_versions_in_target) { { 'gem1' => Gem::Version.new('1.2.3') } }
+
+        it { is_expected.to be(true) }
+      end
+
+      context 'for a cop with multiple gem requirements' do
+        let(:cop_class) do
+          stub_cop_class('CopSpec::CopWithGemReqs') do
+            requires_gem 'gem1', '>= 1.2.3'
+            requires_gem 'gem2', '>= 4.5.6'
+          end
+        end
+
+        context 'the target satisfies one but not all of the gem requirements' do
+          let(:gem_versions_in_target) do
+            {
+              'gem1' => Gem::Version.new('1.2.3'),
+              'gem2' => Gem::Version.new('4.5.5')
+            }
+          end
+
+          it { is_expected.to be(false) }
+        end
+
+        context 'the target has all the required gems with sufficient versions' do
+          let(:gem_versions_in_target) do
+            {
+              'gem1' => Gem::Version.new('1.2.3'),
+              'gem2' => Gem::Version.new('4.5.6')
+            }
+          end
+
+          it { is_expected.to be(true) }
+        end
+      end
+    end
+  end
+
+  describe '#preview?' do
+    subject { cop.preview? }
+
+    it { is_expected.to be(false) }
+
+    context 'when the `--preview` option is given' do
+      let(:cop_options) { { preview: true } }
+
+      it { is_expected.to be(true) }
+    end
+
+    context 'when `AllCops: Preview` is set' do
+      let(:config) { RuboCop::Config.new('AllCops' => { 'Preview' => true }) }
+
+      it { is_expected.to be(true) }
+
+      context 'when the `--no-preview` option is given' do
+        let(:cop_options) { { preview: false } }
+
+        it { is_expected.to be(false) }
+      end
+    end
   end
 
   describe '#safe_autocorrect?' do
@@ -340,7 +627,7 @@ RSpec.describe RuboCop::Cop::Cop, :config do
       it { is_expected.to be(false) }
     end
 
-    context 'when auto-correction of the cop is declared unsafe' do
+    context 'when autocorrection of the cop is declared unsafe' do
       let(:cop_config) { { 'SafeAutoCorrect' => false } }
 
       it { is_expected.to be(false) }

@@ -4,6 +4,38 @@ RSpec.describe RuboCop::Cop::Lint::ShadowedArgument, :config do
   let(:cop_config) { { 'IgnoreImplicitReferences' => false } }
 
   describe 'method argument shadowing' do
+    context 'when a non-positional argument is shadowed' do
+      it 'registers an offense for an optional argument' do
+        expect_offense(<<~RUBY)
+          def do_something(foo = 1)
+            foo = 2
+            ^^^^^^^ Argument `foo` was shadowed by a local variable before it was used.
+            puts foo
+          end
+        RUBY
+      end
+
+      it 'registers an offense for a keyword argument' do
+        expect_offense(<<~RUBY)
+          def do_something(foo:)
+            foo = 2
+            ^^^^^^^ Argument `foo` was shadowed by a local variable before it was used.
+            puts foo
+          end
+        RUBY
+      end
+
+      it 'registers an offense for a rest argument' do
+        expect_offense(<<~RUBY)
+          def do_something(*foo)
+            foo = 2
+            ^^^^^^^ Argument `foo` was shadowed by a local variable before it was used.
+            puts foo
+          end
+        RUBY
+      end
+    end
+
     context 'when a single argument is shadowed' do
       it 'registers an offense' do
         expect_offense(<<~RUBY)
@@ -92,6 +124,16 @@ RSpec.describe RuboCop::Cop::Lint::ShadowedArgument, :config do
             def do_something(*items)
               *items, last = items
               puts items
+            end
+          RUBY
+        end
+      end
+
+      context 'when self assigning to a block argument in `for`' do
+        it 'does not register an offense' do
+          expect_no_offenses(<<~RUBY)
+            for item in items
+              do_something { |arg| arg = arg }
             end
           RUBY
         end
@@ -382,6 +424,38 @@ RSpec.describe RuboCop::Cop::Lint::ShadowedArgument, :config do
                 end
               RUBY
             end
+          end
+        end
+      end
+
+      context 'and shadowed within `rescue`' do
+        context 'and assigned before the `rescue`' do
+          it 'registers an offense' do
+            expect_offense(<<~RUBY)
+              def do_something(foo)
+                foo = bar
+                ^^^^^^^^^ Argument `foo` was shadowed by a local variable before it was used.
+                begin
+                rescue
+                  foo = baz
+                end
+                puts foo
+              end
+            RUBY
+          end
+        end
+
+        context 'and the argument was not shadowed outside the `rescue`' do
+          it 'registers no offense' do
+            expect_no_offenses(<<~RUBY)
+                def do_something(foo)
+                begin
+                rescue
+                  foo = bar
+                end
+                puts foo
+              end
+            RUBY
           end
         end
       end

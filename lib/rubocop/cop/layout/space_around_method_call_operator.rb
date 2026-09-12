@@ -19,7 +19,7 @@ module RuboCop
       #   foo &. bar
       #   foo &. bar&. buzz
       #   RuboCop:: Cop
-      #   RuboCop:: Cop:: Cop
+      #   RuboCop:: Cop:: Base
       #   :: RuboCop::Cop
       #
       #   # good
@@ -31,7 +31,7 @@ module RuboCop
       #   foo&.bar
       #   foo&.bar&.buzz
       #   RuboCop::Cop
-      #   RuboCop::Cop::Cop
+      #   RuboCop::Cop::Base
       #   ::RuboCop::Cop
       #
       class SpaceAroundMethodCallOperator < Base
@@ -51,7 +51,7 @@ module RuboCop
         alias on_csend on_send
 
         def on_const(node)
-          return unless node.loc.respond_to?(:double_colon) && node.loc.double_colon
+          return unless node.loc?(:double_colon)
 
           check_space_after_double_colon(node)
         end

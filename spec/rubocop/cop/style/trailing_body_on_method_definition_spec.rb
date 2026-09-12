@@ -63,6 +63,20 @@ RSpec.describe RuboCop::Cop::Style::TrailingBodyOnMethodDefinition, :config do
     RUBY
   end
 
+  it 'registers an offense when an expression precedes a method definition on the same line with a semicolon' do
+    expect_offense(<<~RUBY)
+      foo;def some_method; body
+                           ^^^^ Place the first line of a multi-line method definition's body on its own line.
+      end
+    RUBY
+
+    expect_correction(<<~RUBY)
+      foo;def some_method#{trailing_whitespace}
+            body
+      end
+    RUBY
+  end
+
   it 'accepts a method with one line of body' do
     expect_no_offenses(<<~RUBY)
       def some_method
@@ -99,7 +113,7 @@ RSpec.describe RuboCop::Cop::Style::TrailingBodyOnMethodDefinition, :config do
     end
   end
 
-  it 'auto-corrects with comment after body' do
+  it 'autocorrects with comment after body' do
     expect_offense(<<-RUBY.strip_margin('|'))
       |  def some_method; body # stuff
       |                   ^^^^ Place the first line of a multi-line method definition's body on its own line.
@@ -114,7 +128,7 @@ RSpec.describe RuboCop::Cop::Style::TrailingBodyOnMethodDefinition, :config do
     RUBY
   end
 
-  it 'auto-corrects body with method definition with args not in parens' do
+  it 'autocorrects body with method definition with args not in parens' do
     expect_offense(<<-RUBY.strip_margin('|'))
       |  def some_method arg1, arg2; body
       |                              ^^^^ Place the first line of a multi-line method definition's body on its own line.
@@ -128,7 +142,7 @@ RSpec.describe RuboCop::Cop::Style::TrailingBodyOnMethodDefinition, :config do
     RUBY
   end
 
-  it 'auto-correction removes semicolon from method definition but not body' do
+  it 'removes semicolon from method definition but not body when autocorrecting' do
     expect_offense(<<-RUBY.strip_margin('|'))
       |  def some_method; body; more_body;
       |                   ^^^^ Place the first line of a multi-line method definition's body on its own line.
@@ -143,7 +157,7 @@ RSpec.describe RuboCop::Cop::Style::TrailingBodyOnMethodDefinition, :config do
   end
 
   context 'when method is not on first line of processed_source' do
-    it 'auto-corrects offense' do
+    it 'autocorrects offense' do
       expect_offense(<<-RUBY.strip_margin('|'))
         |
         |  def some_method; body

@@ -4,6 +4,18 @@ RSpec.describe RuboCop::Cop::Metrics::MethodLength, :config do
   let(:cop_config) { { 'Max' => 5, 'CountComments' => false } }
 
   context 'when method is an instance method' do
+    it 'does not register an offense when there are exactly `Max` lines' do
+      expect_no_offenses(<<~RUBY)
+        def m
+          a = 1
+          a = 2
+          a = 3
+          a = 4
+          a = 5
+        end
+      RUBY
+    end
+
     it 'registers an offense' do
       expect_offense(<<~RUBY)
         def m
@@ -20,7 +32,19 @@ RSpec.describe RuboCop::Cop::Metrics::MethodLength, :config do
   end
 
   context 'when method is defined with `define_method`' do
-    it 'registers an offense' do
+    it 'does not register an offense when there are exactly `Max` lines' do
+      expect_no_offenses(<<~RUBY)
+        define_method(:m) do
+          a = 1
+          a = 2
+          a = 3
+          a = 4
+          a = 5
+        end
+      RUBY
+    end
+
+    it 'registers an offense when there are more than `Max` lines' do
       expect_offense(<<~RUBY)
         define_method(:m) do
         ^^^^^^^^^^^^^^^^^^^^ Method has too many lines. [6/5]
@@ -32,6 +56,84 @@ RSpec.describe RuboCop::Cop::Metrics::MethodLength, :config do
           a = 6
         end
       RUBY
+    end
+
+    it 'registers an offense for an over-long dynamically defined method with a dynamic symbol name' do
+      expect_offense(<<~'RUBY')
+        define_method(:"#{method_name}=") do
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Method has too many lines. [6/5]
+          a = 1
+          a = 2
+          a = 3
+          a = 4
+          a = 5
+          a = 6
+        end
+      RUBY
+    end
+
+    it 'registers an offense for an over-long dynamically defined method with a dynamic string name' do
+      expect_offense(<<~'RUBY')
+        define_method("#{method_name}=") do
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Method has too many lines. [6/5]
+          a = 1
+          a = 2
+          a = 3
+          a = 4
+          a = 5
+          a = 6
+        end
+      RUBY
+    end
+
+    it 'does not crash when `define_method` is called without a name argument' do
+      expect_offense(<<~RUBY)
+        define_method do
+        ^^^^^^^^^^^^^^^^ Method has too many lines. [6/5]
+          a = 1
+          a = 2
+          a = 3
+          a = 4
+          a = 5
+          a = 6
+        end
+      RUBY
+    end
+  end
+
+  context 'when using numbered parameter', :ruby27 do
+    context 'when method is defined with `define_method`' do
+      it 'registers an offense' do
+        expect_offense(<<~RUBY)
+          define_method(:m) do
+          ^^^^^^^^^^^^^^^^^^^^ Method has too many lines. [6/5]
+            a = _1
+            a = _2
+            a = _3
+            a = _4
+            a = _5
+            a = _6
+          end
+        RUBY
+      end
+    end
+  end
+
+  context 'when using `it` parameter', :ruby34 do
+    context 'when method is defined with `define_method`' do
+      it 'registers an offense' do
+        expect_offense(<<~RUBY)
+          define_method(:m) do
+          ^^^^^^^^^^^^^^^^^^^^ Method has too many lines. [6/5]
+            a = it
+            a = it
+            a = it
+            a = it
+            a = it
+            a = it
+          end
+        RUBY
+      end
     end
   end
 
@@ -169,6 +271,32 @@ RSpec.describe RuboCop::Cop::Metrics::MethodLength, :config do
     RUBY
   end
 
+  it 'does not crash when using a heredoc in a block without block arguments' do
+    expect_no_offenses(<<~RUBY)
+      def foo
+        do_something do
+          <<~HEREDOC
+            text
+          HEREDOC
+        end
+      end
+    RUBY
+  end
+
+  it 'registers an offense when a method contains a heredoc and `__ENCODING__`' do
+    expect_offense(<<~RUBY)
+      def m
+      ^^^^^ Method has too many lines. [6/5]
+        a = 1
+        a = 2
+        a = <<~TEXT
+          text
+        TEXT
+        __ENCODING__
+      end
+    RUBY
+  end
+
   context 'when CountComments is enabled' do
     before { cop_config['CountComments'] = true }
 
@@ -187,82 +315,136 @@ RSpec.describe RuboCop::Cop::Metrics::MethodLength, :config do
     end
   end
 
-  context 'when methods to ignore are defined' do
-    %w[IgnoredMethods ExcludedMethods].each do |key|
-      context "with #{key} config" do
-        context 'with a string' do
-          before { cop_config[key] = ['foo'] }
+  context 'when methods to allow are defined' do
+    context 'AllowedMethods is enabled' do
+      before { cop_config['AllowedMethods'] = ['foo'] }
 
-          it 'still rejects other methods with more than 5 lines' do
-            expect_offense(<<~RUBY)
-              def m
-              ^^^^^ Method has too many lines. [6/5]
-                a = 1
-                a = 2
-                a = 3
-                a = 4
-                a = 5
-                a = 6
-              end
-            RUBY
+      it 'still rejects other methods with more than 5 lines' do
+        expect_offense(<<~RUBY)
+          def m
+          ^^^^^ Method has too many lines. [6/5]
+            a = 1
+            a = 2
+            a = 3
+            a = 4
+            a = 5
+            a = 6
           end
+        RUBY
+      end
 
-          it 'accepts the foo method with more than 5 lines' do
-            expect_no_offenses(<<~RUBY)
-              def foo
-                a = 1
-                a = 2
-                a = 3
-                a = 4
-                a = 5
-                a = 6
-              end
-            RUBY
+      it 'accepts the foo method with more than 5 lines' do
+        expect_no_offenses(<<~RUBY)
+          def foo
+            a = 1
+            a = 2
+            a = 3
+            a = 4
+            a = 5
+            a = 6
           end
-        end
+        RUBY
+      end
 
-        context 'with a regex' do
-          before { cop_config[key] = [/_name$/] }
-
-          it 'accepts the user_name method' do
-            expect_no_offenses(<<~RUBY)
-              def user_name
-                a = 1
-                a = 2
-                a = 3
-                a = 4
-                a = 5
-                a = 6
-              end
-            RUBY
+      it 'accepts dynamically defined matching method name with more than 5 lines' do
+        expect_no_offenses(<<~RUBY)
+          define_method(:foo) do
+            a = 1
+            a = 2
+            a = 3
+            a = 4
+            a = 5
+            a = 6
           end
+        RUBY
+      end
 
-          it 'raises offense for firstname' do
-            expect_offense(<<~RUBY)
-              def firstname
-              ^^^^^^^^^^^^^ Method has too many lines. [6/5]
-                a = 1
-                a = 2
-                a = 3
-                a = 4
-                a = 5
-                a = 6
-              end
-            RUBY
+      it 'accepts dynamically defined matching method name with a numblock' do
+        expect_no_offenses(<<~RUBY)
+          define_method(:foo) do
+            a = _1
+            a = _2
+            a = _3
+            a = _4
+            a = _5
+            a = _6
           end
-        end
+        RUBY
+      end
+
+      it 'accepts dynamically defined matching method name with an itblock', :ruby34 do
+        expect_no_offenses(<<~RUBY)
+          define_method(:foo) do
+            a = it
+            a = it
+            a = it
+            a = it
+            a = it
+            a = it
+          end
+        RUBY
       end
     end
 
-    context 'if both IgnoredMethods and ExcludedMethods are given' do
-      before do
-        cop_config['IgnoredMethods'] = ['foo']
-        cop_config['ExcludedMethods'] = ['m']
+    context 'AllowedPatterns is enabled' do
+      before { cop_config['AllowedPatterns'] = [/_name/] }
+
+      it 'accepts the user_name method' do
+        expect_no_offenses(<<~RUBY)
+          def user_name
+            a = 1
+            a = 2
+            a = 3
+            a = 4
+            a = 5
+            a = 6
+          end
+        RUBY
       end
 
-      it 'uses both configs' do
+      it 'accepts dynamically defined matching method name with more than 5 lines' do
         expect_no_offenses(<<~RUBY)
-          def m
+          define_method(:user_name) do
+            a = 1
+            a = 2
+            a = 3
+            a = 4
+            a = 5
+            a = 6
+          end
+        RUBY
+      end
+
+      it 'accepts dynamically defined matching method name with a numblock' do
+        expect_no_offenses(<<~RUBY)
+          define_method(:user_name) do
+            a = _1
+            a = _2
+            a = _3
+            a = _4
+            a = _5
+            a = _6
+          end
+        RUBY
+      end
+
+      it 'accepts dynamically defined matching method name with an itblock', :ruby34 do
+        expect_no_offenses(<<~RUBY)
+          define_method(:user_name) do
+            a = it
+            a = it
+            a = it
+            a = it
+            a = it
+            a = it
+          end
+        RUBY
+      end
+
+      it 'raises offense for firstname' do
+        expect_offense(<<~RUBY)
+          def firstname
+          ^^^^^^^^^^^^^ Method has too many lines. [6/5]
             a = 1
             a = 2
             a = 3

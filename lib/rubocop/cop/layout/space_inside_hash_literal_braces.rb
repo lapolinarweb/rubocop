@@ -6,15 +6,19 @@ module RuboCop
       # Checks that braces used for hash literals have or don't have
       # surrounding space depending on configuration.
       #
+      # Hash pattern matching is handled in the same way.
+      #
       # @example EnforcedStyle: space (default)
       #   # The `space` style enforces that hash literals have
       #   # surrounding space.
       #
       #   # bad
       #   h = {a: 1, b: 2}
+      #   foo = {{ a: 1 } => { b: { c: 2 }}}
       #
       #   # good
       #   h = { a: 1, b: 2 }
+      #   foo = { { a: 1 } => { b: { c: 2 } } }
       #
       # @example EnforcedStyle: no_space
       #   # The `no_space` style enforces that hash literals have
@@ -22,9 +26,11 @@ module RuboCop
       #
       #   # bad
       #   h = { a: 1, b: 2 }
+      #   foo = {{ a: 1 } => { b: { c: 2 }}}
       #
       #   # good
       #   h = {a: 1, b: 2}
+      #   foo = {{a: 1} => {b: {c: 2}}}
       #
       # @example EnforcedStyle: compact
       #   # The `compact` style normally requires a space inside
@@ -46,10 +52,13 @@ module RuboCop
       #   # bad
       #   foo = { }
       #   bar = {    }
+      #   baz = {
+      #   }
       #
       #   # good
       #   foo = {}
       #   bar = {}
+      #   baz = {}
       #
       # @example EnforcedStyleForEmptyBraces: space
       #   # The `space` EnforcedStyleForEmptyBraces style enforces that
@@ -60,8 +69,9 @@ module RuboCop
       #
       #   # good
       #   foo = { }
-      #   foo = {  }
-      #   foo = {     }
+      #   foo = {    }
+      #   foo = {
+      #   }
       #
       class SpaceInsideHashLiteralBraces < Base
         include SurroundingSpace
@@ -77,7 +87,9 @@ module RuboCop
 
           check(tokens[0], tokens[1])
           check(tokens[-2], tokens[-1]) if tokens.size > 2
+          check_whitespace_only_hash(node) if enforce_no_space_style_for_empty_braces?
         end
+        alias on_hash_pattern on_hash
 
         private
 
@@ -103,7 +115,7 @@ module RuboCop
           if is_same_braces && style == :compact
             false
           elsif is_empty_braces
-            cop_config['EnforcedStyleForEmptyBraces'] != 'no_space'
+            !enforce_no_space_style_for_empty_braces?
           else
             style != :no_space
           end
@@ -111,7 +123,7 @@ module RuboCop
 
         def incorrect_style_detected(token1, token2,
                                      expect_space, is_empty_braces)
-          brace = (token1.text == '{' ? token1 : token2).pos
+          brace = (token1.left_brace? ? token1 : token2).pos
           range = expect_space ? brace : space_range(brace)
           detected_style = expect_space ? 'no_space' : 'space'
 
@@ -174,6 +186,28 @@ module RuboCop
           begin_pos -= 1 while /[ \t]/.match?(src[begin_pos - 1])
 
           range_between(begin_pos, range.end_pos - 1)
+        end
+
+        def check_whitespace_only_hash(node)
+          range = range_inside_hash(node)
+          return unless range.source.match?(/\A\s+\z/m)
+
+          add_offense(
+            range,
+            message: format(MSG, problem: 'empty hash literal braces detected')
+          ) do |corrector|
+            corrector.remove(range)
+          end
+        end
+
+        def range_inside_hash(node)
+          return node.source_range if node.location.begin.nil?
+
+          range_between(node.location.begin.end_pos, node.location.end.begin_pos)
+        end
+
+        def enforce_no_space_style_for_empty_braces?
+          cop_config['EnforcedStyleForEmptyBraces'] == 'no_space'
         end
       end
     end

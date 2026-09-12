@@ -3,10 +3,10 @@
 module RuboCop
   module Cop
     module Layout
-      # This cop ensures that each argument in a multi-line method call
+      # Ensures that each argument in a multi-line method call
       # starts on a separate line.
       #
-      # NOTE: this cop does not move the first argument, if you want that to
+      # NOTE: This cop does not move the first argument, if you want that to
       # be on a separate line, see `Layout/FirstMethodArgumentLineBreak`.
       #
       # @example
@@ -16,12 +16,67 @@ module RuboCop
       #     c
       #   )
       #
+      #   # bad
+      #   foo(a, b, {
+      #     foo: "bar",
+      #   })
+      #
       #   # good
       #   foo(
       #     a,
       #     b,
       #     c
       #   )
+      #
+      #   # good
+      #   foo(a, b, c)
+      #
+      # @example AllowMultilineFinalElement: false (default)
+      #
+      #   # bad
+      #   foo(a, b,
+      #     c
+      #   )
+      #
+      #   # bad
+      #   foo(
+      #     a, b, {
+      #       foo: "bar",
+      #     }
+      #   )
+      #
+      #   # good
+      #   foo(
+      #     a,
+      #     b,
+      #     {
+      #       foo: "bar",
+      #     }
+      #   )
+      #
+      # @example AllowMultilineFinalElement: true
+      #
+      #   # bad
+      #   foo(a, b,
+      #     c
+      #   )
+      #
+      #   # good
+      #   foo(
+      #     a, b, {
+      #       foo: "bar",
+      #     }
+      #   )
+      #
+      #   # good
+      #   foo(
+      #     a,
+      #     b,
+      #     {
+      #       foo: "bar",
+      #     }
+      #   )
+      #
       class MultilineMethodArgumentLineBreaks < Base
         include MultilineElementLineBreaks
         extend AutoCorrector
@@ -42,7 +97,14 @@ module RuboCop
           last_arg = args.last
           args = args[0...-1] + last_arg.children if last_arg&.hash_type? && !last_arg&.braces?
 
-          check_line_breaks(node, args)
+          check_line_breaks(node, args, ignore_last: ignore_last_element?)
+        end
+        alias on_csend on_send
+
+        private
+
+        def ignore_last_element?
+          !!cop_config['AllowMultilineFinalElement']
         end
       end
     end

@@ -3,9 +3,9 @@
 module RuboCop
   module Cop
     module Lint
-      # This cop checks for blocks without a body.
+      # Checks for blocks without a body.
       # Such empty blocks are typically an oversight or we should provide a comment
-      # be clearer what we're aiming for.
+      # to clarify what we're aiming for.
       #
       # Empty lambdas and procs are ignored by default.
       #
@@ -63,9 +63,9 @@ module RuboCop
       class EmptyBlock < Base
         MSG = 'Empty block detected.'
 
-        def on_block(node)
+        def on_block(node) # rubocop:disable InternalAffairs/NumblockHandler, InternalAffairs/ItblockHandler -- an empty block has no parameters to number
           return if node.body
-          return if allow_empty_lambdas? && lambda_or_proc?(node)
+          return if allow_empty_lambdas? && node.lambda_or_proc?
           return if cop_config['AllowComments'] && allow_comment?(node)
 
           add_offense(node)
@@ -77,7 +77,7 @@ module RuboCop
           return false unless processed_source.contains_comment?(node.source_range)
 
           line_comment = processed_source.comment_at_line(node.source_range.line)
-          !line_comment || !comment_disables_cop?(line_comment.loc.expression.source)
+          !line_comment || !comment_disables_cop?(line_comment)
         end
 
         def allow_empty_lambdas?
@@ -85,12 +85,8 @@ module RuboCop
         end
 
         def comment_disables_cop?(comment)
-          regexp_pattern = "# rubocop : (disable|todo) ([^,],)* (all|#{cop_name})"
-          Regexp.new(regexp_pattern.gsub(' ', '\s*')).match?(comment)
-        end
-
-        def lambda_or_proc?(node)
-          node.lambda? || node.proc?
+          directive = DirectiveComment.new(comment)
+          directive.disabled? && directive.cop_names.include?(cop_name)
         end
       end
     end

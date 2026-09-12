@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Lint
-      # This cop checks for unintended or-assignment to a constant.
+      # Checks for unintended or-assignment to a constant.
       #
       # Constants should always be assigned in the same location. And its value
       # should always be the same. If constants are assigned in multiple
@@ -11,8 +11,7 @@ module RuboCop
       #
       # @safety
       #   This cop is unsafe because code that is already conditionally
-      #   assigning a constant may have its behaviour changed by
-      #   auto-correction.
+      #   assigning a constant may have its behavior changed by autocorrection.
       #
       # @example
       #
@@ -28,10 +27,11 @@ module RuboCop
         MSG = 'Avoid using or-assignment with constants.'
 
         def on_or_asgn(node)
-          lhs, _rhs = *node
-          return unless lhs&.casgn_type?
+          return unless node.lhs&.casgn_type?
 
           add_offense(node.loc.operator) do |corrector|
+            next if node.each_ancestor(:any_def).any?
+
             corrector.replace(node.loc.operator, '=')
           end
         end

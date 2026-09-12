@@ -2,11 +2,11 @@
 
 module RuboCop
   module Cop
-    # This class auto-corrects `for` iteration to `#each` enumeration.
+    # This class autocorrects `for` iteration to `#each` enumeration.
     class ForToEachCorrector
       extend NodePattern::Macros
 
-      CORRECTION = '%<collection>s.each do |%<argument>s|'
+      CORRECTION = '%<collection>s%<dot>seach do |%<argument>s|'
 
       def initialize(for_node)
         @for_node        = for_node
@@ -15,6 +15,8 @@ module RuboCop
       end
 
       def call(corrector)
+        offending_range = for_node.source_range.begin.join(end_range)
+
         corrector.replace(offending_range, correction)
       end
 
@@ -23,7 +25,12 @@ module RuboCop
       attr_reader :for_node, :variable_node, :collection_node
 
       def correction
-        format(CORRECTION, collection: collection_source, argument: variable_node.source)
+        format(
+          CORRECTION,
+          collection: collection_source,
+          dot: collection_node.csend_type? ? '&.' : '.',
+          argument: variable_node.source
+        )
       end
 
       def collection_source
@@ -35,14 +42,16 @@ module RuboCop
       end
 
       def requires_parentheses?
-        collection_node.range_type?
+        return true if collection_node.send_type? && collection_node.operator_method?
+
+        collection_node.range_type? || collection_node.operator_keyword?
       end
 
-      def end_position
+      def end_range
         if for_node.do?
-          keyword_begin.end_pos
+          keyword_begin.end
         else
-          collection_end.end_pos
+          collection_end.end
         end
       end
 
@@ -54,18 +63,8 @@ module RuboCop
         if collection_node.begin_type?
           collection_node.loc.end
         else
-          collection_node.loc.expression
+          collection_node.source_range
         end
-      end
-
-      def offending_range
-        replacement_range(end_position)
-      end
-
-      def replacement_range(end_pos)
-        Parser::Source::Range.new(for_node.loc.expression.source_buffer,
-                                  for_node.loc.expression.begin_pos,
-                                  end_pos)
       end
     end
   end

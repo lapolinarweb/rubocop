@@ -59,6 +59,17 @@ RSpec.describe RuboCop::Cop::Lint::UselessTimes, :config do
     RUBY
   end
 
+  it 'registers an offense but does not correct with 1.times with method chain' do
+    expect_offense(<<~RUBY)
+      1.times.reverse_each do
+      ^^^^^^^ Useless call to `1.times` detected.
+        foo
+      end
+    RUBY
+
+    expect_no_corrections
+  end
+
   it 'registers an offense and corrects when 1.times with empty block argument' do
     expect_offense(<<~RUBY)
       def foo
@@ -280,6 +291,82 @@ RSpec.describe RuboCop::Cop::Lint::UselessTimes, :config do
         RUBY
 
         expect_no_corrections
+      end
+
+      it 'registers an offense for 1.times without block' do
+        expect_offense(<<~RUBY)
+          1.times
+          ^^^^^^^ Useless call to `1.times` detected.
+        RUBY
+
+        expect_no_corrections
+      end
+    end
+
+    context 'when the block cannot be safely reduced to its body' do
+      it 'does not correct a block whose body uses `next`' do
+        expect_offense(<<~RUBY)
+          1.times { next 42 }
+          ^^^^^^^^^^^^^^^^^^^ Useless call to `1.times` detected.
+        RUBY
+
+        expect_no_corrections
+      end
+
+      it 'does not correct a block whose body uses `break`' do
+        expect_offense(<<~RUBY)
+          1.times { break }
+          ^^^^^^^^^^^^^^^^^ Useless call to `1.times` detected.
+        RUBY
+
+        expect_no_corrections
+      end
+
+      it 'does not correct a block whose body uses `redo`' do
+        expect_offense(<<~RUBY)
+          1.times { redo }
+          ^^^^^^^^^^^^^^^^ Useless call to `1.times` detected.
+        RUBY
+
+        expect_no_corrections
+      end
+
+      it 'does not correct a block with multiple arguments' do
+        expect_offense(<<~RUBY)
+          1.times { |i, j| do_something(i, j) }
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Useless call to `1.times` detected.
+        RUBY
+
+        expect_no_corrections
+      end
+
+      it 'does not correct a block with a single destructured argument' do
+        expect_offense(<<~RUBY)
+          1.times { |(a, b)| do_something(a, b) }
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Useless call to `1.times` detected.
+        RUBY
+
+        expect_no_corrections
+      end
+
+      it 'does not correct a block with a single splat argument' do
+        expect_offense(<<~RUBY)
+          1.times { |*a| do_something(a) }
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Useless call to `1.times` detected.
+        RUBY
+
+        expect_no_corrections
+      end
+
+      it 'still corrects a block whose `next` is nested in an inner block' do
+        expect_offense(<<~RUBY)
+          1.times { [1, 2].each { next } }
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Useless call to `1.times` detected.
+        RUBY
+
+        expect_correction(<<~RUBY)
+          [1, 2].each { next }
+        RUBY
       end
     end
   end

@@ -83,12 +83,67 @@ RSpec.describe RuboCop::Cop::Lint::UselessSetterCall, :config do
     end
   end
 
+  context 'with method ending with cvar assignment' do
+    it 'accepts' do
+      expect_no_offenses(<<~RUBY)
+        def test
+          something
+          @@top = 5
+        end
+      RUBY
+    end
+  end
+
+  context 'with method ending with setter call on cvar' do
+    it 'accepts' do
+      expect_no_offenses(<<~RUBY)
+        def test
+          something
+          @@top.attr = 5
+        end
+      RUBY
+    end
+  end
+
+  context 'with method ending with gvar assignment' do
+    it 'accepts' do
+      expect_no_offenses(<<~RUBY)
+        def test
+          something
+          $top = 5
+        end
+      RUBY
+    end
+  end
+
+  context 'with method ending with setter call on gvar' do
+    it 'accepts' do
+      expect_no_offenses(<<~RUBY)
+        def test
+          something
+          $top.attr = 5
+        end
+      RUBY
+    end
+  end
+
   context 'with method ending with setter call on argument' do
     it 'accepts' do
       expect_no_offenses(<<~RUBY)
         def test(some_arg)
           unrelated_local_variable = Top.new
           some_arg.attr = 5
+        end
+      RUBY
+    end
+  end
+
+  context 'when a variable from a multiple assignment with nested destructuring holds an argument' do
+    it 'accepts the setter call' do
+      expect_no_offenses(<<~RUBY)
+        def test(arg, other_arg)
+          (a, b), c = arg, other_arg
+          c.attr = 5
         end
       RUBY
     end

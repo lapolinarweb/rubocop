@@ -3,15 +3,29 @@
 module RuboCop
   module Cop
     module Style
-      # Use a consistent style for named format string tokens.
+      # Use a consistent style for tokens within a format string.
       #
-      # NOTE: `unannotated` style cop only works for strings
-      # which are passed as arguments to those methods:
-      # `printf`, `sprintf`, `format`, `%`.
-      # The reason is that _unannotated_ format is very similar
-      # to encoded URLs or Date/Time formatting strings.
+      # By default, all strings are evaluated. In some cases, this may be undesirable,
+      # as they could be used as arguments to a method that does not consider
+      # them to be tokens, but rather other identifiers or just part of the string.
       #
-      # This cop can be customized ignored methods with `IgnoredMethods`.
+      # `AllowedMethods` or `AllowedPatterns` can be configured with in order to mark specific
+      # methods as always allowed, thereby avoiding an offense from the cop. By default, there
+      # are no allowed methods.
+      #
+      # Additionally, the cop can be made conservative by configuring it with
+      # `Mode: conservative` (default `aggressive`). In this mode, tokens (regardless
+      # of `EnforcedStyle`) are only considered if used in the format string argument to the
+      # methods `printf`, `sprintf`, `format` and `%`.
+      #
+      # NOTE: In `aggressive` mode, offenses are registered for all strings containing tokens,
+      # but autocorrection is only applied when the string appears in a known formatting context
+      # (`format`, `sprintf`, `printf`, or `%`). This is done in order to prevent false
+      # autocorrections for strings that are not actually format strings.
+      #
+      # NOTE: Tokens in the `unannotated` style (eg. `%s`) are always treated as if
+      # configured with `Conservative: true`. This is done in order to prevent false positives,
+      # because this format is very similar to encoded URLs or Date/Time formatting strings.
       #
       # @example EnforcedStyle: annotated (default)
       #
@@ -61,29 +75,77 @@ module RuboCop
       #   # good
       #   format('%06d', 10)
       #
-      # @example IgnoredMethods: [redirect]
+      # @example AllowedMethods: [] (default)
+      #
+      #   # bad
+      #   redirect('foo/%{bar_id}')
+      #
+      # @example AllowedMethods: [redirect]
       #
       #   # good
       #   redirect('foo/%{bar_id}')
       #
+      # @example AllowedPatterns: [] (default)
+      #
+      #   # bad
+      #   redirect('foo/%{bar_id}')
+      #
+      # @example AllowedPatterns: ['redirect']
+      #
+      #   # good
+      #   redirect('foo/%{bar_id}')
+      #
+      # @example Mode: aggressive (default), EnforcedStyle: annotated
+      #
+      #   # bad
+      #   "%{greeting}"
+      #   foo("%{greeting}")
+      #
+      #   # bad
+      #   format("%{greeting}", greeting: 'Hello')
+      #   printf("%{greeting}", greeting: 'Hello')
+      #   sprintf("%{greeting}", greeting: 'Hello')
+      #   "%{greeting}" % { greeting: 'Hello' }
+      #
+      #   # good
+      #   format("%<greeting>s", greeting: 'Hello')
+      #   printf("%<greeting>s", greeting: 'Hello')
+      #   sprintf("%<greeting>s", greeting: 'Hello')
+      #   "%<greeting>s" % { greeting: 'Hello' }
+      #
+      # @example Mode: conservative, EnforcedStyle: annotated
+      #
+      #   # good
+      #   "%{greeting}"
+      #   foo("%{greeting}")
+      #
+      #   # bad
+      #   format("%{greeting}", greeting: 'Hello')
+      #   printf("%{greeting}", greeting: 'Hello')
+      #   sprintf("%{greeting}", greeting: 'Hello')
+      #   "%{greeting}" % { greeting: 'Hello' }
+      #
+      #   # good
+      #   format("%<greeting>s", greeting: 'Hello')
+      #   printf("%<greeting>s", greeting: 'Hello')
+      #   sprintf("%<greeting>s", greeting: 'Hello')
+      #   "%<greeting>s" % { greeting: 'Hello' }
+      #
       class FormatStringToken < Base
         include ConfigurableEnforcedStyle
-        include IgnoredMethods
+        include AllowedMethods
+        include AllowedPattern
+        extend AutoCorrector
 
         def on_str(node)
-          return if format_string_token?(node) || use_ignored_method?(node)
+          return if format_string_token?(node) || use_allowed_method?(node)
 
           detections = collect_detections(node)
           return if detections.empty?
           return if allowed_unannotated?(detections)
 
-          detections.each do |detected_style, token_range|
-            if detected_style == style
-              correct_style_detected
-            else
-              style_detected(detected_style)
-              add_offense(token_range, message: message(detected_style))
-            end
+          detections.each do |detected_sequence, token_range|
+            check_sequence(node, detected_sequence, token_range)
           end
         end
 
@@ -101,19 +163,72 @@ module RuboCop
           !node.value.include?('%') || node.each_ancestor(:xstr, :regexp).any?
         end
 
-        def use_ignored_method?(node)
-          (parent = node.parent) && parent.send_type? && ignored_method?(parent.method_name)
+        def use_allowed_method?(node)
+          send_parent = node.each_ancestor(:send).first
+          send_parent &&
+            (allowed_method?(send_parent.method_name) ||
+            matches_allowed_pattern?(send_parent.method_name))
         end
 
-        def unannotated_format?(node, detected_style)
-          detected_style == :unannotated && !format_string_in_typical_context?(node)
+        def check_sequence(node, detected_sequence, token_range)
+          if detected_sequence.style == style
+            correct_style_detected
+          elsif correctable_sequence?(detected_sequence.type)
+            style_detected(detected_sequence.style)
+            register_offense(node, detected_sequence, token_range)
+          end
+        end
+
+        def register_offense(node, detected_sequence, token_range)
+          msg = message(detected_sequence.style)
+
+          if format_string_context?(node)
+            add_offense(token_range, message: msg) do |corrector|
+              autocorrect_sequence(corrector, detected_sequence, token_range)
+            end
+          else
+            add_offense(token_range, message: msg)
+          end
+        end
+
+        def format_string_context?(node)
+          format_string_in_typical_context?(node) ||
+            node.each_ancestor(:dstr).any? do |dstr_node|
+              format_string_in_typical_context?(dstr_node)
+            end
+        end
+
+        def correctable_sequence?(detected_type)
+          detected_type == 's' || style == :annotated || style == :unannotated
+        end
+
+        def autocorrect_sequence(corrector, detected_sequence, token_range)
+          return if style == :unannotated
+
+          name = detected_sequence.name
+          return if name.nil?
+
+          flags = detected_sequence.flags
+          width = detected_sequence.width
+          precision = detected_sequence.precision
+          type = detected_sequence.style == :template ? 's' : detected_sequence.type
+          correction = case style
+                       when :annotated then "%<#{name}>#{flags}#{width}#{precision}#{type}"
+                       when :template then "%#{flags}#{width}#{precision}{#{name}}"
+                       end
+          corrector.replace(token_range, correction)
+        end
+
+        def allowed_string?(node, detected_style)
+          (detected_style == :unannotated || conservative?) &&
+            !format_string_in_typical_context?(node)
         end
 
         def message(detected_style)
           "Prefer #{message_text(style)} over #{message_text(detected_style)}."
         end
 
-        # rubocop:disable Style/FormatStringToken
+        # rubocop:disable-next Style/FormatStringToken -- the cop needs the token style it is matching
         def message_text(style)
           {
             annotated: 'annotated tokens (like `%<foo>s`)',
@@ -121,7 +236,6 @@ module RuboCop
             unannotated: 'unannotated tokens (like `%s`)'
           }[style]
         end
-        # rubocop:enable Style/FormatStringToken
 
         def tokens(str_node, &block)
           return if str_node.source == '__FILE__'
@@ -142,34 +256,41 @@ module RuboCop
         def token_ranges(contents)
           format_string = RuboCop::Cop::Utils::FormatString.new(contents.source)
 
-          format_string.format_sequences.each do |seq|
-            next if seq.percent?
+          format_string.format_sequences.each do |detected_sequence|
+            next if detected_sequence.percent?
 
-            detected_style = seq.style
-            token = contents.begin.adjust(begin_pos: seq.begin_pos, end_pos: seq.end_pos)
+            token = contents.begin.adjust(begin_pos: detected_sequence.begin_pos,
+                                          end_pos: detected_sequence.end_pos)
 
-            yield(detected_style, token)
+            yield(detected_sequence, token)
           end
         end
 
         def collect_detections(node)
           detections = []
-          tokens(node) do |detected_style, token_range|
-            unless unannotated_format?(node, detected_style)
-              detections << [detected_style, token_range]
+          tokens(node) do |detected_sequence, token_range|
+            unless allowed_string?(node, detected_sequence.style)
+              detections << [detected_sequence, token_range]
             end
           end
           detections
         end
 
         def allowed_unannotated?(detections)
-          return false if detections.size > max_unannotated_placeholders_allowed
+          return false unless detections.all? do |detected_sequence,|
+                                detected_sequence.style == :unannotated
+                              end
+          return true if detections.size <= max_unannotated_placeholders_allowed
 
-          detections.all? { |detected_style,| detected_style == :unannotated }
+          detections.any? { |detected_sequence,| !correctable_sequence?(detected_sequence.type) }
         end
 
         def max_unannotated_placeholders_allowed
           cop_config['MaxUnannotatedPlaceholdersAllowed']
+        end
+
+        def conservative?
+          cop_config.fetch('Mode', :aggressive).to_sym == :conservative
         end
       end
     end

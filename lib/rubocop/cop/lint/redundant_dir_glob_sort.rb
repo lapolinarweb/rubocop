@@ -6,6 +6,11 @@ module RuboCop
       # Sort globbed results by default in Ruby 3.0.
       # This cop checks for redundant `sort` method to `Dir.glob` and `Dir[]`.
       #
+      # @safety
+      #   This cop is unsafe, in case of having a file and a directory with
+      #   identical names, since directory will be loaded before the file, which
+      #   will break `exe/files.rb` that rely on `exe.rb` file.
+      #
       # @example
       #
       #   # bad
@@ -33,9 +38,10 @@ module RuboCop
         GLOB_METHODS = %i[glob []].freeze
 
         def on_send(node)
-          return unless (receiver = node.receiver)
-          return unless receiver.receiver&.const_type? && receiver.receiver.short_name == :Dir
-          return unless GLOB_METHODS.include?(receiver.method_name)
+          return unless dir_glob?(node.receiver)
+          # `sort` with a comparator block or block-pass changes the order, so it is
+          # not redundant with the default sorting performed by `Dir.glob`/`Dir[]`.
+          return if sort_with_comparator?(node) || multiple_argument?(node.receiver)
 
           selector = node.loc.selector
 
@@ -43,6 +49,23 @@ module RuboCop
             corrector.remove(selector)
             corrector.remove(node.loc.dot)
           end
+        end
+
+        private
+
+        def dir_glob?(receiver)
+          return false unless receiver&.receiver&.const_type?
+          return false unless receiver.receiver.short_name == :Dir
+
+          GLOB_METHODS.include?(receiver.method_name)
+        end
+
+        def multiple_argument?(glob_method)
+          glob_method.arguments.count >= 2 || glob_method.first_argument&.splat_type?
+        end
+
+        def sort_with_comparator?(node)
+          node.parent&.any_block_type? || node.last_argument&.block_pass_type?
         end
       end
     end

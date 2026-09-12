@@ -2,43 +2,95 @@
 
 require 'tmpdir'
 
-RSpec.shared_context 'isolated environment', :isolated_environment do
+# Reset cached PathUtil.pwd before each example so that tests using Dir.chdir
+# or stubbing Dir.pwd get a fresh value.
+RSpec.configure { |c| c.before { RuboCop::PathUtil.reset_pwd } }
+
+# rubocop:disable-next Metrics/BlockLength
+RSpec.shared_context 'isolated environment' do
   around do |example|
     Dir.mktmpdir do |tmpdir|
-      original_home = ENV['HOME']
-      original_xdg_config_home = ENV['XDG_CONFIG_HOME']
+      original_home = Dir.home
+      original_xdg_config_home = ENV.fetch('XDG_CONFIG_HOME', nil)
+      original_xdg_cache_home = ENV.fetch('XDG_CACHE_HOME', nil)
+      original_rubocop_cache_root = ENV.fetch('RUBOCOP_CACHE_ROOT', nil)
 
       # Make sure to expand all symlinks in the path first. Otherwise we may
       # get mismatched pathnames when loading config files later on.
       tmpdir = File.realpath(tmpdir)
+      # Make upwards search for .rubocop.yml files stop at this directory.
+      RuboCop::FileFinder.root_level = tmpdir
 
       virtual_home = File.expand_path(File.join(tmpdir, 'home'))
       Dir.mkdir(virtual_home)
       ENV['HOME'] = virtual_home
       ENV.delete('XDG_CONFIG_HOME')
 
+      # `XDG_CACHE_HOME` and `RUBOCOP_CACHE_ROOT` are set on some CI runners and
+      # would otherwise point the result cache at a fixed directory shared across examples
+      # and parallel test-queue workers, letting one example's cache leak into another.
+      ENV.delete('XDG_CACHE_HOME')
+      ENV.delete('RUBOCOP_CACHE_ROOT')
+
       base_dir = example.metadata[:project_inside_home] ? virtual_home : tmpdir
       root = example.metadata[:root]
       working_dir = root ? File.join(base_dir, 'work', root) : File.join(base_dir, 'work')
 
-      # Make upwards search for .rubocop.yml files stop at this directory.
-      RuboCop::FileFinder.root_level = working_dir
-
       begin
         FileUtils.mkdir_p(working_dir)
 
-        Dir.chdir(working_dir) { example.run }
+        Dir.chdir(working_dir) do
+          RuboCop::PathUtil.reset_pwd
+          RuboCop::ResultCache.reset_config_cache
+          example.run
+        end
       ensure
         ENV['HOME'] = original_home
         ENV['XDG_CONFIG_HOME'] = original_xdg_config_home
+        ENV['XDG_CACHE_HOME'] = original_xdg_cache_home
+        ENV['RUBOCOP_CACHE_ROOT'] = original_rubocop_cache_root
 
-        RuboCop::FileFinder.root_level = nil
+        RuboCop::ResultCache.reset_config_cache
+        RuboCop::ConfigLoader.clear_options # This also resets RuboCop::FileFinder.root_level
+      end
+    end
+  end
+
+  if RuboCop.const_defined?(:Server)
+    around do |example|
+      RuboCop::Server::Cache.cache_root_path = nil
+      RuboCop::Server::Cache.instance_variable_set(:@project_dir_cache_key, nil)
+      begin
+        example.run
+      ensure
+        RuboCop::Server::Cache.cache_root_path = nil
+        RuboCop::Server::Cache.instance_variable_set(:@project_dir_cache_key, nil)
       end
     end
   end
 end
 
-RSpec.shared_context 'maintain registry', :restore_registry do
+# Workaround for https://github.com/rubocop/rubocop/issues/12978,
+# there should already be no gemfile in the temp directory
+RSpec.shared_context 'isolated bundler' do
+  around do |example|
+    # No bundler env and reset cached gemfile path
+    Bundler.with_unbundled_env do
+      old_values = Bundler.instance_variables.to_h do |name|
+        [name, Bundler.instance_variable_get(name)]
+      end
+      Bundler.instance_variables.each { |name| Bundler.remove_instance_variable(name) }
+      example.call
+    ensure
+      Bundler.instance_variables.each { |name| Bundler.remove_instance_variable(name) }
+      old_values.each do |name, value|
+        Bundler.instance_variable_set(name, value)
+      end
+    end
+  end
+end
+
+RSpec.shared_context 'maintain registry' do
   around(:each) { |example| RuboCop::Cop::Registry.with_temporary_global { example.run } }
 
   def stub_cop_class(name, inherit: RuboCop::Cop::Base, &block)
@@ -48,15 +100,30 @@ RSpec.shared_context 'maintain registry', :restore_registry do
   end
 end
 
+RSpec.shared_context 'maintain default configuration' do
+  around(:each) do |example|
+    # Make a copy of the current configuration that will not change when source hash changes
+    default_configuration = RuboCop::ConfigLoader.default_configuration
+    config = RuboCop::Config.create(
+      default_configuration.to_h.clone,
+      default_configuration.loaded_path
+    )
+
+    example.run
+
+    RuboCop::ConfigLoader.instance_variable_set(:@default_configuration, config)
+  end
+end
+
 # This context assumes nothing and defines `cop`, among others.
-RSpec.shared_context 'config', :config do # rubocop:disable Metrics/BlockLength
+RSpec.shared_context 'config' do # rubocop:disable Metrics/BlockLength
   ### Meant to be overridden at will
 
   let(:cop_class) do
     unless described_class.is_a?(Class) && described_class < RuboCop::Cop::Base
-      raise 'Specify which cop class to use (e.g `let(:cop_class) { RuboCop::Cop::Base }`, ' \
-            'or RuboCop::Cop::Cop for legacy)'
+      raise 'Specify which cop class to use (e.g `let(:cop_class) { RuboCop::Cop::Base }`)'
     end
+
     described_class
   end
 
@@ -65,6 +132,10 @@ RSpec.shared_context 'config', :config do # rubocop:disable Metrics/BlockLength
   let(:other_cops) { {} }
 
   let(:cop_options) { {} }
+
+  let(:gem_versions) { {} }
+
+  let(:path_sourced_gems) { [] }
 
   ### Utilities
 
@@ -88,17 +159,31 @@ RSpec.shared_context 'config', :config do # rubocop:disable Metrics/BlockLength
   let(:cur_cop_config) do
     RuboCop::ConfigLoader
       .default_configuration.for_cop(cop_class)
-      .merge({
-               'Enabled' => true, # in case it is 'pending'
-               'AutoCorrect' => true # in case defaults set it to false
-             })
+      .merge(
+        'Enabled' => true, # in case it is 'pending'
+        'AutoCorrect' => 'always' # in case defaults set it to 'disabled' or false
+      )
       .merge(cop_config)
   end
 
   let(:config) do
     hash = { 'AllCops' => all_cops_config, cop_class.cop_name => cur_cop_config }.merge!(other_cops)
 
-    RuboCop::Config.new(hash, "#{Dir.pwd}/.rubocop.yml")
+    config = RuboCop::Config.new(hash, "#{Dir.pwd}/.rubocop.yml")
+
+    rails_version_in_gemfile = Gem::Version.new(
+      rails_version || RuboCop::Config::DEFAULT_RAILS_VERSION
+    )
+
+    allow(config).to receive(:gem_versions_in_target).and_return(
+      {
+        'railties' => rails_version_in_gemfile,
+        **gem_versions.transform_values { |value| Gem::Version.new(value) }
+      }
+    )
+    allow(config).to receive(:path_sourced_gems_in_target).and_return(path_sourced_gems)
+
+    config
   end
 
   let(:cop) { cop_class.new(config, cop_options) }
@@ -116,22 +201,119 @@ RSpec.shared_context 'mock console output' do
   end
 end
 
-RSpec.shared_context 'ruby 2.5', :ruby25 do
-  let(:ruby_version) { 2.5 }
+RSpec.shared_context 'mock obsoletion' do
+  include_context 'mock console output'
+
+  let(:obsoletion_configuration_path) { 'obsoletions.yml' }
+
+  before do
+    RuboCop::ConfigObsoletion.reset!
+    allow(RuboCop::ConfigObsoletion).to receive(:files).and_return([obsoletion_configuration_path])
+  end
+
+  after do
+    RuboCop::ConfigObsoletion.reset!
+  end
 end
 
-RSpec.shared_context 'ruby 2.6', :ruby26 do
-  let(:ruby_version) { 2.6 }
+RSpec.shared_context 'lsp' do
+  before do
+    RuboCop::LSP.enable
+  end
+
+  after do
+    RuboCop::LSP.disable
+  end
 end
 
-RSpec.shared_context 'ruby 2.7', :ruby27 do
-  let(:ruby_version) { 2.7 }
+RSpec.shared_context 'with exclude limit tracking' do
+  around do |example|
+    Dir.mktmpdir('rubocop-exclude-limit') do |dir|
+      RuboCop::ExcludeLimit.tmp_dir = Pathname.new(dir)
+      example.run
+    ensure
+      RuboCop::ExcludeLimit.tmp_dir = nil
+    end
+  end
+
+  # Reads exclude_limit values from the tmp files written by ExcludeLimit.
+  # Returns a hash like { 'Max' => 81 } or nil if no values were written.
+  def read_exclude_limit(cop, parameter_name = nil)
+    if parameter_name
+      read_exclude_limit(cop)[parameter_name]
+    else
+      RuboCop::ExcludeLimit.read_limits(cop.class.badge.to_s)
+    end
+  end
 end
 
-RSpec.shared_context 'ruby 3.0', :ruby30 do
-  let(:ruby_version) { 3.0 }
+RSpec.shared_context 'ruby 2.0' do
+  # Prism supports parsing Ruby 3.3+.
+  let(:ruby_version) { ENV['PARSER_ENGINE'] == 'parser_prism' ? 3.3 : 2.0 }
 end
 
-RSpec.shared_context 'ruby 3.1', :ruby31 do
-  let(:ruby_version) { 3.1 }
+RSpec.shared_context 'ruby 2.1' do
+  # Prism supports parsing Ruby 3.3+.
+  let(:ruby_version) { ENV['PARSER_ENGINE'] == 'parser_prism' ? 3.3 : 2.1 }
+end
+
+RSpec.shared_context 'ruby 2.2' do
+  # Prism supports parsing Ruby 3.3+.
+  let(:ruby_version) { ENV['PARSER_ENGINE'] == 'parser_prism' ? 3.3 : 2.2 }
+end
+
+RSpec.shared_context 'ruby 2.3' do
+  # Prism supports parsing Ruby 3.3+.
+  let(:ruby_version) { ENV['PARSER_ENGINE'] == 'parser_prism' ? 3.3 : 2.3 }
+end
+
+RSpec.shared_context 'ruby 2.4' do
+  # Prism supports parsing Ruby 3.3+.
+  let(:ruby_version) { ENV['PARSER_ENGINE'] == 'parser_prism' ? 3.3 : 2.4 }
+end
+
+RSpec.shared_context 'ruby 2.5' do
+  # Prism supports parsing Ruby 3.3+.
+  let(:ruby_version) { ENV['PARSER_ENGINE'] == 'parser_prism' ? 3.3 : 2.5 }
+end
+
+RSpec.shared_context 'ruby 2.6' do
+  # Prism supports parsing Ruby 3.3+.
+  let(:ruby_version) { ENV['PARSER_ENGINE'] == 'parser_prism' ? 3.3 : 2.6 }
+end
+
+RSpec.shared_context 'ruby 2.7' do
+  # Prism supports parsing Ruby 3.3+.
+  let(:ruby_version) { ENV['PARSER_ENGINE'] == 'parser_prism' ? 3.3 : 2.7 }
+end
+
+RSpec.shared_context 'ruby 3.0' do
+  # Prism supports parsing Ruby 3.3+.
+  let(:ruby_version) { ENV['PARSER_ENGINE'] == 'parser_prism' ? 3.3 : 3.0 }
+end
+
+RSpec.shared_context 'ruby 3.1' do
+  # Prism supports parsing Ruby 3.3+.
+  let(:ruby_version) { ENV['PARSER_ENGINE'] == 'parser_prism' ? 3.3 : 3.1 }
+end
+
+RSpec.shared_context 'ruby 3.2' do
+  # Prism supports parsing Ruby 3.3+.
+  let(:ruby_version) { ENV['PARSER_ENGINE'] == 'parser_prism' ? 3.3 : 3.2 }
+end
+
+RSpec.shared_context 'ruby 3.3' do
+  let(:ruby_version) { 3.3 }
+end
+
+RSpec.shared_context 'ruby 3.4' do
+  let(:ruby_version) { 3.4 }
+end
+
+RSpec.shared_context 'ruby 4.0' do
+  let(:ruby_version) { 4.0 }
+end
+
+RSpec.shared_context 'ruby 4.1' do
+  let(:ruby_version) { 4.1 }
 end

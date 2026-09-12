@@ -19,10 +19,22 @@ RSpec.describe RuboCop::Cop::Layout::SpaceAfterSemicolon, :config do
     expect_no_offenses('x = 1;')
   end
 
+  it 'does not register an offense when semicolons appear consecutively' do
+    expect_no_offenses(<<~RUBY)
+      foo;; bar
+    RUBY
+  end
+
   context 'inside block braces' do
     shared_examples 'common behavior' do
       it 'accepts a space between a semicolon and a closing brace' do
         expect_no_offenses('test { ; }')
+      end
+
+      it 'accepts no space between a semicolon and a closing brace of string interpolation' do
+        expect_no_offenses(<<~'RUBY')
+          "#{ ;}"
+        RUBY
       end
     end
 

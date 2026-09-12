@@ -69,15 +69,26 @@ RSpec.describe RuboCop::Cop::Generator do
                 # For example
                 MSG = 'Use `#good_method` instead of `#bad_method`.'
 
+                # TODO: Don't call `on_send` unless the method name is in this list
+                # If you don't need `on_send` in the cop you created, remove it.
+                RESTRICT_ON_SEND = %i[bad_method].freeze
+
+                # @!method bad_method?(node)
                 def_node_matcher :bad_method?, <<~PATTERN
                   (send nil? :bad_method ...)
                 PATTERN
 
+                # Called on every `send` node (method call) while walking the AST.
+                # TODO: remove this method if inspecting `send` nodes is unneeded for your cop.
+                # By default, this is aliased to `on_csend` as well to handle method calls
+                # with safe navigation, remove the alias if this is unnecessary.
+                # If kept, ensure your tests cover safe navigation as well!
                 def on_send(node)
                   return unless bad_method?(node)
 
                   add_offense(node)
                 end
+                alias on_csend on_send
               end
             end
           end
@@ -97,7 +108,7 @@ RSpec.describe RuboCop::Cop::Generator do
       allow(new_cop).to receive(:exit!)
       expect { new_cop.write_source }
         .to output(
-          'rake new_cop: lib/rubocop/cop/layout/indentation_style.rb '\
+          'rake new_cop: lib/rubocop/cop/layout/indentation_style.rb ' \
           "already exists!\n"
         ).to_stderr
     end
@@ -144,7 +155,7 @@ RSpec.describe RuboCop::Cop::Generator do
       allow(new_cop).to receive(:exit!)
       expect { new_cop.write_spec }
         .to output(
-          'rake new_cop: spec/rubocop/cop/layout/indentation_style_spec.rb '\
+          'rake new_cop: spec/rubocop/cop/layout/indentation_style_spec.rb ' \
           "already exists!\n"
         ).to_stderr
     end
@@ -157,7 +168,7 @@ RSpec.describe RuboCop::Cop::Generator do
           1. Modify the description of Style/FakeCop in config/default.yml
           2. Implement your new cop in the generated file!
           3. Commit your new cop with a message such as
-             e.g. "Add new `Style/FakeCop` cop."
+             e.g. "Add new `Style/FakeCop` cop"
           4. Run `bundle exec rake changelog:new` to generate a changelog entry
              for your new cop.
       TODO
@@ -184,7 +195,7 @@ RSpec.describe RuboCop::Cop::Generator do
 
     before do
       # It is hacked to use `IO.write` to avoid mocking `File.write` for testing.
-      IO.write(path, <<~YAML) # rubocop:disable Security/IoMethods
+      IO.write(path, <<~YAML) # rubocop:disable Security/IoMethods -- the path is built by this spec
         Style/Alias:
           Enabled: true
 
@@ -310,8 +321,39 @@ RSpec.describe RuboCop::Cop::Generator do
       expect(generator.__send__(:snake_case, 'FooBar')).to eq('foo_bar')
     end
 
+    it 'converts "FooBar/Baz" to snake_case' do
+      expect(generator.__send__(:snake_case, 'FooBar/Baz')).to eq('foo_bar/baz')
+    end
+
     it 'converts "RSpec" to snake_case' do
       expect(generator.__send__(:snake_case, 'RSpec')).to eq('rspec')
+    end
+
+    it 'converts "RSpec/Foo" to snake_case' do
+      expect(generator.__send__(:snake_case, 'RSpec/Foo')).to eq('rspec/foo')
+    end
+
+    it 'converts "RSpecFoo/Bar" to snake_case' do
+      expect(generator.__send__(:snake_case, 'RSpecFoo/Bar')).to eq('rspec_foo/bar')
+    end
+  end
+
+  context 'nested departments' do
+    let(:cop_identifier) { 'Plugin/Style/FakeCop' }
+
+    include_context 'cli spec behavior'
+
+    it 'generates source and spec files correctly namespaced within departments' do
+      expect(File).to receive(:write).with('lib/rubocop/cop/plugin/style/fake_cop.rb',
+                                           an_instance_of(String))
+      generator.write_source
+      expect(stdout.string).to eq("[create] lib/rubocop/cop/plugin/style/fake_cop.rb\n")
+
+      expect(File).to receive(:write).with('spec/rubocop/cop/plugin/style/fake_cop_spec.rb',
+                                           an_instance_of(String))
+      generator.write_spec
+      expect(stdout.string)
+        .to include("[create] spec/rubocop/cop/plugin/style/fake_cop_spec.rb\n")
     end
   end
 
@@ -323,12 +365,7 @@ RSpec.describe RuboCop::Cop::Generator do
       RuboCop::Cop::Registry.with_temporary_global(new_global) { example.run }
     end
 
-    let(:config) do
-      config = RuboCop::ConfigStore.new
-      path = File.join(RuboCop::ConfigLoader::RUBOCOP_HOME, RuboCop::ConfigLoader::DOTFILE)
-      config.options_config = path
-      config
-    end
+    let(:config) { RuboCop::ConfigStore.new }
     let(:options) { { formatters: [] } }
     let(:runner) { RuboCop::Runner.new(options, config) }
 

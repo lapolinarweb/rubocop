@@ -16,6 +16,8 @@ module RuboCop
       #
       #   something = 123if test
       #
+      #   return(foo + bar)
+      #
       #   # good
       #   something 'test' do |x|
       #   end
@@ -24,6 +26,9 @@ module RuboCop
       #   end
       #
       #   something = 123 if test
+      #
+      #   return (foo + bar)
+      #
       class SpaceAroundKeyword < Base
         extend AutoCorrector
 
@@ -33,9 +38,10 @@ module RuboCop
         DO = 'do'
         SAFE_NAVIGATION = '&.'
         NAMESPACE_OPERATOR = '::'
-        ACCEPT_LEFT_PAREN = %w[break defined? next not rescue return super yield].freeze
+        ACCEPT_LEFT_PAREN = %w[break defined? next not rescue super yield].freeze
         ACCEPT_LEFT_SQUARE_BRACKET = %w[super yield].freeze
         ACCEPT_NAMESPACE_OPERATOR = 'super'
+        RESTRICT_ON_SEND = %i[!].freeze
 
         def on_and(node)
           check(node, [:operator].freeze) if node.keyword?
@@ -44,6 +50,8 @@ module RuboCop
         def on_block(node)
           check(node, %i[begin end].freeze)
         end
+        alias on_numblock on_block
+        alias on_itblock on_block
 
         def on_break(node)
           check(node, [:keyword].freeze)
@@ -161,7 +169,7 @@ module RuboCop
 
         def check(node, locations, begin_keyword = DO)
           locations.each do |loc|
-            next unless node.loc.respond_to?(loc)
+            next unless node.loc?(loc)
 
             range = node.loc.public_send(loc)
             next unless range
@@ -241,7 +249,7 @@ module RuboCop
         end
 
         def accept_namespace_operator?(range)
-          ACCEPT_NAMESPACE_OPERATOR == range.source
+          range.source == ACCEPT_NAMESPACE_OPERATOR
         end
 
         def safe_navigation_call?(range, pos)
@@ -256,7 +264,7 @@ module RuboCop
           # regular dotted method calls bind more tightly than operators
           # so we need to climb up the AST past them
           node.each_ancestor do |ancestor|
-            return true if ancestor.and_type? || ancestor.or_type?
+            return true if ancestor.operator_keyword? || ancestor.range_type?
             return false unless ancestor.send_type?
             return true if ancestor.operator_method?
           end

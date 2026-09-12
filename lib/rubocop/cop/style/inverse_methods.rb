@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Style
-      # This cop check for usages of not (`not` or `!`) called on a method
+      # Checks for usages of not (`not` or `!`) called on a method
       # when an inverse of that method can be used instead.
       #
       # Methods that can be inverted by a not (`not` or `!`) should be defined
@@ -41,15 +41,17 @@ module RuboCop
       #     f != 1
       #   end
       class InverseMethods < Base
-        include IgnoredNode
         include RangeHelp
         extend AutoCorrector
 
         MSG = 'Use `%<inverse>s` instead of inverting `%<method>s`.'
         CLASS_COMPARISON_METHODS = %i[<= >= < >].freeze
+        SAFE_NAVIGATION_INCOMPATIBLE_METHODS = (CLASS_COMPARISON_METHODS + %i[any? none?]).freeze
         EQUALITY_METHODS = %i[== != =~ !~ <= >= < >].freeze
         NEGATED_EQUALITY_METHODS = %i[!= !~].freeze
         CAMEL_CASE = /[A-Z]+[a-z]+/.freeze
+
+        RESTRICT_ON_SEND = [:!].freeze
 
         def self.autocorrect_incompatible_with
           [Style::Not, Style::SymbolProc]
@@ -58,25 +60,25 @@ module RuboCop
         # @!method inverse_candidate?(node)
         def_node_matcher :inverse_candidate?, <<~PATTERN
           {
-            (send $(send $(...) $_ $...) :!)
-            (send (block $(send $(...) $_) $...) :!)
-            (send (begin $(send $(...) $_ $...)) :!)
+            (send $(call $(...) $_ $...) :!)
+            (send (any_block $(call $(...) $_) $...) :!)
+            (send (begin $(call $(...) $_ $...)) :!)
           }
         PATTERN
 
         # @!method inverse_block?(node)
         def_node_matcher :inverse_block?, <<~PATTERN
-          (block $(send (...) $_) ... { $(send ... :!)
-                                        $(send (...) {:!= :!~} ...)
-                                        (begin ... $(send ... :!))
-                                        (begin ... $(send (...) {:!= :!~} ...))
-                                      })
+          (any_block $(call (...) $_) ... { $(call ... :!)
+                                            $(send (...) {:!= :!~} ...)
+                                            (begin ... $(call ... :!))
+                                            (begin ... $(send (...) {:!= :!~} ...))
+                                          })
         PATTERN
 
         def on_send(node)
-          inverse_candidate?(node) do |_method_call, lhs, method, rhs|
+          inverse_candidate?(node) do |method_call, lhs, method, rhs|
             return unless inverse_methods.key?(method)
-            return if negated?(node)
+            return if negated?(node) || safe_navigation_incompatible?(method_call)
             return if part_of_ignored_node?(node)
             return if possible_class_hierarchy_check?(lhs, rhs, method)
 
@@ -85,6 +87,7 @@ module RuboCop
             end
           end
         end
+        alias on_csend on_send
 
         def on_block(node)
           inverse_block?(node) do |_method_call, method, block|
@@ -94,13 +97,16 @@ module RuboCop
 
             # Inverse method offenses inside of the block of an inverse method
             # offense, such as `y.reject { |key, _value| !(key =~ /c\d/) }`,
-            # can cause auto-correction to apply improper corrections.
+            # can cause autocorrection to apply improper corrections.
             ignore_node(block)
             add_offense(node, message: message(method, inverse_blocks[method])) do |corrector|
               correct_inverse_block(corrector, node)
             end
           end
         end
+
+        alias on_numblock on_block
+        alias on_itblock on_block
 
         private
 
@@ -151,15 +157,17 @@ module RuboCop
         end
 
         def not_to_receiver(node, method_call)
-          Parser::Source::Range.new(node.loc.expression.source_buffer,
-                                    node.loc.selector.begin_pos,
-                                    method_call.loc.expression.begin_pos)
+          node.loc.selector.begin.join(method_call.source_range.begin)
         end
 
         def end_parentheses(node, method_call)
-          Parser::Source::Range.new(node.loc.expression.source_buffer,
-                                    method_call.loc.expression.end_pos,
-                                    node.loc.expression.end_pos)
+          method_call.source_range.end.join(node.source_range.end)
+        end
+
+        def safe_navigation_incompatible?(node)
+          return false unless node.csend_type?
+
+          SAFE_NAVIGATION_INCOMPATIBLE_METHODS.include?(node.method_name)
         end
 
         # When comparing classes, `!(Integer < Numeric)` is not the same as

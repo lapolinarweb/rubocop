@@ -3,13 +3,16 @@
 module RuboCop
   module Cop
     module Style
-      # Check that a copyright notice was given in each source file.
+      # Checks that a copyright notice was given in each source file.
       #
       # The default regexp for an acceptable copyright notice can be found in
       # config/default.yml. The default can be changed as follows:
       #
-      #  Style/Copyright:
-      #    Notice: '^Copyright (\(c\) )?2\d{3} Acme Inc'
+      # [source,yaml]
+      # ----
+      # Style/Copyright:
+      #   Notice: '^Copyright (\(c\) )?2\d{3} Acme Inc'
+      # ----
       #
       # This regex string is treated as an unanchored regex. For each file
       # that RuboCop scans, a comment that matches this regex must be found or
@@ -22,40 +25,52 @@ module RuboCop
         MSG = 'Include a copyright notice matching /%<notice>s/ before any code.'
         AUTOCORRECT_EMPTY_WARNING = 'An AutocorrectNotice must be defined in your RuboCop config'
 
+        # rubocop:disable-next Metrics/AbcSize
         def on_new_investigation
           return if notice.empty? || notice_found?(processed_source)
 
-          add_offense(offense_range, message: format(MSG, notice: notice)) do |corrector|
-            verify_autocorrect_notice!
+          message = format(MSG, notice: notice)
+          if processed_source.blank?
+            add_global_offense(message)
+          else
+            offense_range = source_range(processed_source.buffer, 1, 0)
+            add_offense(offense_range, message: message) do |corrector|
+              next unless autocorrect?
 
-            token = insert_notice_before(processed_source)
-            range = token.nil? ? range_between(0, 0) : token.pos
+              verify_autocorrect_notice!
 
-            corrector.insert_before(range, "#{autocorrect_notice}\n")
+              autocorrect(corrector)
+            end
           end
         end
 
         private
 
-        def notice
-          cop_config['Notice']
+        def autocorrect(corrector)
+          token = insert_notice_before(processed_source)
+          range = token.nil? ? range_between(0, 0) : token.pos
+
+          corrector.insert_before(range, "#{normalized_autocorrect_notice}\n")
         end
 
-        def autocorrect_notice
-          cop_config['AutocorrectNotice']
-        end
+        def normalized_autocorrect_notice
+          autocorrect_notice.lines.map do |line|
+            next line if line.start_with?('#')
+            next "#\n" if line.chomp.empty?
 
-        def offense_range
-          source_range(processed_source.buffer, 1, 0)
+            "# #{line}"
+          end.join
         end
 
         def verify_autocorrect_notice!
-          raise Warning, AUTOCORRECT_EMPTY_WARNING if autocorrect_notice.empty?
+          if autocorrect_notice.nil? || autocorrect_notice.empty?
+            raise Warning, "#{cop_name}: #{AUTOCORRECT_EMPTY_WARNING}"
+          end
 
-          regex = Regexp.new(notice)
-          return if autocorrect_notice&.match?(regex)
+          return if normalized_autocorrect_notice.gsub(/^# */, '').match?(notice_regexp)
 
-          raise Warning, "AutocorrectNotice '#{autocorrect_notice}' must match Notice /#{notice}/"
+          message = "AutocorrectNotice '#{autocorrect_notice}' must match Notice /#{notice}/"
+          raise Warning, "#{cop_name}: #{message}"
         end
 
         def insert_notice_before(processed_source)
@@ -69,26 +84,39 @@ module RuboCop
           return false if token_index >= processed_source.tokens.size
 
           token = processed_source.tokens[token_index]
-          token.comment? && /^#!.*$/.match?(token.text)
+          token.comment? && /\A#!.*\z/.match?(token.text)
         end
 
         def encoding_token?(processed_source, token_index)
           return false if token_index >= processed_source.tokens.size
 
           token = processed_source.tokens[token_index]
-          token.comment? && /^#.*coding\s?[:=]\s?(?:UTF|utf)-8/.match?(token.text)
+          token.comment? && /\A#.*coding\s?[:=]\s?(?:UTF|utf)-8/.match?(token.text)
         end
 
         def notice_found?(processed_source)
-          notice_found = false
-          notice_regexp = Regexp.new(notice)
-          processed_source.each_token do |token|
+          multiline_notice = +''
+          processed_source.tokens.each do |token|
             break unless token.comment?
 
-            notice_found = notice_regexp.match?(token.text)
-            break if notice_found
+            multiline_notice << token.text.sub(/\A# */, '') << "\n"
+
+            break if notice_regexp.match?(token.text)
           end
-          notice_found
+
+          multiline_notice.match?(notice_regexp)
+        end
+
+        def notice_regexp
+          @notice_regexp ||= Regexp.new(notice.sub(/\A(?:\\A|\^)?#(?:\\s[*+?]?|\s)*/, ''))
+        end
+
+        def notice
+          cop_config['Notice']
+        end
+
+        def autocorrect_notice
+          cop_config['AutocorrectNotice']
         end
       end
     end

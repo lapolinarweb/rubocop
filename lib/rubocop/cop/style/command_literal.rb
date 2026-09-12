@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Style
-      # This cop enforces using `` or %x around command literals.
+      # Enforces using `` or %x around command literals.
       #
       # @example EnforcedStyle: backticks (default)
       #   # bad
@@ -148,7 +148,7 @@ module RuboCop
         end
 
         def contains_backtick?(node)
-          /`/.match?(node_body(node))
+          node_body(node).include?('`')
         end
 
         def node_body(node)
@@ -173,7 +173,7 @@ module RuboCop
         end
 
         def preferred_delimiters_config
-          config.for_cop('Style/PercentLiteralDelimiters') ['PreferredDelimiters']
+          config.for_cop('Style/PercentLiteralDelimiters')['PreferredDelimiters']
         end
       end
     end

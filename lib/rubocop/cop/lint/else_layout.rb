@@ -3,11 +3,11 @@
 module RuboCop
   module Cop
     module Lint
-      # This cop checks for odd `else` block layout - like
+      # Checks for odd `else` block layout - like
       # having an expression on the same line as the `else` keyword,
       # which is usually a mistake.
       #
-      # Its auto-correction tweaks layout to keep the syntax. So, this auto-correction
+      # Its autocorrection tweaks layout to keep the syntax. So, this autocorrection
       # is compatible correction for bad case syntax, but if your code makes a mistake
       # with `elsif` and `else`, you will have to correct it manually.
       #
@@ -21,11 +21,9 @@ module RuboCop
       #     do_that
       #   end
       #
-      # @example
-      #
       #   # good
       #
-      #   # This code is compatible with the bad case. It will be auto-corrected like this.
+      #   # This code is compatible with the bad case. It will be autocorrected like this.
       #   if something
       #     # ...
       #   else
@@ -40,7 +38,26 @@ module RuboCop
       #   elsif do_this
       #     do_that
       #   end
+      #
+      #   # bad
+      #
+      #   # For single-line conditionals using `then` the layout is disallowed
+      #   # when the `else` body is multiline because it is treated as a lint offense.
+      #   if something then on_the_same_line_as_then
+      #   else first_line
+      #     second_line
+      #   end
+      #
+      #   # good
+      #
+      #   # For single-line conditional using `then` the layout is allowed
+      #   # when `else` body is a single-line because it is treated as intentional.
+      #
+      #   if something then on_the_same_line_as_then
+      #   else single_line
+      #   end
       class ElseLayout < Base
+        include Alignment
         include RangeHelp
         extend AutoCorrector
 
@@ -48,6 +65,7 @@ module RuboCop
 
         def on_if(node)
           return if node.ternary?
+          return if node.then? && !node.else_branch&.begin_type?
 
           # If the if is on a single line, it'll be handled by `Style/OneLineConditional`
           return if node.single_line?
@@ -72,7 +90,7 @@ module RuboCop
           first_else = else_branch.begin_type? ? else_branch.children.first : else_branch
 
           return unless first_else
-          return unless first_else.source_range.line == node.loc.else.line
+          return unless same_line?(first_else, node.loc.else)
 
           add_offense(first_else) { |corrector| autocorrect(corrector, node, first_else) }
         end
@@ -80,13 +98,8 @@ module RuboCop
         def autocorrect(corrector, node, first_else)
           corrector.insert_after(node.loc.else, "\n")
 
-          blank_range = range_between(node.loc.else.end_pos, first_else.loc.expression.begin_pos)
-          indentation = indent(node, offset: indentation_width)
-          corrector.replace(blank_range, indentation)
-        end
-
-        def indentation_width
-          @config.for_cop('Layout/IndentationWidth')['Width'] || 2
+          blank_range = range_between(node.loc.else.end_pos, first_else.source_range.begin_pos)
+          corrector.replace(blank_range, indentation(node))
         end
       end
     end

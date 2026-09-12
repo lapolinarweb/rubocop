@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Layout
-      # This cop checks whether the end keyword of `begin` is aligned properly.
+      # Checks whether the end keyword of `begin` is aligned properly.
       #
       # Two modes are supported through the `EnforcedStyleAlignWith` configuration
       # parameter. If it's set to `start_of_line` (which is the default), the
@@ -14,7 +14,7 @@ module RuboCop
       # `Layout/EndAlignment` cop aligns with keywords (e.g. `if`, `while`, `case`)
       # by default. On the other hand, `||= begin` that this cop targets tends to
       # align with the start of the line, it defaults to `EnforcedStyleAlignWith: start_of_line`.
-      # These style can be configured by each cop.
+      # These styles can be configured by each cop.
       #
       # @example EnforcedStyleAlignWith: start_of_line (default)
       #   # bad
@@ -40,7 +40,6 @@ module RuboCop
       #
       class BeginEndAlignment < Base
         include EndKeywordAlignment
-        include RangeHelp
         extend AutoCorrector
 
         MSG = '`end` at %d, %d is not aligned with `%s` at %d, %d.'

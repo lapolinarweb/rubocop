@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Layout
-      # This cop checks for space after `!`.
+      # Checks for space after `!`.
       #
       # @example
       #   # bad
@@ -31,7 +31,7 @@ module RuboCop
         private
 
         def whitespace_after_operator?(node)
-          node.receiver.loc.column - node.loc.column > 1
+          node.receiver.source_range.begin_pos - node.source_range.begin_pos > 1
         end
       end
     end

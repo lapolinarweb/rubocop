@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
 RSpec.describe RuboCop::Cop::Naming::VariableNumber, :config do
-  let(:cop_config) { { 'CheckMethodNames' => true, 'CheckSymbols' => true } }
-
   shared_examples 'offense' do |style, variable, style_to_allow_offenses|
     it "registers an offense for #{variable} in #{style}" do
       expect_offense(<<~RUBY, variable: variable)
@@ -28,7 +26,8 @@ RSpec.describe RuboCop::Cop::Naming::VariableNumber, :config do
   end
 
   shared_examples 'accepts' do |style, variable|
-    it "accepts #{variable} in #{style}" do
+    # `_1 = 1` is a deprecated valid syntax in Ruby 2.7, but an invalid syntax in Ruby 3.0+.
+    it "accepts #{variable} in #{style}", :ruby27, unsupported_on: :prism do
       expect_no_offenses("#{variable} = 1")
     end
   end
@@ -40,6 +39,16 @@ RSpec.describe RuboCop::Cop::Naming::VariableNumber, :config do
 
     it 'accepts integer symbol array literal' do
       expect_no_offenses('%i[1 2 3]')
+    end
+  end
+
+  shared_examples 'accepts empty symbol' do
+    # Prism parses a quoted empty hash key as an empty symbol node,
+    # whereas the parser gem emits a `dsym` node.
+    it 'accepts an empty symbol hash key', :ruby34 do
+      expect_no_offenses(<<~RUBY)
+        x = { "": [] }
+      RUBY
     end
   end
 
@@ -70,6 +79,7 @@ RSpec.describe RuboCop::Cop::Naming::VariableNumber, :config do
     it_behaves_like 'accepts', 'snake_case', '_1'
 
     it_behaves_like 'accepts integer symbols'
+    it_behaves_like 'accepts empty symbol'
 
     it 'registers an offense for normal case numbering in symbol' do
       expect_offense(<<~RUBY)
@@ -102,6 +112,13 @@ RSpec.describe RuboCop::Cop::Naming::VariableNumber, :config do
       expect_offense(<<~RUBY)
         def method1; end
             ^^^^^^^ Use snake_case for method name numbers.
+      RUBY
+    end
+
+    it 'registers an offense for normal case numbering in a global variable name' do
+      expect_offense(<<~RUBY)
+        $arg1 = :foo
+        ^^^^^ Use snake_case for variable numbers.
       RUBY
     end
   end
@@ -137,6 +154,7 @@ RSpec.describe RuboCop::Cop::Naming::VariableNumber, :config do
     it_behaves_like 'accepts', 'normalcase', '_1'
 
     it_behaves_like 'accepts integer symbols'
+    it_behaves_like 'accepts empty symbol'
 
     it 'registers an offense for snake case numbering in symbol' do
       expect_offense(<<~RUBY)
@@ -169,6 +187,13 @@ RSpec.describe RuboCop::Cop::Naming::VariableNumber, :config do
             ^^^^^^^^ Use normalcase for method name numbers.
       RUBY
     end
+
+    it 'registers an offense for snake case numbering in a global variable name' do
+      expect_offense(<<~RUBY)
+        $arg_1 = :foo
+        ^^^^^^ Use normalcase for variable numbers.
+      RUBY
+    end
   end
 
   context 'when configured for non integer' do
@@ -199,6 +224,7 @@ RSpec.describe RuboCop::Cop::Naming::VariableNumber, :config do
     it_behaves_like 'accepts', 'non_integer', '_1'
 
     it_behaves_like 'accepts integer symbols'
+    it_behaves_like 'accepts empty symbol'
 
     it 'registers an offense for snake case numbering in symbol' do
       expect_offense(<<~RUBY)
@@ -289,7 +315,7 @@ RSpec.describe RuboCop::Cop::Naming::VariableNumber, :config do
       RUBY
     end
 
-    it 'does not register an offense for a instance variable name that is allowed' do
+    it 'does not register an offense for an instance variable name that is allowed' do
       expect_no_offenses(<<~RUBY)
         @capture3 = :foo
       RUBY
@@ -316,6 +342,107 @@ RSpec.describe RuboCop::Cop::Naming::VariableNumber, :config do
 
     it 'does not register an offense for a symbol that is allowed' do
       expect_no_offenses(':capture3')
+    end
+  end
+
+  context 'when AllowedPatterns is set' do
+    let(:cop_config) do
+      {
+        'AllowedIdentifiers' => [],
+        'AllowedPatterns' => [
+          '_v\d+\z',
+          'allow_me'
+        ],
+        'CheckSymbols' => true,
+        'CheckMethodNames' => true,
+        'EnforcedStyle' => 'snake_case'
+      }
+    end
+
+    it 'registers an offense for a local variable name that does not match an allowed pattern' do
+      expect_offense(<<~RUBY)
+        foo_a1 = :foo
+        ^^^^^^ Use snake_case for variable numbers.
+      RUBY
+    end
+
+    it 'does not register an offense for a local variable name that matches an allowed pattern' do
+      expect_no_offenses(<<~RUBY)
+        foo_v1 = :foo
+        foo_allow_me_a1 = :allowed
+      RUBY
+    end
+
+    it 'registers an offense for an instance variable name that does not match an allowed pattern' do
+      expect_offense(<<~RUBY)
+        @foo_a1 = :foo
+        ^^^^^^^ Use snake_case for variable numbers.
+      RUBY
+    end
+
+    it 'does not register an offense for an instance variable name that matches an allowed pattern' do
+      expect_no_offenses(<<~RUBY)
+        @foo_v1 = :foo
+        @foo_allow_me_a1 = :allowed
+      RUBY
+    end
+
+    it 'registers an offense for a class variable name that does not match an allowed pattern' do
+      expect_offense(<<~RUBY)
+        @@foo_a1 = :foo
+        ^^^^^^^^ Use snake_case for variable numbers.
+      RUBY
+    end
+
+    it 'does not register an offense for a class variable name that matches an allowed pattern' do
+      expect_no_offenses(<<~RUBY)
+        @@foo_v1 = :foo
+        @@foo_allow_me_a1 = :allowed
+      RUBY
+    end
+
+    it 'registers an offense for a global variable name that does not match an allowed pattern' do
+      expect_offense(<<~RUBY)
+        $foo_a1 = :foo
+        ^^^^^^^ Use snake_case for variable numbers.
+      RUBY
+    end
+
+    it 'does not register an offense for a global variable name that matches an allowed pattern' do
+      expect_no_offenses(<<~RUBY)
+        $foo_v1 = :foo
+        $foo_allow_me_a1 = :allowed
+      RUBY
+    end
+
+    it 'registers an offense for a method name that does not match an allowed pattern' do
+      expect_offense(<<~RUBY)
+        def foo_a1
+            ^^^^^^ Use snake_case for method name numbers.
+        end
+      RUBY
+    end
+
+    it 'does not register an offense for a method name that matches an allowed pattern' do
+      expect_no_offenses(<<~RUBY)
+        def foo_v1
+        end
+
+        def foo_allow_me_a1
+        end
+      RUBY
+    end
+
+    it 'registers an offense for a symbol that does not match an allowed pattern' do
+      expect_offense(<<~RUBY)
+        :foo_a1
+        ^^^^^^^ Use snake_case for symbol numbers.
+      RUBY
+    end
+
+    it 'does not register an offense for a symbol that matches an allowed pattern' do
+      expect_no_offenses(':foo_v1')
+      expect_no_offenses(':foo_allow_me_a1')
     end
   end
 end

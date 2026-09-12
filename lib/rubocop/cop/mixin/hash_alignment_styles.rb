@@ -10,7 +10,7 @@ module RuboCop
           true
         end
 
-        def deltas_for_first_pair(first_pair, _node)
+        def deltas_for_first_pair(first_pair)
           {
             separator: separator_delta(first_pair),
             value: value_delta(first_pair)
@@ -33,7 +33,7 @@ module RuboCop
 
         def separator_delta(pair)
           if pair.hash_rocket?
-            correct_separator_column = pair.key.loc.expression.end.column + 1
+            correct_separator_column = pair.key.source_range.end.column + 1
             actual_separator_column = pair.loc.operator.column
 
             correct_separator_column - actual_separator_column
@@ -43,7 +43,7 @@ module RuboCop
         end
 
         def value_delta(pair)
-          return 0 if pair.value_on_new_line?
+          return 0 if pair.value_on_new_line? || pair.value_omission?
 
           correct_value_column = pair.loc.operator.end.column + 1
           actual_value_column = pair.value.loc.column
@@ -55,7 +55,7 @@ module RuboCop
       # Common functionality for checking alignment of hash values.
       module ValueAlignment
         def checkable_layout?(node)
-          !node.pairs_on_same_line? && !node.mixed_delimiters?
+          !node.pairs_on_same_line? && !node.mixed_delimiters? && alignable_values?(node)
         end
 
         def deltas(first_pair, current_pair)
@@ -67,6 +67,16 @@ module RuboCop
         end
 
         private
+
+        def alignable_values?(node)
+          return false if node.pairs.first.value_omission?
+
+          node.pairs.none? { |pair| value_on_later_line?(pair) }
+        end
+
+        def value_on_later_line?(pair)
+          pair.value && pair.key.last_line != pair.value.first_line
+        end
 
         def separator_delta(first_pair, current_pair, key_delta)
           if current_pair.hash_rocket?
@@ -81,13 +91,7 @@ module RuboCop
       class TableAlignment
         include ValueAlignment
 
-        def initialize
-          self.max_key_width = 0
-        end
-
-        def deltas_for_first_pair(first_pair, node)
-          self.max_key_width = node.keys.map { |key| key.source.length }.max
-
+        def deltas_for_first_pair(first_pair)
           separator_delta = separator_delta(first_pair, first_pair, 0)
           {
             separator: separator_delta,
@@ -97,21 +101,46 @@ module RuboCop
 
         private
 
-        attr_accessor :max_key_width
-
         def key_delta(first_pair, current_pair)
           first_pair.key_delta(current_pair)
         end
 
         def hash_rocket_delta(first_pair, current_pair)
-          first_pair.loc.column + max_key_width + 1 - current_pair.loc.operator.column
+          target_operator_column(first_pair) - current_pair.loc.operator.column
         end
 
         def value_delta(first_pair, current_pair)
-          correct_value_column = first_pair.key.loc.column +
-                                 current_pair.delimiter(true).length +
-                                 max_key_width
-          correct_value_column - current_pair.value.loc.column
+          correct_value_column = target_operator_column(first_pair) +
+                                 max_delimiter_width(first_pair.parent) - 1
+
+          current_pair.value_omission? ? 0 : correct_value_column - current_pair.value.loc.column
+        end
+
+        # The column the separator should land on: the shared key margin
+        # plus the widest single-line key, or, if larger, a multiline key's
+        # own last-line end column. The latter can't be measured from a
+        # multiline key's (newline-including) source length, so it's a
+        # separate candidate rather than folded into `max_key_width`.
+        def target_operator_column(first_pair)
+          hash_node = first_pair.parent
+          candidates = multiline_key_end_columns(hash_node)
+
+          key_width = max_key_width(hash_node)
+          candidates << (first_pair.loc.column + key_width + 1) if key_width.positive?
+
+          candidates.max
+        end
+
+        def multiline_key_end_columns(hash_node)
+          hash_node.keys.reject(&:single_line?).map { |key| key.source_range.end.column + 1 }
+        end
+
+        def max_key_width(hash_node)
+          hash_node.keys.select(&:single_line?).map { |key| key.source.length }.max || 0
+        end
+
+        def max_delimiter_width(hash_node)
+          hash_node.pairs.map { |pair| pair.delimiter(true).length }.max
         end
       end
 
@@ -119,7 +148,7 @@ module RuboCop
       class SeparatorAlignment
         include ValueAlignment
 
-        def deltas_for_first_pair(*_nodes)
+        def deltas_for_first_pair(_first_pair)
           {}
         end
 
@@ -134,7 +163,7 @@ module RuboCop
         end
 
         def value_delta(first_pair, current_pair)
-          first_pair.value_delta(current_pair)
+          current_pair.value_omission? ? 0 : first_pair.value_delta(current_pair)
         end
       end
 

@@ -3,8 +3,11 @@
 module RuboCop
   module Cop
     module Style
-      # This cop looks for trivial reader/writer methods, that could
+      # Looks for trivial reader/writer methods, that could
       # have been created with the attr_* family of functions automatically.
+      # `to_ary`, `to_a`, `to_c`, `to_enum`, `to_h`, `to_hash`, `to_i`, `to_int`, `to_io`,
+      # `to_open`, `to_path`, `to_proc`, `to_r`, `to_regexp`, `to_str`, `to_s`, and `to_sym` methods
+      # are allowed by default. These are customizable with `AllowedMethods` option.
       #
       # @example
       #   # bad
@@ -110,7 +113,7 @@ module RuboCop
         private
 
         def in_module_or_instance_eval?(node)
-          node.each_ancestor(:block, :class, :sclass, :module).each do |pnode|
+          node.each_ancestor(:any_block, :class, :sclass, :module).each do |pnode|
             case pnode.type
             when :class, :sclass
               return false
@@ -167,8 +170,8 @@ module RuboCop
           allowed_methods.map(&:to_sym) + [:initialize]
         end
 
-        def dsl_writer?(method_name)
-          !method_name.to_s.end_with?('=')
+        def dsl_writer?(node)
+          !node.assignment_method?
         end
 
         def trivial_reader?(node)
@@ -176,12 +179,11 @@ module RuboCop
         end
 
         def looks_like_trivial_reader?(node)
-          !node.arguments? && node.body && node.body.ivar_type?
+          !node.arguments? && node.body&.ivar_type?
         end
 
         def trivial_writer?(node)
-          looks_like_trivial_writer?(node) &&
-            !allowed_method_name?(node) && !allowed_writer?(node.method_name)
+          looks_like_trivial_writer?(node) && !allowed_method_name?(node) && !allowed_writer?(node)
         end
 
         # @!method looks_like_trivial_writer?(node)
@@ -195,8 +197,8 @@ module RuboCop
             (exact_name_match? && !names_match?(node))
         end
 
-        def allowed_writer?(method_name)
-          allow_dsl_writers? && dsl_writer?(method_name)
+        def allowed_writer?(node)
+          allow_dsl_writers? && dsl_writer?(node)
         end
 
         def allowed_reader?(node)
@@ -206,11 +208,11 @@ module RuboCop
         def names_match?(node)
           ivar_name, = *node.body
 
-          node.method_name.to_s.sub(/[=?]$/, '') == ivar_name[1..-1]
+          node.method_name.to_s.sub(/[=?]$/, '') == ivar_name[1..]
         end
 
         def trivial_accessor_kind(node)
-          if trivial_writer?(node) && !dsl_writer?(node.method_name)
+          if trivial_writer?(node) && !dsl_writer?(node)
             'writer'
           elsif trivial_reader?(node)
             'reader'
@@ -232,11 +234,11 @@ module RuboCop
         def autocorrect_class(corrector, node)
           kind = trivial_accessor_kind(node)
 
-          return unless names_match?(node) && kind
+          return unless names_match?(node) && !node.predicate_method? && kind
 
           indent = ' ' * node.loc.column
           corrector.replace(
-            node.source_range,
+            node,
             ['class << self',
              "#{indent}  #{accessor(kind, node.method_name)}",
              "#{indent}end"].join("\n")

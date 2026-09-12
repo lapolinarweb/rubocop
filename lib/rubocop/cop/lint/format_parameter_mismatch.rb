@@ -7,32 +7,22 @@ module RuboCop
       # expected fields for format/sprintf/#% and what is actually
       # passed as arguments.
       #
-      # In addition it checks whether different formats are used in the same
+      # In addition, it checks whether different formats are used in the same
       # format string. Do not mix numbered, unnumbered, and named formats in
       # the same format string.
       #
       # @example
       #
       #   # bad
-      #
       #   format('A value: %s and another: %i', a_value)
       #
-      # @example
-      #
       #   # good
-      #
       #   format('A value: %s and another: %i', a_value, another)
       #
-      # @example
-      #
       #   # bad
-      #
       #   format('Unnumbered format: %s and numbered: %2$s', a_value, another)
       #
-      # @example
-      #
       #   # good
-      #
       #   format('Numbered format: %1$s and numbered %2$s', a_value, another)
       class FormatParameterMismatch < Base
         # http://rubular.com/r/CvpbxkcTzy
@@ -81,6 +71,10 @@ module RuboCop
 
           return false if num_of_format_args == :unknown
 
+          first_arg = node.first_argument
+          return false if num_of_expected_fields.zero? &&
+                          first_arg.type?(:dstr, :array)
+
           matched_arguments_count?(num_of_expected_fields, num_of_format_args)
         end
 
@@ -94,8 +88,8 @@ module RuboCop
 
         # @!method called_on_string?(node)
         def_node_matcher :called_on_string?, <<~PATTERN
-          {(send {nil? const_type?} _ (str _) ...)
-           (send (str ...) ...)}
+          {(send {nil? const_type?} _ {str dstr} ...)
+           (send {str dstr} ...)}
         PATTERN
 
         def method_with_format_args?(node)
@@ -143,11 +137,11 @@ module RuboCop
           return false if node.const_receiver? && !node.receiver.loc.name.is?(KERNEL)
           return false unless node.method?(name)
 
-          node.arguments.size > 1 && node.first_argument.str_type?
+          node.arguments.size > 1 && string_type?(node.first_argument)
         end
 
         def expected_fields_count(node)
-          return :unknown unless node.str_type?
+          return :unknown unless string_type?(node)
 
           format_string = RuboCop::Cop::Utils::FormatString.new(node.source)
           return 1 if format_string.named_interpolation?
@@ -172,10 +166,9 @@ module RuboCop
         def percent?(node)
           receiver = node.receiver
 
-          percent = node.method?(:%) &&
-                    (STRING_TYPES.include?(receiver.type) || node.first_argument.array_type?)
+          percent = node.method?(:%) && (string_type?(receiver) || node.first_argument.array_type?)
 
-          return false if percent && STRING_TYPES.include?(receiver.type) && heredoc?(node)
+          return false if percent && string_type?(receiver) && heredoc?(node)
 
           percent
         end
@@ -187,6 +180,10 @@ module RuboCop
 
           format(MSG, arg_num: num_args_for_format, method: method_name,
                       field_num: num_expected_fields)
+        end
+
+        def string_type?(node)
+          STRING_TYPES.include?(node.type)
         end
       end
     end

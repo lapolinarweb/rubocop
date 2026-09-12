@@ -10,7 +10,7 @@ namespace :cut_release do
 
   %w[major minor patch pre].each do |release_type|
     desc "Cut a new #{release_type} release, create release notes and update documents."
-    task release_type => 'changelog:check_clean' do
+    task release_type => ['references:verify', 'changelog:check_clean'] do
       run(release_type)
     end
   end
@@ -31,18 +31,14 @@ namespace :cut_release do
   # Replace `<<next>>` (and variations) with version being cut.
   def update_cop_versions(_old_version, new_version)
     update_file('config/default.yml') do |default|
-      default.gsub(/['"]?<<\s*next\s*>>['"]?/i,
-                   "'#{version_sans_patch(new_version)}'")
+      default.gsub(/['"]?<<\s*next\s*>>['"]?/i, "'#{version_sans_patch(new_version)}'")
     end
     RuboCop::ConfigLoader.default_configuration = nil # invalidate loaded conf
   end
 
   def update_docs(old_version, new_version)
     update_file('docs/antora.yml') do |antora_metadata|
-      antora_metadata.sub(
-        "version: 'master'",
-        "version: '#{version_sans_patch(new_version)}'"
-      )
+      antora_metadata.sub('version: ~', "version: '#{version_sans_patch(new_version)}'")
     end
 
     update_file('docs/modules/ROOT/pages/installation.adoc') do |installation|
@@ -51,23 +47,21 @@ namespace :cut_release do
         "gem 'rubocop', '~> #{version_sans_patch(new_version)}', require: false"
       )
     end
+
+    update_file('docs/modules/ROOT/pages/integration_with_other_tools.adoc') do |integration|
+      integration.gsub("rev: v#{old_version}", "rev: v#{new_version}")
+    end
   end
 
   def update_issue_template(old_version, new_version)
-    update_file('.github/ISSUE_TEMPLATE/bug_report.md') do |issue_template|
-      issue_template.sub(
-        "#{old_version} (using Parser ",
-        "#{new_version} (using Parser "
-      )
+    update_file('.github/ISSUE_TEMPLATE/bug_report.yml') do |issue_template|
+      issue_template.sub("#{old_version} (using Parser ", "#{new_version} (using Parser ")
     end
   end
 
   def update_contributing_doc(old_version, new_version)
     update_file('CONTRIBUTING.md') do |contributing_doc|
-      contributing_doc.sub(
-        "#{old_version} (using Parser ",
-        "#{new_version} (using Parser "
-      )
+      contributing_doc.sub("#{old_version} (using Parser ", "#{new_version} (using Parser ")
     end
   end
 

@@ -3,10 +3,13 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for uses of Module#attr.
+      # Checks for uses of `Module#attr`. The `attr` method has confusing
+      # behavior: with a single argument it creates a reader (like `attr_reader`),
+      # but with a second boolean argument it creates an accessor (deprecated in
+      # Ruby 1.9). Use `attr_reader` or `attr_accessor` to make intent explicit.
       #
       # @example
-      #   # bad - creates a single attribute accessor (deprecated in Ruby 1.9)
+      #   # bad
       #   attr :something, true
       #   attr :one, :two, :three # behaves as attr_reader
       #
@@ -24,7 +27,7 @@ module RuboCop
         def on_send(node)
           return unless node.command?(:attr) && node.arguments?
           # check only for method definitions in class/module body
-          return if node.parent && !node.parent.class_type? && !class_eval?(node.parent)
+          return if allowed_context?(node)
 
           message = message(node)
           add_offense(node.loc.selector, message: message) do |corrector|
@@ -33,6 +36,16 @@ module RuboCop
         end
 
         private
+
+        def allowed_context?(node)
+          return false unless (class_node = node.each_ancestor(:class, :block).first)
+
+          (!class_node.class_type? && !class_eval?(class_node)) || define_attr_method?(class_node)
+        end
+
+        def define_attr_method?(node)
+          node.each_descendant(:def).any? { |def_node| def_node.method?(:attr) }
+        end
 
         def autocorrect(corrector, node)
           attr_name, setter = *node.arguments

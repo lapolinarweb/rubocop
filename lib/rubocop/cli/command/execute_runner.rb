@@ -28,8 +28,21 @@ module RuboCop
             all_passed || @options[:auto_gen_config]
           end
 
-          maybe_print_corrected_source
+          if @options[:diff]
+            print_diffs(runner.diffs)
+          else
+            maybe_print_corrected_source
+          end
 
+          # A diff means autocorrectable offenses are still in the working
+          # tree, so the run has not passed even though they were "corrected"
+          # in memory.
+          all_pass_or_excluded &&= runner.diffs.empty?
+
+          merge_todo_audit_status(runner_status(runner, all_pass_or_excluded))
+        end
+
+        def runner_status(runner, all_pass_or_excluded)
           if runner.aborting?
             STATUS_INTERRUPTED
           elsif all_pass_or_excluded && runner.errors.empty?
@@ -39,15 +52,42 @@ module RuboCop
           end
         end
 
+        def merge_todo_audit_status(status)
+          return status if status == STATUS_INTERRUPTED || !@options[:report_unused_todo_entries]
+
+          audit_status = report_unused_todo_entries
+          status == STATUS_SUCCESS ? audit_status : status
+        end
+
+        def report_unused_todo_entries
+          audit = TodoAudit.new(@config_store, @options)
+          unused = audit.unused_entries
+
+          if unused.nil?
+            warn Rainbow("No `#{audit.todo_file}` found; nothing to audit.").yellow
+            return STATUS_SUCCESS
+          end
+          return STATUS_SUCCESS if unused.empty?
+
+          print_unused_todo_entries(audit.todo_file, unused)
+          STATUS_OFFENSES
+        end
+
+        def print_unused_todo_entries(todo_file, unused)
+          noun = unused.size == 1 ? 'entry' : 'entries'
+          warn Rainbow("\n#{unused.size} unused todo #{noun} found in `#{todo_file}`:").red
+          unused.each { |entry| warn "  #{entry.cop_name}: #{entry.path}" }
+        end
+
         def with_redirect
           if @options[:stderr]
-            orig_stdout = $stdout.dup
-            $stdout.reopen($stderr)
-
-            result = yield
-
-            $stdout.reopen(orig_stdout)
-            result
+            orig_stdout = $stdout
+            begin
+              $stdout = $stderr
+              yield
+            ensure
+              $stdout = orig_stdout
+            end
           else
             yield
           end
@@ -71,16 +111,32 @@ module RuboCop
 
           warn Rainbow("\n#{pluralize(errors.size, 'error')} occurred:").red
 
-          errors.each { |error| warn error }
+          errors.each { |error| warn Rainbow(error).red }
 
-          warn <<~WARNING
+          warn Rainbow(<<~WARNING.strip).yellow
             Errors are usually caused by RuboCop bugs.
-            Please, report your problems to RuboCop's issue tracker.
-            #{Gem.loaded_specs['rubocop'].metadata['bug_tracker_uri']}
-
+            Please, update to the latest RuboCop version if not already in use, and report a bug if the issue still occurs on this version.
+            #{bug_tracker_uri}
             Mention the following information in the issue report:
-            #{RuboCop::Version.version(debug: true)}
+            #{RuboCop::Version.verbose}
           WARNING
+        end
+
+        def bug_tracker_uri
+          return unless Gem.loaded_specs.key?('rubocop')
+
+          "#{Gem.loaded_specs['rubocop'].metadata['bug_tracker_uri']}\n"
+        end
+
+        def print_diffs(diffs)
+          return if diffs.empty?
+          # Integration tools own stdout when they ask for a machine-readable
+          # format, so the diff would only corrupt their input.
+          return if INTEGRATION_FORMATTERS.include?(@options[:format])
+
+          output = @options[:stderr] ? $stderr : $stdout
+          output.puts
+          diffs.each { |diff| output.print(diff) }
         end
 
         def maybe_print_corrected_source
@@ -89,7 +145,7 @@ module RuboCop
           # See: https://github.com/rubocop/rubocop/issues/8673
           return if INTEGRATION_FORMATTERS.include?(@options[:format])
 
-          return unless @options[:stdin] && @options[:auto_correct]
+          return unless @options[:stdin] && @options[:autocorrect]
 
           (@options[:stderr] ? $stderr : $stdout).puts '=' * 20
           print @options[:stdin]

@@ -2,7 +2,7 @@
 
 module RuboCop
   module Cop
-    # This class auto-corrects `#each` enumeration to `for` iteration.
+    # This class autocorrects `#each` enumeration to `for` iteration.
     class EachToForCorrector
       extend NodePattern::Macros
 
@@ -11,7 +11,7 @@ module RuboCop
 
       def initialize(block_node)
         @block_node = block_node
-        @collection_node = block_node.send_node.receiver
+        @collection_node = block_node.receiver
         @argument_node = block_node.arguments
       end
 
@@ -27,24 +27,20 @@ module RuboCop
         if block_node.arguments?
           format(CORRECTION_WITH_ARGUMENTS,
                  collection: collection_node.source,
-                 variables: argument_node.children.first.source)
+                 variables: argument_node.children.map(&:source).join(', '))
         else
           format(CORRECTION_WITHOUT_ARGUMENTS, enumerable: collection_node.source)
         end
       end
 
       def offending_range
-        if block_node.arguments?
-          replacement_range(argument_node.loc.expression.end_pos)
-        else
-          replacement_range(block_node.loc.begin.end_pos)
-        end
-      end
+        begin_range = block_node.source_range.begin
 
-      def replacement_range(end_pos)
-        Parser::Source::Range.new(block_node.loc.expression.source_buffer,
-                                  block_node.loc.expression.begin_pos,
-                                  end_pos)
+        if block_node.arguments?
+          begin_range.join(argument_node.source_range.end)
+        else
+          begin_range.join(block_node.loc.begin.end)
+        end
       end
     end
   end

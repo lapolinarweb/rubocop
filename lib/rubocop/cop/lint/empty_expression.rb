@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Lint
-      # This cop checks for the presence of empty expressions.
+      # Checks for the presence of empty expressions.
       #
       # @example
       #
@@ -13,8 +13,6 @@ module RuboCop
       #   if ()
       #     bar
       #   end
-      #
-      # @example
       #
       #   # good
       #

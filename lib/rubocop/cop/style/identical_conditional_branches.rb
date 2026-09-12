@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for identical expressions at the beginning or end of
+      # Checks for identical expressions at the beginning or end of
       # each branch of a conditional expression. Such expressions should normally
       # be placed outside the conditional expression - before or after it.
       #
@@ -12,8 +12,8 @@ module RuboCop
       # in a future major RuboCop release.
       #
       # @safety
-      #   Auto-correction is unsafe because changing the order of method invocations
-      #   may change the behaviour of the code. For example:
+      #   Autocorrection is unsafe because changing the order of method invocations
+      #   may change the behavior of the code. For example:
       #
       #   [source,ruby]
       #   ----
@@ -27,7 +27,7 @@ module RuboCop
       #   ----
       #
       #   In this example, `method_that_relies_on_global_state` will be moved before
-      #   `method_that_modifies_global_state`, which changes the behaviour of the program.
+      #   `method_that_modifies_global_state`, which changes the behavior of the program.
       #
       # @example
       #   # bad
@@ -136,6 +136,7 @@ module RuboCop
 
         private
 
+        # rubocop:disable-next Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
         def check_branches(node, branches)
           # return if any branch is empty. An empty branch can be an `if`
           # without an `else` or a branch that contains only comments.
@@ -144,8 +145,28 @@ module RuboCop
           tails = branches.map { |branch| tail(branch) }
           check_expressions(node, tails, :after_condition) if duplicated_expressions?(node, tails)
 
+          return if last_child_of_parent?(node) &&
+                    branches.any? { |branch| single_child_branch?(branch) }
+
           heads = branches.map { |branch| head(branch) }
-          check_expressions(node, heads, :before_condition) if duplicated_expressions?(node, heads)
+
+          return unless duplicated_expressions?(node, heads)
+
+          condition_variable = assignable_condition_value(node)
+
+          head = heads.first
+          if head.respond_to?(:assignment?) && head.assignment?
+            # The `send` node is used instead of the `indexasgn` node, so `name` cannot be used.
+            # https://github.com/rubocop/rubocop-ast/blob/v1.29.0/lib/rubocop/ast/node/indexasgn_node.rb
+            #
+            # FIXME: It would be better to update `RuboCop::AST::OpAsgnNode` or its subclasses to
+            # handle `self.foo ||= value` as a solution, instead of using `head.node_parts[0].to_s`.
+            assigned_value = head.send_type? ? head.receiver.source : head.node_parts[0].to_s
+
+            return if condition_variable == assigned_value
+          end
+
+          check_expressions(node, heads, :before_condition)
         end
 
         def duplicated_expressions?(node, expressions)
@@ -153,31 +174,82 @@ module RuboCop
           return false unless expressions.size >= 1 && unique_expressions.one?
 
           unique_expression = unique_expressions.first
-          return true unless unique_expression.assignment?
+          return true unless unique_expression&.assignment?
 
           lhs = unique_expression.child_nodes.first
           node.condition.child_nodes.none? { |n| n.source == lhs.source if n.variable? }
         end
 
-        def check_expressions(node, expressions, insert_position) # rubocop:disable Metrics/MethodLength
+        def assignable_condition_value(node)
+          if node.condition.call_type?
+            (receiver = node.condition.receiver) ? receiver.source : node.condition.source
+          elsif node.condition.variable?
+            node.condition.source
+          end
+        end
+
+        # rubocop:disable-next Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/MethodLength, Metrics/PerceivedComplexity
+        def check_expressions(node, expressions, insert_position)
+          return if expressions.any?(&:nil?)
+
           inserted_expression = false
 
           expressions.each do |expression|
             add_offense(expression) do |corrector|
-              next if node.if_type? && node.ternary?
+              next if node.if_type? && (node.ternary? || node.then?)
 
               range = range_by_whole_lines(expression.source_range, include_final_newline: true)
               corrector.remove(range)
               next if inserted_expression
 
-              if insert_position == :after_condition
-                corrector.insert_after(node, "\n#{expression.source}")
+              if node.parent&.assignment?
+                correct_assignment(corrector, node, expression, insert_position)
               else
-                corrector.insert_before(node, "#{expression.source}\n")
+                correct_no_assignment(corrector, node, expression, insert_position)
               end
+
               inserted_expression = true
             end
           end
+        end
+
+        def correct_assignment(corrector, node, expression, insert_position)
+          indentation = indentation_of(node.parent)
+
+          if insert_position == :after_condition
+            assignment = node.parent.source_range.with(end_pos: node.source_range.begin_pos)
+            corrector.remove(assignment)
+            corrector.insert_after(node, "\n#{indentation}#{assignment.source}#{expression.source}")
+          else
+            corrector.insert_before(node.parent, "#{expression.source}\n#{indentation}")
+          end
+        end
+
+        def correct_no_assignment(corrector, node, expression, insert_position)
+          indentation = indentation_of(node)
+
+          if insert_position == :after_condition
+            corrector.insert_after(node, "\n#{indentation}#{expression.source}")
+          else
+            corrector.insert_before(node, "#{expression.source}\n#{indentation}")
+          end
+        end
+
+        # The leading indentation of the line the conditional starts on, so a
+        # hoisted expression keeps the surrounding nesting instead of landing
+        # at column zero.
+        def indentation_of(node)
+          ' ' * node.source_range.column
+        end
+
+        def last_child_of_parent?(node)
+          return true unless (parent = node.parent)
+
+          parent.child_nodes.last == node
+        end
+
+        def single_child_branch?(branch_node)
+          !branch_node.begin_type? || branch_node.children.size == 1
         end
 
         def message(node)

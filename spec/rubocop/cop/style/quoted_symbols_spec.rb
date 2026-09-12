@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 RSpec.describe RuboCop::Cop::Style::QuotedSymbols, :config do
-  shared_examples_for 'enforce single quotes' do
+  shared_examples 'enforce single quotes' do
     it 'accepts unquoted symbols' do
       expect_no_offenses(<<~RUBY)
         :a
@@ -39,7 +39,7 @@ RSpec.describe RuboCop::Cop::Style::QuotedSymbols, :config do
     end
 
     it 'accepts double quotes with escape sequences' do
-      expect_no_offenses(<<~RUBY)
+      expect_no_offenses(<<~'RUBY')
         :"a\nb"
       RUBY
     end
@@ -113,7 +113,35 @@ RSpec.describe RuboCop::Cop::Style::QuotedSymbols, :config do
       RUBY
     end
 
-    context 'hash with hashrocket style' do
+    it 'registers an offense and corrects for an escaped quote within double quotes' do
+      expect_offense(<<~'RUBY')
+        :"my\"quote"
+        ^^^^^^^^^^^^ Prefer single-quoted symbols when you don't need string interpolation or special symbols.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        :'my"quote'
+      RUBY
+    end
+
+    it 'registers an offense and corrects escape characters properly' do
+      expect_offense(<<~'RUBY')
+        :"foo\\bar"
+        ^^^^^^^^^^^ Prefer single-quoted symbols when you don't need string interpolation or special symbols.
+      RUBY
+
+      expect_correction(<<~'RUBY')
+        :'foo\\bar'
+      RUBY
+    end
+
+    it 'accepts single quoted symbol with an escaped quote' do
+      expect_no_offenses(<<~'RUBY')
+        :'o\'clock'
+      RUBY
+    end
+
+    context 'hash with hash rocket style' do
       it 'accepts properly quoted symbols' do
         expect_no_offenses(<<~RUBY)
           { :'a' => value }
@@ -133,7 +161,7 @@ RSpec.describe RuboCop::Cop::Style::QuotedSymbols, :config do
     end
   end
 
-  shared_examples_for 'enforce double quotes' do
+  shared_examples 'enforce double quotes' do
     it 'accepts unquoted symbols' do
       expect_no_offenses(<<~RUBY)
         :a
@@ -171,7 +199,7 @@ RSpec.describe RuboCop::Cop::Style::QuotedSymbols, :config do
     end
 
     it 'accepts double quotes with escape sequences' do
-      expect_no_offenses(<<~RUBY)
+      expect_no_offenses(<<~'RUBY')
         :"a\nb"
       RUBY
     end
@@ -213,7 +241,35 @@ RSpec.describe RuboCop::Cop::Style::QuotedSymbols, :config do
       RUBY
     end
 
-    context 'hash with hashrocket style' do
+    it 'registers an offense and corrects for an escaped quote within single quotes' do
+      expect_offense(<<~'RUBY')
+        :'o\'clock'
+        ^^^^^^^^^^^ Prefer double-quoted symbols unless you need single quotes to avoid extra backslashes for escaping.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        :"o'clock"
+      RUBY
+    end
+
+    it 'registers an offense and corrects escape characters properly' do
+      expect_offense(<<~'RUBY')
+        :'foo\\bar'
+        ^^^^^^^^^^^ Prefer double-quoted symbols unless you need single quotes to avoid extra backslashes for escaping.
+      RUBY
+
+      expect_correction(<<~'RUBY')
+        :"foo\\bar"
+      RUBY
+    end
+
+    it 'accepts double quoted symbol with an escaped quote' do
+      expect_no_offenses(<<~'RUBY')
+        :"my\"quote"
+      RUBY
+    end
+
+    context 'hash with hash rocket style' do
       it 'accepts properly quoted symbols' do
         expect_no_offenses(<<~RUBY)
           { :"a" => value }

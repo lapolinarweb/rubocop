@@ -24,6 +24,46 @@ RSpec.describe RuboCop::Cop::Style::Next, :config do
       RUBY
     end
 
+    context 'Ruby 2.7', :ruby27 do
+      it "registers an offense for #{condition} inside of downto numblock" do
+        expect_offense(<<~RUBY, condition: condition)
+          3.downto(1) do
+            %{condition} _1 == 1
+            ^{condition}^^^^^^^^ Use `next` to skip iteration.
+              puts _1
+            end
+          end
+        RUBY
+
+        expect_correction(<<~RUBY)
+          3.downto(1) do
+            next #{opposite} _1 == 1
+            puts _1
+          end
+        RUBY
+      end
+    end
+
+    context 'Ruby 3.4', :ruby34 do
+      it "registers an offense for #{condition} inside of downto itblock" do
+        expect_offense(<<~RUBY, condition: condition)
+          3.downto(1) do
+            %{condition} it == 1
+            ^{condition}^^^^^^^^ Use `next` to skip iteration.
+              puts it
+            end
+          end
+        RUBY
+
+        expect_correction(<<~RUBY)
+          3.downto(1) do
+            next #{opposite} it == 1
+            puts it
+          end
+        RUBY
+      end
+    end
+
     it "registers an offense for #{condition} inside of each" do
       expect_offense(<<~RUBY, condition: condition)
         [].each do |o|
@@ -36,6 +76,24 @@ RSpec.describe RuboCop::Cop::Style::Next, :config do
 
       expect_correction(<<~RUBY)
         [].each do |o|
+          next #{opposite} o == 1
+          puts o
+        end
+      RUBY
+    end
+
+    it "registers an offense for #{condition} inside of safe navigation `each` call" do
+      expect_offense(<<~RUBY, condition: condition)
+        []&.each do |o|
+          %{condition} o == 1
+          ^{condition}^^^^^^^ Use `next` to skip iteration.
+            puts o
+          end
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        []&.each do |o|
           next #{opposite} o == 1
           puts o
         end
@@ -295,6 +353,27 @@ RSpec.describe RuboCop::Cop::Style::Next, :config do
       RUBY
     end
 
+    it 'registers an offense when line break before condition' do
+      expect_offense(<<~RUBY)
+        array.each do |item|
+          if
+          ^^ Use `next` to skip iteration.
+             condition
+            next if item.zero?
+            do_something
+          end
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        array.each do |item|
+          next unless condition
+            next if item.zero?
+            do_something
+        end
+      RUBY
+    end
+
     it 'allows loops with conditional break' do
       expect_no_offenses(<<~RUBY)
         loop do
@@ -407,7 +486,7 @@ RSpec.describe RuboCop::Cop::Style::Next, :config do
       end
     end
 
-    it 'auto-corrects a misaligned end' do
+    it 'autocorrects a misaligned end' do
       expect_offense(<<~RUBY)
         [1, 2, 3, 4].each do |num|
           if !opts.nil?
@@ -613,6 +692,54 @@ RSpec.describe RuboCop::Cop::Style::Next, :config do
 
       expect { expect_no_offenses(source) }
         .to raise_error('MinBodyLength needs to be a positive integer!')
+    end
+  end
+
+  context 'AllowConsecutiveConditionals: false' do
+    let(:cop_config) { { 'AllowConsecutiveConditionals' => false, 'MinBodyLength' => 1 } }
+
+    it 'registers an offense and corrects when another conditional statements is at the same depth' do
+      expect_offense(<<~RUBY)
+        [].each do
+          if foo?
+            work
+          end
+
+          if bar?
+          ^^^^^^^ Use `next` to skip iteration.
+            work
+          end
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        [].each do
+          if foo?
+            work
+          end
+
+          next unless bar?
+          work
+        end
+      RUBY
+    end
+  end
+
+  context 'AllowConsecutiveConditionals: true' do
+    let(:cop_config) { { 'AllowConsecutiveConditionals' => true, 'MinBodyLength' => 1 } }
+
+    it 'does not register an offense when other conditional statements are at the same depth' do
+      expect_no_offenses(<<~RUBY)
+        [].each do
+          if foo?
+            work
+          end
+
+          if bar?
+            work
+          end
+        end
+      RUBY
     end
   end
 end

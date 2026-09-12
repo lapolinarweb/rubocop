@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Metrics
-      # This cop checks that the cyclomatic complexity of methods is not higher
+      # Checks that the cyclomatic complexity of methods is not higher
       # than the configured maximum. The cyclomatic complexity is the number of
       # linearly independent paths through a method. The algorithm counts
       # decision points and adds one.
@@ -14,11 +14,14 @@ module RuboCop
       # and ||/or is shorthand for a sequence of ifs, so they also add one.
       # Loops can be said to have an exit condition, so they add one.
       # Blocks that are calls to builtin iteration methods
-      # (e.g. `ary.map{...}) also add one, others are ignored.
+      # (e.g. `ary.map{...}`) also add one, others are ignored.
+      #
+      # @example
       #
       #   def each_child_node(*types)               # count begins: 1
       #     unless block_given?                     # unless: +1
       #       return to_enum(__method__, *types)
+      #     end
       #
       #     children.each do |child|                # each{}: +1
       #       next unless child.is_a?(Node)         # unless: +1
@@ -33,9 +36,9 @@ module RuboCop
         include MethodComplexity
         include Utils::IteratingBlock
 
-        MSG = 'Cyclomatic complexity for %<method>s is too high. [%<complexity>d/%<max>d]'
+        MSG = 'Cyclomatic complexity for `%<method>s` is too high. [%<complexity>d/%<max>d]'
         COUNTED_NODES = %i[if while until for csend block block_pass
-                           rescue when and or or_asgn and_asgn].freeze
+                           rescue when in_pattern and or or_asgn and_asgn].freeze
 
         private
 
@@ -44,15 +47,6 @@ module RuboCop
           return 0 if node.csend_type? && discount_for_repeated_csend?(node)
 
           1
-        end
-
-        def block_method(node)
-          case node.type
-          when :block
-            node.method_name
-          when :block_pass
-            node.parent.method_name
-          end
         end
 
         def count_block?(block)

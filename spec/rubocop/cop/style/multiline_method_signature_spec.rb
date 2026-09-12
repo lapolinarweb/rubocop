@@ -36,6 +36,56 @@ RSpec.describe RuboCop::Cop::Style::MultilineMethodSignature, :config do
         RUBY
       end
 
+      it 'registers an offense and corrects when closing paren is on the following line' \
+         'and line break after `def` keyword' do
+        expect_offense(<<~RUBY)
+          def
+          ^^^ Avoid multi-line method signatures.
+          foo(bar
+              )
+          end
+        RUBY
+
+        expect_correction(<<~RUBY)
+          def foo(bar)
+          end
+        RUBY
+      end
+
+      it 'registers an offense and corrects when closing paren is on the following line' \
+         'and multiple line breaks after `def` keyword' do
+        expect_offense(<<~RUBY)
+          def
+          ^^^ Avoid multi-line method signatures.
+
+
+          foo(bar
+              )
+          end
+        RUBY
+
+        expect_correction(<<~RUBY)
+          def foo(bar)
+          end
+        RUBY
+      end
+
+      it 'registers an offense and corrects when the signature with multiple arguments ' \
+         'spans lines after a `def` keyword on its own line' do
+        expect_offense(<<~RUBY)
+          def
+          ^^^ Avoid multi-line method signatures.
+          foo(bar,
+              baz)
+          end
+        RUBY
+
+        expect_correction(<<~RUBY)
+          def foo(bar, baz)
+          end
+        RUBY
+      end
+
       context 'when method signature is on a single line' do
         it 'does not register an offense for parameterized method' do
           expect_no_offenses(<<~RUBY)
@@ -51,9 +101,16 @@ RSpec.describe RuboCop::Cop::Style::MultilineMethodSignature, :config do
           RUBY
         end
       end
+
+      it 'does not register an offense when line break after `def` keyword' do
+        expect_no_offenses(<<~RUBY)
+          def
+          method_name arg; end
+        RUBY
+      end
     end
 
-    context 'when defining an class method' do
+    context 'when defining a class method' do
       context 'when arguments span a single line' do
         it 'registers an offense and corrects when closing paren is on the following line' do
           expect_offense(<<~RUBY)
@@ -104,7 +161,7 @@ RSpec.describe RuboCop::Cop::Style::MultilineMethodSignature, :config do
         RUBY
       end
 
-      it 'registers an offense and corrects when `end` is on the same line with last arguemnt' do
+      it 'registers an offense and corrects when `end` is on the same line with last argument' do
         expect_offense(<<~RUBY)
           def foo(bar,
           ^^^^^^^^^^^^ Avoid multi-line method signatures.
@@ -130,7 +187,7 @@ RSpec.describe RuboCop::Cop::Style::MultilineMethodSignature, :config do
       end
     end
 
-    context 'when defining an class method' do
+    context 'when defining a class method' do
       it 'registers an offense and corrects when `end` is on the following line' do
         expect_offense(<<~RUBY)
           def self.foo(bar,
@@ -201,6 +258,42 @@ RSpec.describe RuboCop::Cop::Style::MultilineMethodSignature, :config do
           end
         RUBY
       end
+    end
+
+    context 'when the collapsed signature fits but the multi-line source is longer than the maximum' do
+      let(:other_cops) { { 'Layout/LineLength' => { 'Max' => 20 } } }
+
+      it 'registers an offense and corrects' do
+        expect_offense(<<~RUBY)
+          def foo(bar,
+          ^^^^^^^^^^^^ Avoid multi-line method signatures.
+                  baz)
+          end
+        RUBY
+
+        expect_correction(<<~RUBY)
+          def foo(bar, baz)
+          end
+        RUBY
+      end
+    end
+  end
+
+  context 'when `Layout/LineLength` is disabled' do
+    let(:other_cops) { { 'Layout/LineLength' => { 'Enabled' => false } } }
+
+    it 'registers an offense' do
+      expect_offense(<<~RUBY)
+        def foo(bar
+        ^^^^^^^^^^^ Avoid multi-line method signatures.
+            )
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        def foo(bar)
+        end
+      RUBY
     end
   end
 end

@@ -3,13 +3,14 @@
 module RuboCop
   module Cop
     module Layout
-      # This cop checks for indentation that doesn't use the specified number
-      # of spaces.
+      # Checks for indentation that doesn't use the specified number of spaces.
+      # The indentation width can be configured using the `Width` setting. The default width is 2.
+      # The block body indentation for method chain blocks can be configured using the
+      # `EnforcedStyleAlignWith` setting.
       #
-      # See also the IndentationConsistency cop which is the companion to this
-      # one.
+      # See also the `Layout/IndentationConsistency` cop which is the companion to this one.
       #
-      # @example
+      # @example Width: 2 (default)
       #   # bad
       #   class A
       #    def test
@@ -24,7 +25,18 @@ module RuboCop
       #     end
       #   end
       #
-      # @example IgnoredPatterns: ['^\s*module']
+      # @example
+      #   # bad
+      #   value = (
+      #   foo - bar
+      #   )
+      #
+      #   # good
+      #   value = (
+      #     foo - bar
+      #   )
+      #
+      # @example AllowedPatterns: ['^\s*module']
       #   # bad
       #   module A
       #   class B
@@ -42,16 +54,31 @@ module RuboCop
       #     end
       #   end
       #   end
+      #
+      # @example EnforcedStyleAlignWith: start_of_line (default)
+      #   # good
+      #   records.uniq { |el| el[:profile_id] }
+      #          .map do |message|
+      #     SomeJob.perform_later(message[:id])
+      #   end
+      #
+      # @example EnforcedStyleAlignWith: relative_to_receiver
+      #   # good
+      #   records.uniq { |el| el[:profile_id] }
+      #          .map do |message|
+      #            SomeJob.perform_later(message[:id])
+      #          end
       class IndentationWidth < Base # rubocop:disable Metrics/ClassLength
+        include ConfigurableEnforcedStyle
         include EndKeywordAlignment
         include Alignment
         include CheckAssignment
-        include IgnoredPattern
+        include AllowedPattern
         include RangeHelp
         extend AutoCorrector
 
         MSG = 'Use %<configured_indentation_width>d (not %<indentation>d) ' \
-              'spaces for%<name>s indentation.'
+              '%<indentation_type>s for%<name>s indentation.'
 
         # @!method access_modifier?(node)
         def_node_matcher :access_modifier?, <<~PATTERN
@@ -59,16 +86,17 @@ module RuboCop
         PATTERN
 
         def on_rescue(node)
-          _begin_node, *_rescue_nodes, else_node = *node
-          check_indentation(node.loc.else, else_node)
+          check_indentation(node.loc.else, node.else_branch)
         end
 
-        def on_ensure(node)
+        def on_resbody(node)
           check_indentation(node.loc.keyword, node.body)
         end
+        alias on_for on_resbody
 
-        alias on_resbody on_ensure
-        alias on_for     on_ensure
+        def on_ensure(node)
+          check_indentation(node.loc.keyword, node.branch)
+        end
 
         def on_kwbegin(node)
           # Check indentation against end keyword but only if it's first on its
@@ -78,20 +106,38 @@ module RuboCop
           check_indentation(node.loc.end, node.children.first)
         end
 
+        def on_begin(node)
+          # Only a parenthesized grouping expression (e.g. `(\n  foo\n)`) has
+          # explicit delimiters. Indent the body one step from the line
+          # the opening parenthesis is on, but only when the closing parenthesis is
+          # first on its line (a body on the opening line is skipped downstream).
+          return unless parentheses?(node) && begins_its_line?(node.loc.end)
+
+          check_indentation(opening_line_start(node.loc.begin), node.children.first)
+        end
+
         def on_block(node)
           end_loc = node.loc.end
 
           return unless begins_its_line?(end_loc)
 
-          check_indentation(end_loc, node.body)
+          base_loc = block_body_indentation_base(node, end_loc)
+          check_indentation(base_loc, node.body)
 
           return unless indented_internal_methods_style?
+          return unless contains_access_modifier?(node.body)
 
           check_members(end_loc, [node.body])
         end
 
+        alias on_numblock on_block
+        alias on_itblock on_block
+
         def on_class(node)
-          check_members(node.loc.keyword, [node.body])
+          base = node.loc.keyword
+          return if same_line?(base, node.body)
+
+          check_members(base, [node.body])
         end
         alias on_sclass on_class
         alias on_module on_class
@@ -131,7 +177,7 @@ module RuboCop
         alias on_until on_while
 
         def on_case(case_node)
-          case_node.each_when do |when_node|
+          case_node.when_branches.each do |when_node|
             check_indentation(when_node.loc.keyword, when_node.body)
           end
 
@@ -139,11 +185,13 @@ module RuboCop
         end
 
         def on_case_match(case_match)
-          case_match.each_in_pattern do |in_pattern_node|
+          case_match.in_pattern_branches.each do |in_pattern_node|
             check_indentation(in_pattern_node.loc.keyword, in_pattern_node.body)
           end
 
-          check_indentation(case_match.in_pattern_branches.last.loc.keyword, case_match.else_branch)
+          else_branch = case_match.else_branch&.empty_else_type? ? nil : case_match.else_branch
+
+          check_indentation(case_match.in_pattern_branches.last.loc.keyword, else_branch)
         end
 
         def on_if(node, base = node)
@@ -156,7 +204,18 @@ module RuboCop
         private
 
         def autocorrect(corrector, node)
-          AlignmentCorrector.correct(corrector, processed_source, node, @column_delta)
+          return unless node
+
+          AlignmentCorrector.correct(
+            corrector, processed_source, node, @column_delta, tab_indentation: true
+          )
+        end
+
+        # Returns a range at the first non-space column of the line the opening parenthesis is on,
+        # used as the base to indent the body from.
+        def opening_line_start(begin_loc)
+          column = begin_loc.source_line =~ /\S/
+          source_range(processed_source.buffer, begin_loc.line, column)
         end
 
         def check_members(base, members)
@@ -164,7 +223,7 @@ module RuboCop
 
           return unless members.any? && members.first.begin_type?
 
-          if indentation_consistency_style == 'indented_internal_methods'
+          if indented_internal_methods_style?
             check_members_for_indented_internal_methods_style(members)
           else
             check_members_for_normal_style(base, members)
@@ -185,8 +244,7 @@ module RuboCop
 
         def check_members_for_indented_internal_methods_style(members)
           each_member(members) do |member, previous_modifier|
-            check_indentation(previous_modifier, member,
-                              indentation_consistency_style)
+            check_indentation(previous_modifier, member, indentation_consistency_style)
           end
         end
 
@@ -270,12 +328,12 @@ module RuboCop
         end
 
         def offense(body_node, indentation, style)
-          # This cop only auto-corrects the first statement in a def body, for
+          # This cop only autocorrects the first statement in a def body, for
           # example.
           body_node = body_node.children.first if body_node.begin_type? && !parentheses?(body_node)
 
           # Since autocorrect changes a number of lines, and not only the line
-          # where the reported offending range is, we avoid auto-correction if
+          # where the reported offending range is, we avoid autocorrection if
           # this cop has already found other offenses is the same
           # range. Otherwise, two corrections can interfere with each other,
           # resulting in corrupted code.
@@ -294,16 +352,38 @@ module RuboCop
         end
 
         def message(configured_indentation_width, indentation, name)
+          if using_tabs?
+            message_for_tabs(configured_indentation_width, indentation, name)
+          else
+            message_for_spaces(configured_indentation_width, indentation, name)
+          end
+        end
+
+        def message_for_tabs(configured_indentation_width, indentation, name)
+          configured_tabs = 1
+          actual_tabs = indentation / configured_indentation_width
+
+          format(
+            MSG,
+            configured_indentation_width: configured_tabs,
+            indentation: actual_tabs,
+            indentation_type: 'tabs',
+            name: name
+          )
+        end
+
+        def message_for_spaces(configured_indentation_width, indentation, name)
           format(
             MSG,
             configured_indentation_width: configured_indentation_width,
             indentation: indentation,
+            indentation_type: 'spaces',
             name: name
           )
         end
 
         # Returns true if the given node is within another node that has
-        # already been marked for auto-correction by this cop.
+        # already been marked for autocorrection by this cop.
         def other_offense_in_same_range?(node)
           expr = node.source_range
           @offense_ranges ||= []
@@ -320,8 +400,7 @@ module RuboCop
           if body_node.rescue_type?
             check_rescue?(body_node)
           elsif body_node.ensure_type?
-            block_body, = *body_node
-
+            block_body, = *body_node # rubocop:disable InternalAffairs/NodeDestructuring -- `EnsureNode` has no accessor for the protected body
             if block_body&.rescue_type?
               check_rescue?(block_body)
             else
@@ -337,45 +416,118 @@ module RuboCop
         end
 
         def skip_check?(base_loc, body_node)
-          return true if ignored_line?(base_loc)
+          return true if allowed_line?(base_loc)
           return true unless body_node
 
           # Don't check if expression is on same line as "then" keyword, etc.
-          return true if body_node.loc.line == base_loc.line
+          return true if same_line?(body_node, base_loc)
 
           return true if starts_with_access_modifier?(body_node)
 
           # Don't check indentation if the line doesn't start with the body.
           # For example, lines like "else do_something".
           first_char_pos_on_line = body_node.source_range.source_line =~ /\S/
-          return true unless body_node.loc.column == first_char_pos_on_line
+          body_node.loc.column != first_char_pos_on_line
         end
 
         def offending_range(body_node, indentation)
           expr = body_node.source_range
           begin_pos = expr.begin_pos
-          ind = expr.begin_pos - indentation
-          pos = indentation >= 0 ? ind..begin_pos : begin_pos..ind
+
+          ind = if using_tabs?
+                  begin_pos - line_indentation(expr).length
+                else
+                  begin_pos - indentation
+                end
+
+          pos = ind <= begin_pos ? ind..begin_pos : begin_pos..ind
           range_between(pos.begin, pos.end)
         end
 
         def starts_with_access_modifier?(body_node)
-          return unless body_node.begin_type?
+          return false unless body_node.begin_type?
 
           starting_node = body_node.children.first
-          return unless starting_node
+          return false unless starting_node
 
           starting_node.send_type? && starting_node.bare_access_modifier?
         end
 
-        def configured_indentation_width
-          cop_config['Width']
+        def contains_access_modifier?(body_node)
+          return false unless body_node&.begin_type?
+
+          body_node.children.any? { |child| child.send_type? && child.bare_access_modifier? }
+        end
+
+        def indentation_style
+          config.for_cop('Layout/IndentationStyle')['EnforcedStyle'] || 'spaces'
+        end
+
+        def using_tabs?
+          indentation_style == 'tabs'
+        end
+
+        def column_offset_between(base_range, range)
+          return super unless using_tabs?
+
+          base_uses_tabs = line_uses_tabs?(base_range)
+          range_uses_tabs = line_uses_tabs?(range)
+
+          return super unless base_uses_tabs || range_uses_tabs
+
+          visual_column(base_range) - visual_column(range)
+        end
+
+        def line_indentation(range)
+          line = processed_source.lines[range.line - 1]
+          line[0...range.column]
+        end
+
+        def line_uses_tabs?(range)
+          line_indentation(range).include?("\t")
+        end
+
+        def visual_column(range)
+          indentation = line_indentation(range)
+
+          tab_count = indentation.count("\t")
+          space_count = indentation.count(' ')
+
+          (tab_count * configured_indentation_width) + space_count
         end
 
         def leftmost_modifier_of(node)
           return node unless node.parent&.send_type?
 
           leftmost_modifier_of(node.parent)
+        end
+
+        def block_body_indentation_base(node, end_loc)
+          return end_loc unless style == :relative_to_receiver
+
+          if dot_on_new_line?(node)
+            node.send_node.loc.dot
+          elsif selector_on_new_line?(node)
+            node.send_node.loc.selector
+          else
+            end_loc
+          end
+        end
+
+        def dot_on_new_line?(node)
+          send_node = node.send_node
+          return false unless send_node.loc?(:dot)
+
+          receiver = send_node.receiver
+          receiver && receiver.last_line < send_node.loc.dot.line
+        end
+
+        def selector_on_new_line?(node)
+          send_node = node.send_node
+          return false unless send_node.loc?(:dot) && send_node.loc?(:selector)
+
+          receiver = send_node.receiver
+          receiver && receiver.last_line < send_node.loc.selector.line
         end
       end
     end

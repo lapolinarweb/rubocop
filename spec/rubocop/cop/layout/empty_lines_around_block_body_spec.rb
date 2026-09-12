@@ -40,6 +40,42 @@ RSpec.describe RuboCop::Cop::Layout::EmptyLinesAroundBlockBody, :config do
         RUBY
       end
 
+      context 'Ruby 2.7', :ruby27 do
+        it 'registers an offense for block body ending with a blank' do
+          expect_offense(<<~RUBY)
+            some_method #{open}
+              _1
+
+            ^{} Extra empty line detected at block body end.
+              #{close}
+          RUBY
+
+          expect_correction(<<~RUBY)
+            some_method #{open}
+              _1
+              #{close}
+          RUBY
+        end
+      end
+
+      context 'Ruby 3.4', :ruby34 do
+        it 'registers an offense for block body ending with a blank' do
+          expect_offense(<<~RUBY)
+            some_method #{open}
+              it
+
+            ^{} Extra empty line detected at block body end.
+              #{close}
+          RUBY
+
+          expect_correction(<<~RUBY)
+            some_method #{open}
+              it
+              #{close}
+          RUBY
+        end
+      end
+
       it 'accepts block body starting with a line with spaces' do
         expect_no_offenses(<<~RUBY)
           some_method #{open}
@@ -49,7 +85,7 @@ RSpec.describe RuboCop::Cop::Layout::EmptyLinesAroundBlockBody, :config do
         RUBY
       end
 
-      it 'registers an offense for block body starting with a blank passed to '\
+      it 'registers an offense for block body starting with a blank passed to ' \
          'a multi-line method call' do
         expect_offense(<<~RUBY)
           some_method arg,
@@ -101,6 +137,33 @@ RSpec.describe RuboCop::Cop::Layout::EmptyLinesAroundBlockBody, :config do
           something_else
         RUBY
       end
+    end
+  end
+
+  context 'when `EnforcedStyle` is `empty_lines` and the body is a chained method call' do
+    let(:cop_config) { { 'EnforcedStyle' => 'empty_lines' } }
+
+    it 'accepts a leading dot at the beginning of the body' do
+      expect_no_offenses(<<~RUBY)
+        aa { bb { cc }
+        .dd }
+      RUBY
+    end
+
+    it 'accepts a leading safe navigation dot at the beginning of the body' do
+      expect_no_offenses(<<~RUBY)
+        aa { bb
+        &.cc }
+      RUBY
+    end
+
+    it 'accepts a leading dot at the end of the body' do
+      expect_no_offenses(<<~RUBY)
+        aa {
+
+          bb
+          .cc }
+      RUBY
     end
   end
 end

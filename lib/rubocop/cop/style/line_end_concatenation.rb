@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for string literal concatenation at
+      # Checks for string literal concatenation at
       # the end of a line.
       #
       # @safety
@@ -36,7 +36,7 @@ module RuboCop
         include RangeHelp
         extend AutoCorrector
 
-        MSG = 'Use `\\` instead of `+` or `<<` to concatenate those strings.'
+        MSG = 'Use `\\` instead of `%<operator>s` to concatenate multiline strings.'
         CONCAT_TOKEN_TYPES = %i[tPLUS tLSHFT].freeze
         SIMPLE_STRING_TOKEN_TYPE = :tSTRING
         COMPLEX_STRING_BEGIN_TOKEN = :tSTRING_BEG
@@ -55,22 +55,31 @@ module RuboCop
         private
 
         def check_token_set(index)
-          predecessor, operator, successor = processed_source.tokens[index, 3]
+          tokens = processed_source.tokens
+          predecessor = tokens[index]
+          operator = tokens[index + 1]
+          successor = tokens[index + 2]
 
           return unless eligible_token_set?(predecessor, operator, successor)
-
-          return if operator.line == successor.line
+          return if same_line?(operator, successor)
 
           next_successor = token_after_last_string(successor, index)
-
           return unless eligible_next_successor?(next_successor)
 
-          add_offense(operator.pos) { |corrector| autocorrect(corrector, operator.pos) }
+          register_offense(operator)
+        end
+
+        def register_offense(operator)
+          message = format(MSG, operator: operator.text)
+
+          add_offense(operator.pos, message: message) do |corrector|
+            autocorrect(corrector, operator.pos)
+          end
         end
 
         def autocorrect(corrector, operator_range)
           # Include any trailing whitespace so we don't create a syntax error.
-          operator_range = range_with_surrounding_space(range: operator_range,
+          operator_range = range_with_surrounding_space(operator_range,
                                                         side: :right,
                                                         newlines: false)
           one_more_char = operator_range.resize(operator_range.size + 1)

@@ -3,12 +3,12 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for optional arguments to methods
+      # Checks for optional arguments to methods
       # that do not come at the end of the argument list.
       #
       # @safety
       #   This cop is unsafe because changing a method signature will
-      #   implicitly change behaviour.
+      #   implicitly change behavior.
       #
       # @example
       #   # bad
@@ -27,6 +27,7 @@ module RuboCop
         def on_def(node)
           each_misplaced_optional_arg(node.arguments) { |argument| add_offense(argument) }
         end
+        alias on_defs on_def
 
         private
 

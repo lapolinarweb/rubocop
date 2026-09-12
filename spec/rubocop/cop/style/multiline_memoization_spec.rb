@@ -63,7 +63,7 @@ RSpec.describe RuboCop::Cop::Style::MultilineMemoization, :config do
   context 'EnforcedStyle: keyword' do
     let(:cop_config) { { 'EnforcedStyle' => 'keyword' } }
 
-    include_examples 'with all enforced styles'
+    it_behaves_like 'with all enforced styles'
 
     context 'with a multiline memoization' do
       context 'without a `begin` and `end` block' do
@@ -126,7 +126,7 @@ RSpec.describe RuboCop::Cop::Style::MultilineMemoization, :config do
   context 'EnforcedStyle: braces' do
     let(:cop_config) { { 'EnforcedStyle' => 'braces' } }
 
-    include_examples 'with all enforced styles'
+    it_behaves_like 'with all enforced styles'
 
     context 'with a multiline memoization' do
       context 'without braces' do
@@ -164,6 +164,26 @@ RSpec.describe RuboCop::Cop::Style::MultilineMemoization, :config do
                   bar
                   baz
                 )
+            RUBY
+          end
+
+          it 'does not register an offense for a begin block with a `rescue`' do
+            expect_no_offenses(<<~RUBY)
+              foo ||= begin
+                bar
+              rescue
+                baz
+              end
+            RUBY
+          end
+
+          it 'does not register an offense for a begin block with an `ensure`' do
+            expect_no_offenses(<<~RUBY)
+              foo ||= begin
+                bar
+              ensure
+                baz
+              end
             RUBY
           end
         end

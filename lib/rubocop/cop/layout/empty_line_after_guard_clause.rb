@@ -3,7 +3,32 @@
 module RuboCop
   module Cop
     module Layout
-      # This cop enforces empty line after guard clause
+      # Enforces empty line after guard clause.
+      #
+      # This cop allows a SimpleCov directive comment after guard clause because
+      # SimpleCov excludes code from the coverage report by wrapping it in such directives.
+      # Both the legacy `# :nocov:` comment and the newer `# simplecov:disable` /
+      # `# simplecov:enable` comments are recognized:
+      #
+      # [source,ruby]
+      # ----
+      # def foo
+      #   # :nocov:
+      #   return if condition
+      #   # :nocov:
+      #   bar
+      # end
+      #
+      # def foo
+      #   # simplecov:disable
+      #   return if condition
+      #   # simplecov:enable
+      #   bar
+      # end
+      # ----
+      #
+      # Refer to SimpleCov's documentation for more details:
+      # https://github.com/simplecov-ruby/simplecov#ignoringskipping-code
       #
       # @example
       #
@@ -42,19 +67,27 @@ module RuboCop
 
         MSG = 'Add empty line after guard clause.'
         END_OF_HEREDOC_LINE = 1
+        SIMPLECOV_COMMENT_PATTERN = /\A#\s*(?::nocov:|simplecov\s*:\s*(?:disable|enable)\b)/.freeze
+
+        # @!method guard_clause_branch?(node)
+        def_node_matcher :guard_clause_branch?, <<~PATTERN
+          {(send nil? {:raise :fail} ...) return break next}
+        PATTERN
 
         def on_if(node)
           return if correct_style?(node)
           return if multiple_statements_on_line?(node)
 
           if node.modifier_form? && (heredoc_node = last_heredoc_argument(node))
-            return if next_line_empty_or_enable_directive_comment?(heredoc_line(node, heredoc_node))
+            if next_line_empty_or_allowed_directive_comment?(heredoc_line(node, heredoc_node))
+              return
+            end
 
             add_offense(heredoc_node.loc.heredoc_end) do |corrector|
               autocorrect(corrector, heredoc_node)
             end
           else
-            return if next_line_empty_or_enable_directive_comment?(node.last_line)
+            return if next_line_empty_or_allowed_directive_comment?(node.last_line)
 
             add_offense(offense_location(node)) { |corrector| autocorrect(corrector, node) }
           end
@@ -70,7 +103,7 @@ module RuboCop
                        end
 
           next_line = node_range.last_line + 1
-          if next_line_enable_directive_comment?(next_line)
+          if next_line_allowed_directive_comment?(next_line)
             node_range = processed_source.comment_at_line(next_line)
           end
 
@@ -78,31 +111,33 @@ module RuboCop
         end
 
         def correct_style?(node)
-          !contains_guard_clause?(node) ||
+          !node.if_branch&.guard_clause? ||
             next_line_rescue_or_ensure?(node) ||
             next_sibling_parent_empty_or_else?(node) ||
             next_sibling_empty_or_guard_clause?(node)
         end
 
         def contains_guard_clause?(node)
-          node.if_branch&.guard_clause?
+          return false unless (branch = node.if_branch)
+
+          branch.guard_clause? || guard_clause_branch?(branch)
         end
 
-        def next_line_empty_or_enable_directive_comment?(line)
+        def next_line_empty_or_allowed_directive_comment?(line)
           return true if next_line_empty?(line)
 
           next_line = line + 1
-          next_line_enable_directive_comment?(next_line) && next_line_empty?(next_line)
+          next_line_allowed_directive_comment?(next_line) && next_line_empty?(next_line)
         end
 
         def next_line_empty?(line)
           processed_source[line].blank?
         end
 
-        def next_line_enable_directive_comment?(line)
+        def next_line_allowed_directive_comment?(line)
           return false unless (comment = processed_source.comment_at_line(line))
 
-          DirectiveComment.new(comment).enabled?
+          DirectiveComment.new(comment).enabled? || simplecov_directive_comment?(comment)
         end
 
         def next_line_rescue_or_ensure?(node)
@@ -112,11 +147,11 @@ module RuboCop
 
         def next_sibling_parent_empty_or_else?(node)
           next_sibling = node.right_sibling
-          return true if next_sibling.nil?
+          return true unless next_sibling.is_a?(AST::Node)
 
           parent = next_sibling.parent
 
-          parent&.if_type? && parent&.else?
+          parent&.if_type? && parent.else?
         end
 
         def next_sibling_empty_or_guard_clause?(node)
@@ -126,8 +161,10 @@ module RuboCop
           next_sibling.if_type? && contains_guard_clause?(next_sibling)
         end
 
+        # rubocop:disable-next Metrics/CyclomaticComplexity
         def last_heredoc_argument(node)
           n = last_heredoc_argument_node(node)
+          n = n.children.first while n.respond_to?(:begin_type?) && n.begin_type?
 
           return n if heredoc?(n)
           return unless n.respond_to?(:arguments)
@@ -137,7 +174,7 @@ module RuboCop
             return node if node
           end
 
-          return last_heredoc_argument(n.receiver) if n.respond_to?(:receiver)
+          last_heredoc_argument(n.receiver) if n.respond_to?(:receiver)
         end
 
         def last_heredoc_argument_node(node)
@@ -145,6 +182,8 @@ module RuboCop
 
           if node.if_branch.and_type?
             node.if_branch.children.first
+          elsif use_heredoc_in_condition?(node.condition)
+            node.condition
           else
             node.if_branch.children.last
           end
@@ -161,8 +200,14 @@ module RuboCop
           node.respond_to?(:heredoc?) && node.heredoc?
         end
 
+        def use_heredoc_in_condition?(condition)
+          condition.descendants.any? do |descendant|
+            descendant.respond_to?(:heredoc?) && descendant.heredoc?
+          end
+        end
+
         def offense_location(node)
-          if node.loc.respond_to?(:end) && node.loc.end
+          if node.loc?(:end)
             node.loc.end
           else
             node
@@ -173,7 +218,13 @@ module RuboCop
           parent = node.parent
           return false unless parent
 
-          parent.begin_type? && parent.single_line?
+          parent.begin_type? && same_line?(node, node.right_sibling)
+        end
+
+        # SimpleCov excludes code from the coverage report by wrapping it in directive comments:
+        # https://github.com/simplecov-ruby/simplecov#ignoringskipping-code
+        def simplecov_directive_comment?(comment)
+          SIMPLECOV_COMMENT_PATTERN.match?(comment.text)
         end
       end
     end

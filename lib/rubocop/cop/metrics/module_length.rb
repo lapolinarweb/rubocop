@@ -3,15 +3,16 @@
 module RuboCop
   module Cop
     module Metrics
-      # This cop checks if the length a module exceeds some maximum value.
+      # Checks if the length of a module exceeds some maximum value.
       # Comment lines can optionally be ignored.
       # The maximum allowed length is configurable.
       #
-      # You can set literals you want to fold with `CountAsOne`.
-      # Available are: 'array', 'hash', and 'heredoc'. Each literal
-      # will be counted as one line regardless of its actual size.
+      # You can set constructs you want to fold with `CountAsOne`.
       #
-      # @example CountAsOne: ['array', 'heredoc']
+      # Available are: 'array', 'hash', 'heredoc', and 'method_call'.
+      # Each construct will be counted as one line regardless of its actual size.
+      #
+      # @example CountAsOne: ['array', 'hash', 'heredoc', 'method_call']
       #
       #   module M
       #     ARRAY = [         # +1
@@ -19,7 +20,7 @@ module RuboCop
       #       2
       #     ]
       #
-      #     HASH = {          # +3
+      #     HASH = {          # +1
       #       key: 'value'
       #     }
       #
@@ -27,7 +28,12 @@ module RuboCop
       #       Heredoc
       #       content.
       #     HEREDOC
-      #   end                 # 5 points
+      #
+      #     foo(              # +1
+      #       1,
+      #       2
+      #     )
+      #   end                 # 4 points
       #
       class ModuleLength < Base
         include CodeLength
@@ -44,7 +50,7 @@ module RuboCop
 
         # @!method module_definition?(node)
         def_node_matcher :module_definition?, <<~PATTERN
-          (casgn nil? _ (block (send (const {nil? cbase} :Module) :new) ...))
+          (casgn nil? _ (any_block (send (const {nil? cbase} :Module) :new) ...))
         PATTERN
 
         def message(length, max_length)

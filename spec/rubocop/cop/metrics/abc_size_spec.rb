@@ -21,25 +21,27 @@ RSpec.describe RuboCop::Cop::Metrics::AbcSize, :config do
     it 'registers an offense for an if modifier' do
       expect_offense(<<~RUBY)
         def method_name
-        ^^^^^^^^^^^^^^^ Assignment Branch Condition size for method_name is too high. [<0, 2, 1> 2.24/0]
+        ^^^^^^^^^^^^^^^ Assignment Branch Condition size for `method_name` is too high. [<0, 2, 1> 2.24/0]
           call_foo if some_condition # 0 + 2*2 + 1*1
         end
       RUBY
     end
 
     it 'registers an offense for an assignment of a local variable' do
-      expect_offense(<<~RUBY)
+      offenses = expect_offense(<<~RUBY)
         def method_name
-        ^^^^^^^^^^^^^^^ Assignment Branch Condition size for method_name is too high. [<1, 0, 0> 1/0]
+        ^^^^^^^^^^^^^^^ Assignment Branch Condition size for `method_name` is too high. [<1, 0, 0> 1/0]
           x = 1
         end
       RUBY
+      offense = offenses.first
+      expect(offense.location.last_line).to eq(3)
     end
 
     it 'registers an offense for an assignment of an element' do
       expect_offense(<<~RUBY)
         def method_name
-        ^^^^^^^^^^^^^^^ Assignment Branch Condition size for method_name is too high. [<1, 2, 0> 2.24/0]
+        ^^^^^^^^^^^^^^^ Assignment Branch Condition size for `method_name` is too high. [<1, 2, 0> 2.24/0]
           x[0] = 1
         end
       RUBY
@@ -48,7 +50,7 @@ RSpec.describe RuboCop::Cop::Metrics::AbcSize, :config do
     it 'registers an offense for complex content including A, B, and C scores' do
       expect_offense(<<~RUBY)
         def method_name
-        ^^^^^^^^^^^^^^^ Assignment Branch Condition size for method_name is too high. [<3, 4, 5> 7.07/0]
+        ^^^^^^^^^^^^^^^ Assignment Branch Condition size for `method_name` is too high. [<3, 4, 5> 7.07/0]
           my_options = Hash.new if 1 == 1 || 2 == 2 # 1, 1, 4
           my_options.each do |key, value|           # 2, 1, 1
             p key                                   # 0, 1, 0
@@ -61,24 +63,59 @@ RSpec.describe RuboCop::Cop::Metrics::AbcSize, :config do
     it 'registers an offense for a `define_method`' do
       expect_offense(<<~RUBY)
         define_method :method_name do
-        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Assignment Branch Condition size for method_name is too high. [<1, 0, 0> 1/0]
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Assignment Branch Condition size for `method_name` is too high. [<1, 0, 0> 1/0]
           x = 1
         end
       RUBY
     end
 
+    context 'Ruby 2.7', :ruby27 do
+      it 'registers an offense for a `define_method` with numblock' do
+        expect_offense(<<~RUBY)
+          define_method :method_name do
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Assignment Branch Condition size for `method_name` is too high. [<1, 0, 0> 1/0]
+            x = _1
+          end
+        RUBY
+      end
+    end
+
+    context 'Ruby 3.4', :ruby34 do
+      it 'registers an offense for a `define_method` with itblock' do
+        expect_offense(<<~RUBY)
+          define_method :method_name do
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Assignment Branch Condition size for `method_name` is too high. [<1, 0, 0> 1/0]
+            x = it
+          end
+        RUBY
+      end
+    end
+
     it 'treats safe navigation method calls like regular method calls + a condition' do
       expect_offense(<<~RUBY)
         def method_name
-        ^^^^^^^^^^^^^^^ Assignment Branch Condition size for method_name is too high. [<0, 2, 1> 2.24/0]
+        ^^^^^^^^^^^^^^^ Assignment Branch Condition size for `method_name` is too high. [<0, 2, 1> 2.24/0]
           object&.do_something
         end
       RUBY
     end
 
-    context 'when method is in list of ignored methods' do
-      context 'when given a string' do
-        let(:cop_config) { { 'Max' => 0, 'IgnoredMethods' => ['foo'] } }
+    context 'with `--lsp` option', :lsp do
+      it 'registers an offense for an assignment of a local variable' do
+        offenses = expect_offense(<<~RUBY)
+          def method_name
+          ^^^^^^^^^^^^^^^ Assignment Branch Condition size for `method_name` is too high. [<1, 0, 0> 1/0]
+            x = 1
+          end
+        RUBY
+        offense = offenses.first
+        expect(offense.location.last_line).to eq(1)
+      end
+    end
+
+    context 'when method is in list of allowed methods' do
+      context 'when AllowedMethods is enabled' do
+        let(:cop_config) { { 'Max' => 0, 'AllowedMethods' => ['foo'] } }
 
         it 'does not register an offense when defining an instance method' do
           expect_no_offenses(<<~RUBY)
@@ -105,8 +142,8 @@ RSpec.describe RuboCop::Cop::Metrics::AbcSize, :config do
         end
       end
 
-      context 'when given a regex' do
-        let(:cop_config) { { 'Max' => 0, 'IgnoredMethods' => [/foo/] } }
+      context 'when AllowedPatterns is enabled' do
+        let(:cop_config) { { 'Max' => 0, 'AllowedPatterns' => [/foo/] } }
 
         it 'does not register an offense when defining an instance method' do
           expect_no_offenses(<<~RUBY)
@@ -140,7 +177,7 @@ RSpec.describe RuboCop::Cop::Metrics::AbcSize, :config do
       it 'does not count repeated attributes' do
         expect_offense(<<~RUBY)
           def foo
-          ^^^^^^^ Assignment Branch Condition size for foo is too high. [<0, 1, 0> 1/0]
+          ^^^^^^^ Assignment Branch Condition size for `foo` is too high. [<0, 1, 0> 1/0]
             bar
             self.bar
             bar
@@ -155,7 +192,7 @@ RSpec.describe RuboCop::Cop::Metrics::AbcSize, :config do
       it 'counts repeated attributes' do
         expect_offense(<<~RUBY)
           def foo
-          ^^^^^^^ Assignment Branch Condition size for foo is too high. [<0, 3, 0> 3/0]
+          ^^^^^^^ Assignment Branch Condition size for `foo` is too high. [<0, 3, 0> 3/0]
             bar
             self.bar
             bar
@@ -206,7 +243,7 @@ RSpec.describe RuboCop::Cop::Metrics::AbcSize, :config do
 
         expect_offense(<<~RUBY)
           def method_name
-          ^^^^^^^^^^^^^^^ Assignment Branch Condition size for method_name is too high. [#{presentation}]
+          ^^^^^^^^^^^^^^^ Assignment Branch Condition size for `method_name` is too high. [#{presentation}]
             #{code.join("\n  ")}
           end
         RUBY

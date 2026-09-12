@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for unnecessary single-element Regexp character classes.
+      # Checks for unnecessary single-element `Regexp` character classes.
       #
       # @example
       #
@@ -63,6 +63,7 @@ module RuboCop
             next if expr.type != :set || expr.expressions.size != 1
             next if expr.negative?
             next if %i[set posixclass nonposixclass].include?(expr.expressions.first.type)
+            next if multiple_codepoints?(expr.expressions.first)
 
             yield expr
           end
@@ -73,14 +74,22 @@ module RuboCop
 
           non_redundant =
             whitespace_in_free_space_mode?(node, class_elem) ||
-            backslash_b?(class_elem) ||
+            backslash_b?(class_elem) || backreference_requiring_char_class?(class_elem) ||
             requires_escape_outside_char_class?(class_elem)
 
           !non_redundant
         end
 
+        def multiple_codepoints?(expression)
+          expression.respond_to?(:codepoints) && expression.codepoints.count >= 2
+        end
+
         def without_character_class(loc)
-          loc.source[1..-2]
+          without_character_class = loc.source[1..-2]
+
+          # Adds `\` to prevent autocorrection that changes to an interpolated string when `[#]`.
+          # e.g. From `/[#]{0}/` to `/#{0}/`
+          loc.source == '[#]' ? "\\#{without_character_class}" : without_character_class
         end
 
         def whitespace_in_free_space_mode?(node, elem)
@@ -90,9 +99,16 @@ module RuboCop
         end
 
         def backslash_b?(elem)
-          # \b's behaviour is different inside and outside of a character class, matching word
+          # \b's behavior is different inside and outside of a character class, matching word
           # boundaries outside but backspace (0x08) when inside.
           elem == '\b'
+        end
+
+        def backreference_requiring_char_class?(elem)
+          # `\1` to `\9` only match a literal digit inside a character class;
+          # outside it they are backreferences (and a syntax error when the
+          # referenced group does not exist), so the class is not redundant.
+          elem.match?(/\A\\[1-9]\z/)
         end
 
         def requires_escape_outside_char_class?(elem)

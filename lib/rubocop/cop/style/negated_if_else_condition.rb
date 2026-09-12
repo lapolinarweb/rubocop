@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for uses of `if-else` and ternary operators with a negated condition
+      # Checks for uses of `if-else` and ternary operators with a negated condition
       # which can be simplified by inverting condition and swapping branches.
       #
       # @example
@@ -46,14 +46,15 @@ module RuboCop
           @corrected_nodes = nil
         end
 
+        # rubocop:disable-next Metrics/AbcSize,Metrics/CyclomaticComplexity
         def on_if(node)
           return unless if_else?(node)
-
-          condition = node.condition
+          return unless (condition = unwrap_begin_nodes(node.condition))
           return if double_negation?(condition) || !negated_condition?(condition)
+          return unless condition.arguments.size < 2
 
-          type = node.ternary? ? 'ternary' : 'if-else'
-          add_offense(node, message: format(MSG, type: type)) do |corrector|
+          message = message(node)
+          add_offense(node, message: message) do |corrector|
             unless corrected_ancestor?(node)
               correct_negated_condition(corrector, condition)
               swap_branches(corrector, node)
@@ -71,9 +72,21 @@ module RuboCop
           !node.elsif? && else_branch && (!else_branch.if_type? || !else_branch.elsif?)
         end
 
+        def unwrap_begin_nodes(node)
+          node = node.children.first while node&.type?(:begin, :kwbegin)
+
+          node
+        end
+
         def negated_condition?(node)
           node.send_type? &&
             (node.negation_method? || NEGATED_EQUALITY_METHODS.include?(node.method_name))
+        end
+
+        def message(node)
+          type = node.ternary? ? 'ternary' : 'if-else'
+
+          format(MSG, type: type)
         end
 
         def corrected_ancestor?(node)
@@ -81,13 +94,12 @@ module RuboCop
         end
 
         def correct_negated_condition(corrector, node)
-          receiver, method_name, rhs = *node
           replacement =
             if node.negation_method?
-              receiver.source
+              node.receiver.source
             else
-              inverted_method = method_name.to_s.sub('!', '=')
-              "#{receiver.source} #{inverted_method} #{rhs.source}"
+              inverted_method = node.method_name.to_s.sub('!', '=')
+              "#{node.receiver.source} #{inverted_method} #{node.first_argument.source}"
             end
 
           corrector.replace(node, replacement)
@@ -97,11 +109,7 @@ module RuboCop
           if node.if_branch.nil?
             corrector.remove(range_by_whole_lines(node.loc.else, include_final_newline: true))
           else
-            if_range = if_range(node)
-            else_range = else_range(node)
-
-            corrector.replace(if_range, else_range.source)
-            corrector.replace(else_range, if_range.source)
+            corrector.swap(if_range(node), else_range(node))
           end
         end
 
@@ -110,7 +118,7 @@ module RuboCop
           if node.ternary?
             node.if_branch
           else
-            range_between(node.condition.loc.expression.end_pos, node.loc.else.begin_pos)
+            range_between(node.condition.source_range.end_pos, node.loc.else.begin_pos)
           end
         end
 

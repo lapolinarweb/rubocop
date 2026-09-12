@@ -27,7 +27,10 @@ module RuboCop
     class VariableForce < Force # rubocop:disable Metrics/ClassLength
       VARIABLE_ASSIGNMENT_TYPE = :lvasgn
       REGEXP_NAMED_CAPTURE_TYPE = :match_with_lvasgn
-      VARIABLE_ASSIGNMENT_TYPES = [VARIABLE_ASSIGNMENT_TYPE, REGEXP_NAMED_CAPTURE_TYPE].freeze
+      PATTERN_MATCH_VARIABLE_TYPE = :match_var
+      VARIABLE_ASSIGNMENT_TYPES = [
+        VARIABLE_ASSIGNMENT_TYPE, REGEXP_NAMED_CAPTURE_TYPE, PATTERN_MATCH_VARIABLE_TYPE
+      ].freeze
 
       ARGUMENT_DECLARATION_TYPES = [
         :arg, :optarg, :restarg,
@@ -40,6 +43,7 @@ module RuboCop
       OPERATOR_ASSIGNMENT_TYPES = (LOGICAL_OPERATOR_ASSIGNMENT_TYPES + [:op_asgn]).freeze
 
       MULTIPLE_ASSIGNMENT_TYPE = :masgn
+      REST_ASSIGNMENT_TYPE = :splat
 
       VARIABLE_REFERENCE_TYPE = :lvar
 
@@ -50,7 +54,7 @@ module RuboCop
 
       ZERO_ARITY_SUPER_TYPE = :zsuper
 
-      TWISTED_SCOPE_TYPES = %i[block class sclass defs module].freeze
+      TWISTED_SCOPE_TYPES = %i[block numblock itblock class sclass defs module].freeze
       SCOPE_TYPES = (TWISTED_SCOPE_TYPES + [:def]).freeze
 
       SEND_TYPE = :send
@@ -66,6 +70,8 @@ module RuboCop
           true
         end
       end
+
+      BRANCH_NODES = %i[if case case_match rescue].freeze
 
       def variable_table
         @variable_table ||= VariableTable.new(self)
@@ -108,34 +114,24 @@ module RuboCop
         :skip_children
       end
 
-      # rubocop:disable Metrics/MethodLength, Metrics/CyclomaticComplexity
+      NODE_HANDLER_METHOD_NAMES = [
+        [VARIABLE_ASSIGNMENT_TYPE, :process_variable_assignment],
+        [REGEXP_NAMED_CAPTURE_TYPE, :process_regexp_named_captures],
+        [PATTERN_MATCH_VARIABLE_TYPE, :process_pattern_match_variable],
+        [MULTIPLE_ASSIGNMENT_TYPE, :process_variable_multiple_assignment],
+        [VARIABLE_REFERENCE_TYPE, :process_variable_referencing],
+        [RESCUE_TYPE, :process_rescue],
+        [ZERO_ARITY_SUPER_TYPE, :process_zero_arity_super],
+        [SEND_TYPE, :process_send],
+        *ARGUMENT_DECLARATION_TYPES.product([:process_variable_declaration]),
+        *OPERATOR_ASSIGNMENT_TYPES.product([:process_variable_operator_assignment]),
+        *LOOP_TYPES.product([:process_loop]),
+        *SCOPE_TYPES.product([:process_scope])
+      ].to_h.freeze
+      private_constant :NODE_HANDLER_METHOD_NAMES
       def node_handler_method_name(node)
-        case node.type
-        when VARIABLE_ASSIGNMENT_TYPE
-          :process_variable_assignment
-        when REGEXP_NAMED_CAPTURE_TYPE
-          :process_regexp_named_captures
-        when MULTIPLE_ASSIGNMENT_TYPE
-          :process_variable_multiple_assignment
-        when VARIABLE_REFERENCE_TYPE
-          :process_variable_referencing
-        when RESCUE_TYPE
-          :process_rescue
-        when ZERO_ARITY_SUPER_TYPE
-          :process_zero_arity_super
-        when SEND_TYPE
-          :process_send
-        when *ARGUMENT_DECLARATION_TYPES
-          :process_variable_declaration
-        when *OPERATOR_ASSIGNMENT_TYPES
-          :process_variable_operator_assignment
-        when *LOOP_TYPES
-          :process_loop
-        when *SCOPE_TYPES
-          :process_scope
-        end
+        NODE_HANDLER_METHOD_NAMES[node.type]
       end
-      # rubocop:enable Metrics/MethodLength, Metrics/CyclomaticComplexity
 
       def process_variable_declaration(node)
         variable_name = node.children.first
@@ -185,26 +181,25 @@ module RuboCop
         skip_children!
       end
 
-      def regexp_captured_names(node)
-        regexp_string = node.children.select(&:str_type?).map do |child|
-          child.children.first
-        end.join || ''
+      def process_pattern_match_variable(node)
+        name = node.children.first
 
-        regexp = Regexp.new(regexp_string)
+        variable_table.declare_variable(name, node) unless variable_table.variable_exist?(name)
+
+        skip_children!
+      end
+
+      def regexp_captured_names(node)
+        regexp = node.to_regexp
 
         regexp.named_captures.keys
       end
 
       def process_variable_operator_assignment(node)
-        if LOGICAL_OPERATOR_ASSIGNMENT_TYPES.include?(node.type)
-          asgn_node, rhs_node = *node
-        else
-          asgn_node, _operator, rhs_node = *node
-        end
-
+        asgn_node = node.lhs
         return unless asgn_node.lvasgn_type?
 
-        name = asgn_node.children.first
+        name = asgn_node.name
 
         variable_table.declare_variable(name, asgn_node) unless variable_table.variable_exist?(name)
 
@@ -224,7 +219,7 @@ module RuboCop
         # before processing rhs nodes.
 
         variable_table.reference_variable(name, node)
-        process_node(rhs_node)
+        process_node(node.rhs)
         variable_table.assign_to_variable(name, asgn_node)
 
         skip_children!
@@ -243,11 +238,16 @@ module RuboCop
       end
 
       def process_loop(node)
-        if POST_CONDITION_LOOP_TYPES.include?(node.type)
+        if node.post_condition_loop?
           # See the comment at the end of file for this behavior.
           condition_node, body_node = *node
           process_node(body_node)
           process_node(condition_node)
+        elsif node.for_type?
+          # In `for item in items` the rightmost expression is evaluated first.
+          process_node(node.collection)
+          process_node(node.variable)
+          process_node(node.body) if node.body
         else
           process_children(node)
         end
@@ -303,7 +303,7 @@ module RuboCop
         variable_table.accessible_variables.each { |variable| variable.reference!(node) }
       end
 
-      # Mark all assignments which are referenced in the same loop
+      # Mark last assignments which are referenced in the same loop
       # as referenced by ignoring AST order since they would be referenced
       # in next iteration.
       def mark_assignments_as_referenced_in_loop(node)
@@ -315,13 +315,12 @@ module RuboCop
           # would be skipped here.
           next unless variable
 
-          variable.assignments.each do |assignment|
-            next if assignment_nodes_in_loop.none? do |assignment_node|
-                      assignment_node.equal?(assignment.node)
-                    end
-
-            assignment.reference!(node)
+          loop_assignments = variable.assignments.select do |assignment|
+            assignment_nodes_in_loop.include?(assignment.node)
           end
+          next unless loop_assignments.any?
+
+          reference_assignments(loop_assignments, node)
         end
       end
 
@@ -357,18 +356,27 @@ module RuboCop
         when :lvasgn
           AssignmentReference.new(node)
         when *OPERATOR_ASSIGNMENT_TYPES
-          asgn_node = node.children.first
-          VariableReference.new(asgn_node.children.first) if asgn_node.lvasgn_type?
+          VariableReference.new(node.lhs.name) if node.lhs.lvasgn_type?
         end
       end
 
-      # Use Node#equal? for accurate check.
+      def reference_assignments(loop_assignments, loop_node)
+        # If inside a branching statement, mark all as referenced.
+        # Otherwise, mark only the last assignment as referenced.
+        # Note that `rescue` must be considered as branching because of
+        # the `retry` keyword.
+        loop_assignments.each do |assignment|
+          assignment.reference!(loop_node) if assignment.node.each_ancestor(*BRANCH_NODES).any?
+        end
+        loop_assignments.last&.reference!(loop_node)
+      end
+
       def scanned_node?(node)
-        scanned_nodes.any? { |scanned_node| scanned_node.equal?(node) }
+        scanned_nodes.include?(node)
       end
 
       def scanned_nodes
-        @scanned_nodes ||= []
+        @scanned_nodes ||= Set.new.compare_by_identity
       end
 
       # Hooks invoked by VariableTable.

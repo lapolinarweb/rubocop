@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 RSpec.describe RuboCop::Cop::Lint::ErbNewArguments, :config do
-  context '<= Ruby 2.5', :ruby25 do
+  context '<= Ruby 2.5', :ruby25, unsupported_on: :prism do
     it 'does not register an offense when using `ERB.new` with non-keyword arguments' do
       expect_no_offenses(<<~RUBY)
         ERB.new(str, nil, '-', '@output_buffer')
@@ -97,6 +97,17 @@ RSpec.describe RuboCop::Cop::Lint::ErbNewArguments, :config do
     it 'does not register an offense when using `ERB.new` without optional arguments' do
       expect_no_offenses(<<~RUBY)
         ERB.new(str)
+      RUBY
+    end
+
+    it 'registers an offense and corrects when using `ERB.new` with a non-keyword 2nd argument and a keyword 3rd argument' do
+      expect_offense(<<~RUBY)
+        ERB.new(str, nil, trim_mode: '-')
+                     ^^^ Passing safe_level with the 2nd argument of `ERB.new` is deprecated. Do not use it, and specify other arguments as keyword arguments.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        ERB.new(str, trim_mode: '-')
       RUBY
     end
 

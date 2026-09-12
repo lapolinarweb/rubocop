@@ -28,7 +28,7 @@ RSpec.describe RuboCop::Cop::Lint::ShadowedException, :config do
       RUBY
     end
 
-    it 'rescue a exception without causing constant name deprecation warning' do
+    it 'rescue an exception without causing constant name deprecation warning' do
       expect do
         expect_no_offenses(<<~RUBY)
           def foo
@@ -87,7 +87,7 @@ RSpec.describe RuboCop::Cop::Lint::ShadowedException, :config do
 
     it 'registers an offense rescuing exceptions that are ancestors of each other' do
       expect_offense(<<~RUBY)
-        def
+        def foo
           something
         rescue StandardError, RuntimeError
         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Do not shadow rescued Exceptions.
@@ -103,6 +103,19 @@ RSpec.describe RuboCop::Cop::Lint::ShadowedException, :config do
         rescue NonStandardError, Exception
         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Do not shadow rescued Exceptions.
           handle_exception
+        end
+      RUBY
+    end
+
+    it 'registers an offense when `rescue Exception` precedes a bare `rescue` clause' do
+      expect_offense(<<~RUBY)
+        begin
+          something
+        rescue Exception
+        ^^^^^^^^^^^^^^^^ Do not shadow rescued Exceptions.
+          handle_exception
+        rescue
+          handle_standard_error
         end
       RUBY
     end
@@ -200,8 +213,8 @@ RSpec.describe RuboCop::Cop::Lint::ShadowedException, :config do
   end
 
   context 'multiple rescues' do
-    it 'registers an offense when a higher level exception is rescued before' \
-       ' a lower level exception' do
+    it 'registers an offense when a higher level exception is rescued before ' \
+       'a lower level exception' do
       expect_offense(<<~RUBY)
         begin
           something

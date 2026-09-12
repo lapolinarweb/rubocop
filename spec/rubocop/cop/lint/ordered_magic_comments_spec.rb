@@ -59,6 +59,42 @@ RSpec.describe RuboCop::Cop::Lint::OrderedMagicComments, :config do
     RUBY
   end
 
+  it 'registers an offense and corrects when an `encoding` magic comment does not precede ' \
+     'a `warn_indent` magic comment' do
+    expect_offense(<<~RUBY)
+      # warn_indent: true
+      # encoding: ascii
+      ^^^^^^^^^^^^^^^^^ The encoding magic comment should precede all other magic comments.
+    RUBY
+
+    expect_correction(<<~RUBY)
+      # encoding: ascii
+      # warn_indent: true
+    RUBY
+  end
+
+  it 'registers an offense and corrects when an `encoding` magic comment does not precede ' \
+     'a `shareable_constant_value` magic comment' do
+    expect_offense(<<~RUBY)
+      # shareable_constant_value: literal
+      # encoding: ascii
+      ^^^^^^^^^^^^^^^^^ The encoding magic comment should precede all other magic comments.
+    RUBY
+
+    expect_correction(<<~RUBY)
+      # encoding: ascii
+      # shareable_constant_value: literal
+    RUBY
+  end
+
+  it 'does not register an offense when an `encoding` magic comment precedes ' \
+     'a `shareable_constant_value` magic comment' do
+    expect_no_offenses(<<~RUBY)
+      # encoding: ascii
+      # shareable_constant_value: literal
+    RUBY
+  end
+
   it 'does not register an offense when using `encoding` magic comment is first line' do
     expect_no_offenses(<<~RUBY)
       # encoding: ascii
@@ -94,6 +130,15 @@ RSpec.describe RuboCop::Cop::Lint::OrderedMagicComments, :config do
 
       x = { encoding: Encoding::SJIS }
       puts x
+    RUBY
+  end
+
+  it 'does not register an offense when comment text `# encoding: ISO-8859-1` is embedded within ' \
+     'example code as source code comment' do
+    expect_no_offenses(<<~RUBY)
+      # frozen_string_literal: true
+
+      # eval('# encoding: ISO-8859-1')
     RUBY
   end
 end

@@ -3,12 +3,35 @@
 module RuboCop
   module Cop
     module Layout
-      # This cop checks if empty lines around the bodies of classes match
+      # Checks if empty lines around the bodies of classes match
       # the configuration.
       #
-      # @example EnforcedStyle: empty_lines
-      #   # good
+      # @example EnforcedStyle: no_empty_lines (default)
+      #   # bad
+      #   class Foo
       #
+      #     def bar
+      #       # ...
+      #     end
+      #
+      #   end
+      #
+      #   # good
+      #   class Foo
+      #     def bar
+      #       # ...
+      #     end
+      #   end
+      #
+      # @example EnforcedStyle: empty_lines
+      #   # bad
+      #   class Foo
+      #     def bar
+      #       # ...
+      #     end
+      #   end
+      #
+      #   # good
       #   class Foo
       #
       #     def bar
@@ -55,15 +78,6 @@ module RuboCop
       #     end
       #
       #   end
-      #
-      # @example EnforcedStyle: no_empty_lines (default)
-      #   # good
-      #
-      #   class Foo
-      #     def bar
-      #       # ...
-      #     end
-      #   end
       class EmptyLinesAroundClassBody < Base
         include EmptyLinesAroundBody
         extend AutoCorrector
@@ -71,7 +85,7 @@ module RuboCop
         KIND = 'class'
 
         def on_class(node)
-          first_line = node.parent_class.first_line if node.parent_class
+          first_line = node.parent_class.last_line if node.parent_class
 
           check(node, node.body, adjusted_first_line: first_line)
         end

@@ -3,28 +3,48 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for uses of the case equality operator(===).
+      # Checks for uses of the case equality operator (`===`).
+      # The `===` operator has different behavior depending on the
+      # receiver and its use outside of `case`/`when` is confusing.
+      # Prefer more explicit alternatives like `is_a?`, `include?`,
+      # or `match?`.
       #
       # If `AllowOnConstant` option is enabled, the cop will ignore violations when the receiver of
       # the case equality operator is a constant.
       #
+      # If `AllowOnSelfClass` option is enabled, the cop will ignore violations when the receiver of
+      # the case equality operator is `self.class`. Note intermediate variables are not accepted.
+      #
+      # NOTE: Regexp case equality (`/regexp/ === var`) is allowed because changing it to
+      # `/regexp/.match?(var)` needs to take into account `Regexp.last_match?`, `$~`, `$1`, etc.
+      # This potentially incompatible transformation is handled by `Performance/RegexpMatch` cop.
+      #
       # @example
       #   # bad
       #   (1..100) === 7
-      #   /something/ === some_string
       #
       #   # good
-      #   something.is_a?(Array)
       #   (1..100).include?(7)
-      #   /something/.match?(some_string)
       #
       # @example AllowOnConstant: false (default)
       #   # bad
       #   Array === something
       #
+      #   # good
+      #   something.is_a?(Array)
+      #
       # @example AllowOnConstant: true
       #   # good
       #   Array === something
+      #   something.is_a?(Array)
+      #
+      # @example AllowOnSelfClass: false (default)
+      #   # bad
+      #   self.class === something
+      #
+      # @example AllowOnSelfClass: true
+      #   # good
+      #   self.class === something
       #
       class CaseEquality < Base
         extend AutoCorrector
@@ -33,11 +53,14 @@ module RuboCop
         RESTRICT_ON_SEND = %i[===].freeze
 
         # @!method case_equality?(node)
-        def_node_matcher :case_equality?, '(send $#const? :=== $_)'
+        def_node_matcher :case_equality?, '(send $#offending_receiver? :=== $_)'
+
+        # @!method self_class?(node)
+        def_node_matcher :self_class?, '(send (self) :class)'
 
         def on_send(node)
           case_equality?(node) do |lhs, rhs|
-            return if lhs.const_type? && !lhs.module_name?
+            return if lhs.regexp_type? || (lhs.const_type? && !lhs.module_name?)
 
             add_offense(node.loc.selector) do |corrector|
               replacement = replacement(lhs, rhs)
@@ -48,29 +71,50 @@ module RuboCop
 
         private
 
-        def const?(node)
-          if cop_config.fetch('AllowOnConstant', false)
-            !node&.const_type?
-          else
-            true
-          end
+        def offending_receiver?(node)
+          return false if node&.const_type? && cop_config.fetch('AllowOnConstant', false)
+          return false if self_class?(node) && cop_config.fetch('AllowOnSelfClass', false)
+
+          true
         end
 
         def replacement(lhs, rhs)
           case lhs.type
-          when :regexp
-            # The automatic correction from `a === b` to `a.match?(b)` needs to
-            # consider `Regexp.last_match?`, `$~`, `$1`, and etc.
-            # This correction is expected to be supported by `Performance/Regexp` cop.
-            # See: https://github.com/rubocop/rubocop-performance/issues/152
-            #
-            # So here is noop.
           when :begin
-            child = lhs.children.first
-            "#{lhs.source}.include?(#{rhs.source})" if child&.range_type?
+            begin_replacement(lhs, rhs)
           when :const
-            "#{rhs.source}.is_a?(#{lhs.source})"
+            const_replacement(lhs, rhs)
+          when :send
+            send_replacement(lhs, rhs)
           end
+        end
+
+        def begin_replacement(lhs, rhs)
+          return unless lhs.children.first&.range_type?
+
+          "#{lhs.source}.include?(#{rhs.source})"
+        end
+
+        def const_replacement(lhs, rhs)
+          "#{parenthesize_if_needed(rhs)}.is_a?(#{lhs.source})"
+        end
+
+        def send_replacement(lhs, rhs)
+          return unless self_class?(lhs)
+
+          "#{parenthesize_if_needed(rhs)}.is_a?(#{lhs.source})"
+        end
+
+        # `Array === a + b` must become `(a + b).is_a?(Array)`, not
+        # `a + b.is_a?(Array)` (which parses as `a + (b.is_a?(Array))`).
+        def parenthesize_if_needed(node)
+          requires_parentheses?(node) ? "(#{node.source})" : node.source
+        end
+
+        def requires_parentheses?(node)
+          return true if node.type?(:and, :or, :if, :range) || node.assignment?
+
+          node.send_type? && (node.operator_method? || node.unary_operation?)
         end
       end
     end

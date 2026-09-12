@@ -3,22 +3,18 @@
 module RuboCop
   module Cop
     module Lint
-      # This cop checks for `rand(1)` calls.
-      # Such calls always return `0`.
+      # Checks for `rand(1)` calls.
+      # Such calls always return `0`, and so do `rand(-1)`, `rand(1.0)`, and `rand(-1.0)`.
       #
       # @example
       #
       #   # bad
-      #
       #   rand 1
       #   Kernel.rand(-1)
       #   rand 1.0
       #   rand(-1.0)
       #
-      # @example
-      #
       #   # good
-      #
       #   0 # just use 0 instead
       class RandOne < Base
         MSG = '`%<method>s` always returns `0`. Perhaps you meant `rand(2)` or `rand`?'

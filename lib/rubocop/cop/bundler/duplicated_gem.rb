@@ -4,6 +4,7 @@ module RuboCop
   module Cop
     module Bundler
       # A Gem's requirements should be listed only once in a Gemfile.
+      #
       # @example
       #   # bad
       #   gem 'rubocop'
@@ -38,19 +39,15 @@ module RuboCop
       class DuplicatedGem < Base
         include RangeHelp
 
-        MSG = 'Gem `%<gem_name>s` requirements already given on line '\
+        MSG = 'Gem `%<gem_name>s` requirements already given on line ' \
               '%<line_of_first_occurrence>d of the Gemfile.'
 
         def on_new_investigation
           return if processed_source.blank?
 
           duplicated_gem_nodes.each do |nodes|
-            nodes[1..-1].each do |node|
-              register_offense(
-                node,
-                node.first_argument.to_a.first,
-                nodes.first.first_line
-              )
+            nodes[1..].each do |node|
+              register_offense(node, node.first_argument.to_a.first, nodes.first.first_line)
             end
           end
         end
@@ -68,15 +65,15 @@ module RuboCop
         end
 
         def conditional_declaration?(nodes)
-          parent = nodes[0].parent
-          return false unless parent&.if_type? || parent&.when_type?
+          parent = nodes[0].each_ancestor.find { |ancestor| !ancestor.begin_type? }
+          return false unless parent&.type?(:if, :when)
 
           root_conditional_node = parent.if_type? ? parent : parent.parent
           nodes.all? { |node| within_conditional?(node, root_conditional_node) }
         end
 
         def within_conditional?(node, conditional_node)
-          conditional_node.branches.any? do |branch|
+          conditional_node.branches.compact.any? do |branch|
             branch == node || branch.child_nodes.include?(node)
           end
         end

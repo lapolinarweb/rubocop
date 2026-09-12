@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Layout
-      # This cop checks whether the multiline do end blocks have a newline
+      # Checks whether the multiline do end blocks have a newline
       # after the start of the block. Additionally, it checks whether the block
       # arguments, if any, are on the same line as the start of the
       # block. Putting block arguments on separate lines, because the whole
@@ -63,10 +63,13 @@ module RuboCop
             add_offense_for_expression(node, node.arguments, ARG_MSG)
           end
 
-          return unless node.body && node.loc.begin.line == node.body.first_line
+          return unless node.body && same_line?(node.loc.begin, node.body)
 
           add_offense_for_expression(node, node.body, MSG)
         end
+
+        alias on_numblock on_block
+        alias on_itblock on_block
 
         private
 
@@ -75,6 +78,8 @@ module RuboCop
         end
 
         def line_break_necessary_in_args?(node)
+          return false unless max_line_length
+
           needed_length_for_args(node) > max_line_length
         end
 
@@ -89,7 +94,7 @@ module RuboCop
           if node.source.lines.first.end_with?("|\n")
             PIPE_SIZE
           else
-            1 + (PIPE_SIZE * 2)
+            (PIPE_SIZE * 2) + 1
           end
         end
 
@@ -110,14 +115,14 @@ module RuboCop
 
           expr_before_body ||= node.loc.begin
 
-          return unless expr_before_body.line == node.body.first_line
+          return unless same_line?(expr_before_body, node.body)
 
           autocorrect_body(corrector, node, node.body)
         end
 
         def autocorrect_arguments(corrector, node)
           end_pos = range_with_surrounding_space(
-            range: node.arguments.source_range,
+            node.arguments.source_range,
             side: :right,
             newlines: false
           ).end_pos

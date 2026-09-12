@@ -3,8 +3,8 @@
 module RuboCop
   module Cop
     module Lint
-      # This cop checks for uses of `Integer#times` that will never yield
-      # (when the integer <= 0) or that will only ever yield once
+      # Checks for uses of `Integer#times` that will never yield
+      # (when the integer ``<= 0``) or that will only ever yield once
       # (`1.times`).
       #
       # @safety
@@ -51,26 +51,30 @@ module RuboCop
           node = node.block_node if node.block_literal?
 
           add_offense(node, message: format(MSG, count: count)) do |corrector|
-            next unless own_line?(node)
+            next if !own_line?(node) || node.parent&.send_type?
 
-            if never_process?(count, node)
-              remove_node(corrector, node)
-            elsif !proc_name.empty?
-              autocorrect_block_pass(corrector, node, proc_name)
-            else
-              autocorrect_block(corrector, node)
-            end
+            autocorrect(corrector, count, node, proc_name)
           end
         end
 
         private
+
+        def autocorrect(corrector, count, node, proc_name)
+          if never_process?(count, node)
+            remove_node(corrector, node)
+          elsif !proc_name.empty?
+            autocorrect_block_pass(corrector, node, proc_name)
+          elsif node.block_type?
+            autocorrect_block(corrector, node)
+          end
+        end
 
         def never_process?(count, node)
           count < 1 || (node.block_type? && node.body.nil?)
         end
 
         def remove_node(corrector, node)
-          corrector.remove(range_by_whole_lines(node.loc.expression, include_final_newline: true))
+          corrector.remove(range_by_whole_lines(node.source_range, include_final_newline: true))
         end
 
         def autocorrect_block_pass(corrector, node, proc_name)
@@ -79,7 +83,7 @@ module RuboCop
 
         def autocorrect_block(corrector, node)
           block_arg = block_arg(node)
-          return if block_reassigns_arg?(node, block_arg)
+          return unless reducible_to_body?(node, block_arg)
 
           source = node.body.source
           source.gsub!(/\b#{block_arg}\b/, '0') if block_arg
@@ -87,11 +91,32 @@ module RuboCop
           corrector.replace(node, fix_indentation(source, node.loc.column...node.body.loc.column))
         end
 
+        def reducible_to_body?(node, block_arg)
+          # A block with multiple arguments can't be reduced to its body (the extra arguments
+          # would become undefined references), and `next`/`break`/`redo` bound to the block
+          # become orphaned (a syntax error) once the block is removed.
+          return false if node.arguments.size > 1 || orphans_loop_control_keyword?(node)
+
+          # A lone non-simple argument (destructuring `|(a, b)|` or a splat `|*a|`) can't be
+          # substituted either, so reducing to the body would leave it referencing an
+          # undefined variable.
+          return false if node.arguments.one? && block_arg.nil?
+
+          !block_reassigns_arg?(node, block_arg)
+        end
+
+        def orphans_loop_control_keyword?(node)
+          node.body&.each_node(:next, :break, :redo)&.any? do |control|
+            inner = control.each_ancestor.take_while { |ancestor| !ancestor.equal?(node) }
+            inner.none? { |ancestor| ancestor.type?(:any_block, :while, :until, :for) }
+          end
+        end
+
         def fix_indentation(source, range)
           # Cleanup indentation in a multiline block
           source_lines = source.split("\n")
 
-          source_lines[1..-1].each do |line|
+          source_lines[1..].each do |line|
             next if line.empty?
 
             line[range] = ''

@@ -202,7 +202,7 @@ RSpec.describe RuboCop::Cop::Layout::EmptyLinesAroundArguments, :config do
       end
     end
 
-    it 'registers autocorrects empty line whetn args start on definition line' do
+    it 'registers autocorrects empty line when args start on definition line' do
       expect_offense(<<~RUBY)
         bar(qux,
 
@@ -218,7 +218,7 @@ RSpec.describe RuboCop::Cop::Layout::EmptyLinesAroundArguments, :config do
   end
 
   context 'when no extra lines' do
-    it 'accpets one line methods' do
+    it 'accepts one line methods' do
       expect_no_offenses(<<~RUBY)
         foo(bar)
       RUBY
@@ -297,6 +297,14 @@ RSpec.describe RuboCop::Cop::Layout::EmptyLinesAroundArguments, :config do
         foo.(
           arg
         )
+      RUBY
+    end
+
+    it 'ignores a multiline string with only whitespace on one line and []-style method call after' do
+      expect_no_offenses(<<~RUBY)
+        format('%d
+
+        ', 1)[0]
       RUBY
     end
 

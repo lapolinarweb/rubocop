@@ -3,8 +3,11 @@
 module RuboCop
   module Cop
     module Layout
-      # This cop checks that the indentation method is consistent.
+      # Checks that the indentation method is consistent.
       # Either tabs only or spaces only are used for indentation.
+      #
+      # With `EnforcedStyle: tabs`, spaces that follow the indenting tabs are
+      # taken to be alignment rather than indentation, and are left alone.
       #
       # @example EnforcedStyle: spaces (default)
       #   # bad
@@ -40,10 +43,13 @@ module RuboCop
         MSG = '%<type>s detected in indentation.'
 
         def on_new_investigation
-          str_ranges = string_literal_ranges(processed_source.ast)
+          str_ranges = nil
 
           processed_source.lines.each.with_index(1) do |line, lineno|
             next unless (range = find_offense(line, lineno))
+
+            # Perform costly calculation only when needed.
+            str_ranges ||= string_literal_ranges(processed_source.ast)
             next if in_string_literal?(str_ranges, range)
 
             add_offense(range) { |corrector| autocorrect(corrector, range) }
@@ -64,7 +70,7 @@ module RuboCop
           match = if style == :spaces
                     line.match(/\A\s*\t+/)
                   else
-                    line.match(/\A\s* +/)
+                    line.match(/\A +/)
                   end
           return unless match
 
@@ -73,7 +79,7 @@ module RuboCop
 
         def autocorrect_lambda_for_tabs(corrector, range)
           spaces = ' ' * configured_indentation_width
-          corrector.replace(range, range.source.gsub(/\t/, spaces))
+          corrector.replace(range, range.source.gsub("\t", spaces))
         end
 
         def autocorrect_lambda_for_spaces(corrector, range)
@@ -90,15 +96,17 @@ module RuboCop
           # which lines start inside a string literal?
           return [] if ast.nil?
 
-          ast.each_node(:str, :dstr).each_with_object(Set.new) do |str, ranges|
+          ranges = Set.new
+          ast.each_node(:str, :dstr) do |str|
             loc = str.location
 
             if str.heredoc?
               ranges << loc.heredoc_body
-            elsif loc.respond_to?(:begin) && loc.begin
+            elsif str.loc?(:begin)
               ranges << loc.expression
             end
           end
+          ranges
         end
 
         def message(_node)

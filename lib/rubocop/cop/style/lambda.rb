@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Style
-      # This cop (by default) checks for uses of the lambda literal syntax for
+      # (by default) checks for uses of the lambda literal syntax for
       # single line lambdas, and the method call syntax for multiline lambdas.
       # It is configurable to enforce one of the styles for both single line
       # and multiline lambdas as well.
@@ -61,6 +61,10 @@ module RuboCop
           }
         }.freeze
 
+        def self.autocorrect_incompatible_with
+          [Style::SymbolProc]
+        end
+
         def on_block(node)
           return unless node.lambda?
 
@@ -68,15 +72,16 @@ module RuboCop
 
           return unless offending_selector?(node, selector)
 
-          add_offense(node.send_node.source_range, message: message(node, selector)) do |corrector|
-            if node.send_node.source == 'lambda'
-              autocorrect_method_to_literal(corrector, node)
-            else
+          add_offense(node.send_node, message: message(node, selector)) do |corrector|
+            if node.send_node.lambda_literal?
               LambdaLiteralToMethodCorrector.new(node).call(corrector)
+            else
+              autocorrect_method_to_literal(corrector, node)
             end
           end
         end
         alias on_numblock on_block
+        alias on_itblock on_block
 
         private
 
@@ -117,7 +122,13 @@ module RuboCop
         end
 
         def lambda_arg_string(args)
-          args.children.map(&:source).join(', ')
+          # Block-local (shadow) arguments are separated from regular arguments by a
+          # `;`; joining everything with `,` would turn them into extra parameters
+          # and change the lambda's arity.
+          regular, shadow = args.children.partition { |arg| !arg.shadowarg_type? }
+          arg_string = regular.map(&:source).join(', ')
+          arg_string += "; #{shadow.map(&:source).join(', ')}" unless shadow.empty?
+          arg_string
         end
       end
     end

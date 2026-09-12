@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Style
-      # This cop enforces the use of explicit block argument to avoid writing
+      # Enforces the use of explicit block argument to avoid writing
       # block literal that just passes its arguments to another block.
       #
       # NOTE: This cop only registers an offense if the block args match the
@@ -42,7 +42,7 @@ module RuboCop
         include RangeHelp
         extend AutoCorrector
 
-        MSG = 'Consider using explicit block argument in the '\
+        MSG = 'Consider using explicit block argument in the ' \
               "surrounding method's signature over `yield`."
 
         # @!method yielding_block?(node)
@@ -50,9 +50,13 @@ module RuboCop
           (block $_ (args $...) (yield $...))
         PATTERN
 
+        def self.autocorrect_incompatible_with
+          [Lint::UnusedMethodArgument]
+        end
+
         def initialize(config = nil, options = nil)
           super
-          @def_nodes = Set.new
+          @def_nodes = Set.new.compare_by_identity
         end
 
         def on_yield(node)
@@ -61,7 +65,7 @@ module RuboCop
           yielding_block?(block_node) do |send_node, block_args, yield_args|
             return unless yielding_arguments?(block_args, yield_args)
 
-            def_node = block_node.each_ancestor(:def, :defs).first
+            def_node = block_node.each_ancestor(:any_def).first
             # if `yield` is being called outside of a method context, ignore
             # this is not a valid ruby pattern, but can happen in haml or erb,
             # so this can cause crashes in haml_lint
@@ -82,7 +86,7 @@ module RuboCop
 
         def extract_block_name(def_node)
           if def_node.block_argument?
-            def_node.arguments.last.name
+            def_node.last_argument.name
           else
             'block'
           end
@@ -119,11 +123,11 @@ module RuboCop
         end
 
         def call_like?(node)
-          node.call_type? || node.zsuper_type? || node.super_type?
+          node.type?(:call, :zsuper, :super)
         end
 
         def insert_argument(node, corrector, block_name)
-          last_arg = node.arguments.last
+          last_arg = node.last_argument
           arg_range = range_with_surrounding_comma(last_arg.source_range, :right)
           replacement = " &#{block_name}"
           replacement = ",#{replacement}" unless arg_range.source.end_with?(',')
@@ -131,7 +135,13 @@ module RuboCop
         end
 
         def correct_call_node(node, corrector, block_name)
-          corrector.insert_after(node, "(&#{block_name})")
+          new_arguments = if node.zsuper_type?
+                            args = build_new_arguments_for_zsuper(node) << "&#{block_name}"
+                            args.join(', ')
+                          else
+                            "&#{block_name}"
+                          end
+          corrector.insert_after(node, "(#{new_arguments})")
           return unless node.parenthesized?
 
           args_begin = Util.args_begin(node)
@@ -140,8 +150,15 @@ module RuboCop
           corrector.remove(range)
         end
 
+        def build_new_arguments_for_zsuper(node)
+          def_node = node.each_ancestor(:any_def).first
+          def_node.arguments.map do |arg|
+            arg.optarg_type? ? arg.node_parts[0] : arg.source
+          end
+        end
+
         def block_body_range(block_node, send_node)
-          range_between(send_node.loc.expression.end_pos, block_node.loc.end.end_pos)
+          range_between(send_node.source_range.end_pos, block_node.loc.end.end_pos)
         end
       end
     end

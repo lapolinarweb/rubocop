@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 RSpec.describe RuboCop::Cop::Metrics::ParameterLists, :config do
+  include_context 'with exclude limit tracking'
+
   let(:cop_config) { { 'Max' => 4, 'CountKeywordArgs' => true, 'MaxOptionalParameters' => 3 } }
 
   it 'registers an offense for a method def with 5 parameters' do
@@ -14,6 +16,14 @@ RSpec.describe RuboCop::Cop::Metrics::ParameterLists, :config do
   it 'accepts a method def with 4 parameters' do
     expect_no_offenses(<<~RUBY)
       def meth(a, b, c, d)
+      end
+    RUBY
+  end
+
+  it 'accepts a multi-line parameter list with a disable directive on its last line' do
+    expect_no_offenses(<<~RUBY)
+      def meth(a, b, c,
+               d, e) # rubocop:disable Metrics/ParameterLists
       end
     RUBY
   end
@@ -70,15 +80,72 @@ RSpec.describe RuboCop::Cop::Metrics::ParameterLists, :config do
       end
     RUBY
 
-    expect(cop.config_to_allow_offenses[:exclude_limit]).to eq(
-      'Max' => 7,
-      'MaxOptionalParameters' => 7
-    )
+    expect(read_exclude_limit(cop)).to eq('Max' => 7, 'MaxOptionalParameters' => 7)
   end
 
   it 'does not register an offense when method has allowed amount of optargs' do
     expect_no_offenses(<<~RUBY)
       def foo(a, b = 2, c = 3, d = 4)
+      end
+    RUBY
+  end
+
+  it 'does not register an offense when method has allowed amount of args with block arg' do
+    expect_no_offenses(<<~RUBY)
+      def foo(a, b, c, d, &block)
+      end
+    RUBY
+  end
+
+  it 'does not register an offense when method has no args' do
+    expect_no_offenses(<<~RUBY)
+      def foo
+      end
+    RUBY
+  end
+
+  it 'registers an offense when defining `initialize` in the `class` definition' do
+    expect_offense(<<~RUBY)
+      class Foo
+        def initialize(one:, two:, three:, four:, five:)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Avoid parameter lists longer than 4 parameters. [5/4]
+        end
+      end
+    RUBY
+  end
+
+  it 'does not register an offense when defining `initialize` in the block of `Struct.new`' do
+    expect_no_offenses(<<~RUBY)
+      Struct.new(:one, :two, :three, :four, :five) do
+        def initialize(one:, two:, three:, four:, five:)
+        end
+      end
+    RUBY
+  end
+
+  it 'does not register an offense when defining `initialize` in the block of `::Struct.new`' do
+    expect_no_offenses(<<~RUBY)
+      ::Struct.new(:one, :two, :three, :four, :five) do
+        def initialize(one:, two:, three:, four:, five:)
+        end
+      end
+    RUBY
+  end
+
+  it 'does not register an offense when defining `initialize` in the block of `Data.define`' do
+    expect_no_offenses(<<~RUBY)
+      Data.define(:one, :two, :three, :four, :five) do
+        def initialize(one:, two:, three:, four:, five:)
+        end
+      end
+    RUBY
+  end
+
+  it 'does not register an offense when defining `initialize` in the block of `::Data.define`' do
+    expect_no_offenses(<<~RUBY)
+      ::Data.define(:one, :two, :three, :four, :five) do
+        def initialize(one:, two:, three:, four:, five:)
+        end
       end
     RUBY
   end

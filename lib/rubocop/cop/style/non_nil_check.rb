@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for non-nil checks, which are usually redundant.
+      # Checks for non-nil checks, which are usually redundant.
       #
       # With `IncludeSemanticChanges` set to `false` by default, this cop
       # does not report offenses for `!x.nil?` and does no changes that might
@@ -109,7 +109,7 @@ module RuboCop
 
         def message(node)
           if node.method?(:!=) && !include_semantic_changes?
-            prefer = "!#{node.receiver.source}.nil?"
+            prefer = non_nil_check_replacement(node)
             format(MSG_FOR_REPLACEMENT, prefer: prefer, current: node.source)
           else
             MSG_FOR_REDUNDANCY
@@ -120,18 +120,28 @@ module RuboCop
           cop_config['IncludeSemanticChanges']
         end
 
+        # An operator-expression receiver (e.g. `a + b`) binds looser than the
+        # appended `.nil?`, so it must be parenthesized: `!(a + b).nil?`.
+        def non_nil_check_replacement(node)
+          receiver = node.receiver
+          source = operator_expression?(receiver) ? "(#{receiver.source})" : receiver.source
+          "!#{source}.nil?"
+        end
+
+        def operator_expression?(node)
+          node.operator_keyword? ||
+            (node.send_type? && node.binary_operation?) ||
+            (node.if_type? && node.ternary?) ||
+            node.type?(:range, :iflipflop, :eflipflop) ||
+            node.assignment?
+        end
+
         def autocorrect_comparison(corrector, node)
-          expr = node.source
-
-          new_code = if include_semantic_changes?
-                       expr.sub(/\s*!=\s*nil/, '')
-                     else
-                       expr.sub(/^(\S*)\s*!=\s*nil/, '!\1.nil?')
-                     end
-
-          return if expr == new_code
-
-          corrector.replace(node, new_code)
+          if include_semantic_changes?
+            corrector.replace(node, node.receiver.source)
+          else
+            corrector.replace(node, non_nil_check_replacement(node))
+          end
         end
 
         def autocorrect_non_nil(corrector, node, inner_node)

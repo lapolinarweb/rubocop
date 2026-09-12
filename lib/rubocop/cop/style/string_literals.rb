@@ -69,7 +69,7 @@ module RuboCop
         end
 
         def all_string_literals?(nodes)
-          nodes.all? { |n| n.str_type? || n.dstr_type? }
+          nodes.all? { |n| n.type?(:str, :dstr) }
         end
 
         def detect_quote_styles(node)
@@ -95,11 +95,7 @@ module RuboCop
         end
 
         def offense?(node)
-          # If it's a string within an interpolation, then it's not an offense
-          # for this cop.
-          return false if inside_interpolation?(node)
-
-          wrong_quotes?(node)
+          wrong_quotes?(node) && !inside_interpolation?(node)
         end
 
         def consistent_multiline?

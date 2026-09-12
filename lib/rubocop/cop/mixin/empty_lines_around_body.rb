@@ -5,7 +5,7 @@ module RuboCop
     module Layout
       # Common functionality for checking if presence/absence of empty lines
       # around some kind of body matches the configuration.
-      module EmptyLinesAroundBody
+      module EmptyLinesAroundBody # rubocop:disable Metrics/ModuleLength
         extend NodePattern::Macros
         include ConfigurableEnforcedStyle
         include RangeHelp
@@ -14,6 +14,8 @@ module RuboCop
         MSG_MISSING = 'Empty line missing at %<kind>s body %<location>s.'
         MSG_DEFERRED = 'Empty line missing before first %<type>s definition'
 
+        LEADING_DOT_TYPES = %i[tDOT tANDDOT].to_set.freeze
+
         private
 
         # @!method constant_definition?(node)
@@ -21,7 +23,7 @@ module RuboCop
 
         # @!method empty_line_required?(node)
         def_node_matcher :empty_line_required?,
-                         '{def defs class module (send nil? {:private :protected :public})}'
+                         '{any_def class module (send nil? {:private :protected :public})}'
 
         def check(node, body, adjusted_first_line: nil)
           return if valid_body_style?(body)
@@ -99,10 +101,18 @@ module RuboCop
           return unless yield(processed_source.lines[line])
 
           offset = style == :empty_lines && msg.include?('end.') ? 2 : 1
+          return if style == :empty_lines && leading_dot_line?(line + offset)
+
           range = source_range(processed_source.buffer, line + offset, 0)
           add_offense(range, message: msg) do |corrector|
             EmptyLineCorrector.correct(corrector, [style, range])
           end
+        end
+
+        def leading_dot_line?(line)
+          first_token = processed_source.sorted_tokens.find { |token| token.line == line }
+
+          LEADING_DOT_TYPES.include?(first_token&.type)
         end
 
         def check_deferred_empty_line(body)

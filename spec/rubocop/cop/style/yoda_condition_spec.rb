@@ -32,6 +32,10 @@ RSpec.describe RuboCop::Cop::Style::YodaCondition, :config do
       expect_no_offenses('foo == "bar"')
     end
 
+    it 'accepts constant on right' do
+      expect_no_offenses('foo == BAR')
+    end
+
     it 'accepts interpolated string on left' do
       expect_no_offenses('"#{interpolation}" == foo')
     end
@@ -58,6 +62,22 @@ RSpec.describe RuboCop::Cop::Style::YodaCondition, :config do
 
     it 'accepts array of numbers on both sides' do
       expect_no_offenses('[1, 2, 3] <=> [4, 5, 6]')
+    end
+
+    it 'accepts array literal containing a non-literal element on left' do
+      expect_no_offenses('[x] == [x].do_something')
+    end
+
+    it 'accepts hash literal containing a non-literal value on left' do
+      expect_no_offenses('{a: x} == foo')
+    end
+
+    it 'accepts array literal containing a splat on left', :ruby32 do
+      expect_no_offenses(<<~RUBY)
+        def foo(*)
+          [*] == [*].do_something
+        end
+      RUBY
     end
 
     it 'accepts negation' do
@@ -135,6 +155,17 @@ RSpec.describe RuboCop::Cop::Style::YodaCondition, :config do
 
       expect_correction(<<~RUBY)
         bar > 42
+      RUBY
+    end
+
+    it 'registers an offense constant on left of comparison' do
+      expect_offense(<<~RUBY)
+        FOO < bar
+        ^^^^^^^^^ Reverse the order of the operands `FOO < bar`.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        bar > FOO
       RUBY
     end
 
@@ -307,6 +338,10 @@ RSpec.describe RuboCop::Cop::Style::YodaCondition, :config do
 
     it 'accepts string literal on right of case equality check' do
       expect_no_offenses('bar === "foo"')
+    end
+
+    it 'accepts equality check method is used without the first argument' do
+      expect_no_offenses('foo.==')
     end
 
     it 'registers an offense for string literal on right' do

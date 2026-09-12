@@ -13,6 +13,17 @@ RSpec.describe RuboCop::Cop::Style::MultilineBlockChain, :config do
       RUBY
     end
 
+    it 'registers an offense for a simple case with safe navigation operator' do
+      expect_offense(<<~RUBY)
+        a do
+          b
+        end&.c do
+        ^^^^^^ Avoid multi-line chains of blocks.
+          d
+        end
+      RUBY
+    end
+
     it 'registers an offense for a slightly more complicated case' do
       expect_offense(<<~RUBY)
         a do
@@ -22,6 +33,32 @@ RSpec.describe RuboCop::Cop::Style::MultilineBlockChain, :config do
           d
         end
       RUBY
+    end
+
+    context 'Ruby 2.7', :ruby27 do
+      it 'registers an offense for a slightly more complicated case' do
+        expect_offense(<<~RUBY)
+          a do
+            _1
+          end.c1.c2 do
+          ^^^^^^^^^ Avoid multi-line chains of blocks.
+            _1
+          end
+        RUBY
+      end
+    end
+
+    context 'Ruby 3.4', :ruby34 do
+      it 'registers an offense for a slightly more complicated case' do
+        expect_offense(<<~RUBY)
+          a do
+            it
+          end.c1.c2 do
+          ^^^^^^^^^ Avoid multi-line chains of blocks.
+            it
+          end
+        RUBY
+      end
     end
 
     it 'registers two offenses for a chain of three blocks' do

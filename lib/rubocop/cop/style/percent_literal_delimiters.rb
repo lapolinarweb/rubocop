@@ -3,7 +3,9 @@
 module RuboCop
   module Cop
     module Style
-      # This cop enforces the consistent usage of `%`-literal delimiters.
+      # Enforces the consistent usage of `%`-literal delimiters.
+      # Using consistent delimiters across the codebase reduces
+      # cognitive load when reading `%`-literals.
       #
       # Specify the 'default' key to set all preferred delimiters at once. You
       # can continue to specify individual preferred delimiters to override the
@@ -92,15 +94,16 @@ module RuboCop
 
         def contains_delimiter?(node, delimiters)
           delimiters_regexp = Regexp.union(delimiters)
-          node
-            .children.map { |n| string_source(n) }.compact
-            .any? { |s| delimiters_regexp.match?(s) }
+
+          node.children.filter_map { |n| string_source(n) }.any?(delimiters_regexp)
         end
 
         def string_source(node)
           if node.is_a?(String)
             node.scrub
-          elsif node.respond_to?(:type) && (node.str_type? || node.sym_type?)
+          elsif node.is_a?(Symbol)
+            node.to_s
+          elsif node.respond_to?(:type) && node.type?(:str, :sym)
             node.source
           end
         end

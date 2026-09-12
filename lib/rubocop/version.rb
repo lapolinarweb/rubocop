@@ -3,20 +3,37 @@
 module RuboCop
   # This module holds the RuboCop version information.
   module Version
-    STRING = '1.21.0'
+    STRING = '1.91.0'
 
-    MSG = '%<version>s (using Parser %<parser_version>s, '\
+    MSG = '%<version>s (using %<parser_version>s, ' \
           'rubocop-ast %<rubocop_ast_version>s, ' \
-          'running on %<ruby_engine>s %<ruby_version>s %<ruby_platform>s)'
+          'analyzing as Ruby %<target_ruby_version>s, ' \
+          'running on %<ruby_engine>s %<ruby_version>s)' \
+          '%<rubydex_indicator>s%<server_mode>s [%<ruby_platform>s]'
 
-    CANONICAL_FEATURE_NAMES = { 'Rspec' => 'RSpec' }.freeze
+    MINIMUM_PARSABLE_PRISM_VERSION = 3.3
 
+    CANONICAL_FEATURE_NAMES = {
+      'Rspec' => 'RSpec', 'Graphql' => 'GraphQL', 'Md' => 'Markdown', 'Factory_bot' => 'FactoryBot',
+      'Thread_safety' => 'ThreadSafety', 'Rspec_rails' => 'RSpecRails'
+    }.freeze
+    EXTENSION_PATH_NAMES = {
+      'rubocop-md' => 'markdown', 'rubocop-factory_bot' => 'factory_bot'
+    }.freeze
+
+    # NOTE: Marked as private but used by gems like standard.
     # @api private
+    # rubocop:disable-next Metrics/MethodLength
     def self.version(debug: false, env: nil)
       if debug
-        verbose_version = format(MSG, version: STRING, parser_version: Parser::VERSION,
+        target_ruby_version = target_ruby_version(env)
+        verbose_version = format(MSG, version: STRING,
+                                      parser_version: parser_version(target_ruby_version),
                                       rubocop_ast_version: RuboCop::AST::Version::STRING,
+                                      target_ruby_version: target_ruby_version,
                                       ruby_engine: RUBY_ENGINE, ruby_version: RUBY_VERSION,
+                                      rubydex_indicator: rubydex_indicator(env),
+                                      server_mode: server_mode,
                                       ruby_platform: RUBY_PLATFORM)
         return verbose_version unless env
 
@@ -33,27 +50,80 @@ module RuboCop
     end
 
     # @api private
+    def self.verbose(env: nil)
+      version(debug: true, env: env)
+    end
+
+    # @api private
+    def self.parser_version(target_ruby_version)
+      config_path = ConfigFinder.find_config_path(PathUtil.pwd)
+      yaml = Util.silence_warnings do
+        ConfigLoader.load_yaml_configuration(config_path)
+      end
+      parser_engine = yaml.dig('AllCops', 'ParserEngine')
+      parser_engine_text = ", #{parser_engine}" if parser_engine
+
+      if target_ruby_version >= MINIMUM_PARSABLE_PRISM_VERSION
+        "Parser #{Parser::VERSION}, Prism #{Prism::VERSION}#{parser_engine_text}"
+      else
+        "Parser #{Parser::VERSION}"
+      end
+    end
+
+    # @api private
+    # rubocop:disable-next Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/MethodLength, Metrics/PerceivedComplexity
     def self.extension_versions(env)
-      features = Util.silence_warnings do
-        # Suppress any config issues when loading the config (ie. deprecations,
-        # pending cops, etc.).
-        env.config_store.unvalidated.for_pwd.loaded_features.sort
+      plugins = config_for_pwd(env).loaded_plugins
+      plugin_versions = plugins.filter_map do |plugin|
+        next if Plugin::BUILTIN_INTERNAL_PLUGINS.key?(plugin.about.name)
+        next unless (plugin_name = plugin.about.name)
+
+        "  - #{plugin_name} #{plugin.about.version}"
       end
 
-      features.map do |loaded_feature|
+      # TODO: It needs to be maintained for a while to ensure compatibility with extensions that
+      # don't support plugins. It should be removed in future once the old style becomes obsolete.
+      features = config_for_pwd(env).loaded_features.sort
+      features -= plugins.map { |plugin| plugin.about.name }
+      feature_versions = features.filter_map do |loaded_feature|
         next unless (match = loaded_feature.match(/rubocop-(?<feature>.*)/))
 
-        feature = match[:feature]
+        # Get the expected name of the folder containing the extension code.
+        # Usually it would be the same as the extension name. but sometimes authors
+        # can choose slightly different name for their gems, e.g. rubocop-md instead of
+        # rubocop-markdown.
+        feature = EXTENSION_PATH_NAMES.fetch(loaded_feature, match[:feature])
+
         begin
           require "rubocop/#{feature}/version"
         rescue LoadError
           # Not worth mentioning libs that are not installed
-        else
-          next unless (feature_version = feature_version(feature))
-
-          "  - #{loaded_feature} #{feature_version}"
         end
-      end.compact
+
+        next unless (feature_version = feature_version(feature))
+
+        "  - #{loaded_feature} #{feature_version}"
+      end
+
+      plugin_versions + feature_versions
+    end
+
+    # @api private
+    def self.target_ruby_version(env)
+      if env
+        config_for_pwd(env).target_ruby_version
+      else
+        TargetRuby.new(Config.new).version
+      end
+    end
+
+    # @api private
+    def self.config_for_pwd(env)
+      Util.silence_warnings do
+        # Suppress any config issues when loading the config (ie. deprecations,
+        # pending cops, etc.).
+        env.config_store.unvalidated.for_pwd
+      end
     end
 
     # Returns feature version in one of two ways:
@@ -80,6 +150,27 @@ module RuboCop
     # @api private
     def self.document_version
       STRING.match('\d+\.\d+').to_s
+    end
+
+    # @api private
+    def self.rubydex_indicator(env)
+      env && rubydex_enabled?(env) && ProjectIndexLoader.available? ? ' +Rubydex' : ''
+    end
+
+    # @api private
+    def self.rubydex_enabled?(env)
+      config_for_pwd(env).for_all_cops['UseProjectIndex']
+    rescue StandardError
+      # Keep `rubocop -V` usable when the config cannot be loaded (broken YAML,
+      # missing `inherit_from` target, etc). It is the first command users run to
+      # diagnose a broken setup, so the indicator just hides rather than letting
+      # the version banner crash.
+      false
+    end
+
+    # @api private
+    def self.server_mode
+      RuboCop.const_defined?(:Server) && Server.running? ? ' +server' : ''
     end
   end
 end

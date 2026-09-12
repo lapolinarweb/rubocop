@@ -19,8 +19,7 @@ module RuboCop
       def check_end_kw_alignment(node, align_ranges)
         return if ignored_node?(node)
 
-        end_loc = node.loc.end
-        return if accept_end_kw_alignment?(end_loc)
+        return unless (end_loc = node.loc.end)
 
         matching = matching_ranges(end_loc, align_ranges)
 
@@ -34,8 +33,7 @@ module RuboCop
 
       def matching_ranges(end_loc, align_ranges)
         align_ranges.select do |_, range|
-          range.line == end_loc.line ||
-            column_offset_between(range, end_loc).zero?
+          same_line?(range, end_loc) || column_offset_between(range, end_loc).zero?
         end
       end
 
@@ -58,17 +56,12 @@ module RuboCop
         add_offense(end_loc, message: msg) { |corrector| autocorrect(corrector, node) }
       end
 
-      def accept_end_kw_alignment?(end_loc)
-        end_loc.nil? || # Discard modifier forms of if/while/until.
-          !/\A[ \t]*end/.match?(processed_source.lines[end_loc.line - 1])
-      end
-
       def style_parameter_name
         'EnforcedStyleAlignWith'
       end
 
       def variable_alignment?(whole_expression, rhs, end_alignment_style)
-        return if end_alignment_style == :keyword
+        return false if end_alignment_style == :keyword
 
         !line_break_before_keyword?(whole_expression, rhs)
       end

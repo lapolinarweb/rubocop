@@ -37,7 +37,86 @@ RSpec.describe RuboCop::Cop::Style::FormatString, :config do
       RUBY
     end
 
-    it 'registers an offense for variable argument but does not auto-correct' do
+    context 'when using a known autocorrectable method that does not convert to an array' do
+      it 'registers an offense for `to_s`' do
+        expect_offense(<<~RUBY)
+          puts "%s" % a.to_s
+                    ^ Favor `sprintf` over `String#%`.
+        RUBY
+
+        expect_correction(<<~RUBY)
+          puts sprintf("%s", a.to_s)
+        RUBY
+      end
+
+      it 'registers an offense for `to_h`' do
+        expect_offense(<<~RUBY)
+          puts "%s" % a.to_h
+                    ^ Favor `sprintf` over `String#%`.
+        RUBY
+
+        expect_correction(<<~RUBY)
+          puts sprintf("%s", a.to_h)
+        RUBY
+      end
+
+      it 'registers an offense for `to_i`' do
+        expect_offense(<<~RUBY)
+          puts "%s" % a.to_i
+                    ^ Favor `sprintf` over `String#%`.
+        RUBY
+
+        expect_correction(<<~RUBY)
+          puts sprintf("%s", a.to_i)
+        RUBY
+      end
+
+      it 'registers an offense for `to_f`' do
+        expect_offense(<<~RUBY)
+          puts "%s" % a.to_f
+                    ^ Favor `sprintf` over `String#%`.
+        RUBY
+
+        expect_correction(<<~RUBY)
+          puts sprintf("%s", a.to_f)
+        RUBY
+      end
+
+      it 'registers an offense for `to_r`' do
+        expect_offense(<<~RUBY)
+          puts "%s" % a.to_r
+                    ^ Favor `sprintf` over `String#%`.
+        RUBY
+
+        expect_correction(<<~RUBY)
+          puts sprintf("%s", a.to_r)
+        RUBY
+      end
+
+      it 'registers an offense for `to_d`' do
+        expect_offense(<<~RUBY)
+          puts "%s" % a.to_d
+                    ^ Favor `sprintf` over `String#%`.
+        RUBY
+
+        expect_correction(<<~RUBY)
+          puts sprintf("%s", a.to_d)
+        RUBY
+      end
+
+      it 'registers an offense for `to_sym`' do
+        expect_offense(<<~RUBY)
+          puts "%s" % a.to_sym
+                    ^ Favor `sprintf` over `String#%`.
+        RUBY
+
+        expect_correction(<<~RUBY)
+          puts sprintf("%s", a.to_sym)
+        RUBY
+      end
+    end
+
+    it 'registers an offense for variable argument but does not autocorrect' do
       expect_offense(<<~RUBY)
         puts "%f" % a
                   ^ Favor `sprintf` over `String#%`.
@@ -46,7 +125,7 @@ RSpec.describe RuboCop::Cop::Style::FormatString, :config do
       expect_no_corrections
     end
 
-    it 'registers an offense for variable argument and assignment but does not auto-correct' do
+    it 'registers an offense for variable argument and assignment but does not autocorrect' do
       expect_offense(<<~RUBY)
         a = something()
         puts "%d" % a
@@ -134,7 +213,86 @@ RSpec.describe RuboCop::Cop::Style::FormatString, :config do
       RUBY
     end
 
-    it 'registers an offense for variable argument but does not auto-correct' do
+    context 'when using a known conversion method that does not convert to an array' do
+      it 'registers an offense for `to_s`' do
+        expect_offense(<<~RUBY)
+          puts "%s" % a.to_s
+                    ^ Favor `format` over `String#%`.
+        RUBY
+
+        expect_correction(<<~RUBY)
+          puts format("%s", a.to_s)
+        RUBY
+      end
+
+      it 'registers an offense for `to_h`' do
+        expect_offense(<<~RUBY)
+          puts "%s" % a.to_h
+                    ^ Favor `format` over `String#%`.
+        RUBY
+
+        expect_correction(<<~RUBY)
+          puts format("%s", a.to_h)
+        RUBY
+      end
+
+      it 'registers an offense for `to_i`' do
+        expect_offense(<<~RUBY)
+          puts "%s" % a.to_i
+                    ^ Favor `format` over `String#%`.
+        RUBY
+
+        expect_correction(<<~RUBY)
+          puts format("%s", a.to_i)
+        RUBY
+      end
+
+      it 'registers an offense for `to_f`' do
+        expect_offense(<<~RUBY)
+          puts "%s" % a.to_f
+                    ^ Favor `format` over `String#%`.
+        RUBY
+
+        expect_correction(<<~RUBY)
+          puts format("%s", a.to_f)
+        RUBY
+      end
+
+      it 'registers an offense for `to_r`' do
+        expect_offense(<<~RUBY)
+          puts "%s" % a.to_r
+                    ^ Favor `format` over `String#%`.
+        RUBY
+
+        expect_correction(<<~RUBY)
+          puts format("%s", a.to_r)
+        RUBY
+      end
+
+      it 'registers an offense for `to_d`' do
+        expect_offense(<<~RUBY)
+          puts "%s" % a.to_d
+                    ^ Favor `format` over `String#%`.
+        RUBY
+
+        expect_correction(<<~RUBY)
+          puts format("%s", a.to_d)
+        RUBY
+      end
+
+      it 'registers an offense for `to_sym`' do
+        expect_offense(<<~RUBY)
+          puts "%s" % a.to_sym
+                    ^ Favor `format` over `String#%`.
+        RUBY
+
+        expect_correction(<<~RUBY)
+          puts format("%s", a.to_sym)
+        RUBY
+      end
+    end
+
+    it 'registers an offense for variable argument but does not autocorrect' do
       expect_offense(<<~RUBY)
         puts "%f" % a
                   ^ Favor `format` over `String#%`.
@@ -184,7 +342,7 @@ RSpec.describe RuboCop::Cop::Style::FormatString, :config do
       RUBY
     end
 
-    it 'does not auto-correct String#% with variable argument and assignment' do
+    it 'does not autocorrect String#% with variable argument and assignment' do
       expect_offense(<<~RUBY)
         a = something()
         puts "%d" % a
@@ -231,6 +389,28 @@ RSpec.describe RuboCop::Cop::Style::FormatString, :config do
       RUBY
     end
 
+    it 'parenthesizes a single argument that binds looser than `%`' do
+      expect_offense(<<~RUBY)
+        format('%s', a ? b : c)
+        ^^^^^^ Favor `String#%` over `format`.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        '%s' % (a ? b : c)
+      RUBY
+    end
+
+    it 'corrects a single splat argument by passing the array to `%`' do
+      expect_offense(<<~RUBY)
+        format('%s %s', *args)
+        ^^^^^^ Favor `String#%` over `format`.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        '%s %s' % args
+      RUBY
+    end
+
     it 'registers an offense for sprintf' do
       expect_offense(<<~RUBY)
         sprintf(something, a)
@@ -242,7 +422,7 @@ RSpec.describe RuboCop::Cop::Style::FormatString, :config do
       RUBY
     end
 
-    it 'registers an offense and corrects when using springf with second argument that uses an operator' do
+    it 'registers an offense and corrects when using sprintf with second argument that uses an operator' do
       expect_offense(<<~RUBY)
         format(something, a + 42)
         ^^^^^^ Favor `String#%` over `format`.

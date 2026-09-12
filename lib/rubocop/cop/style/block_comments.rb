@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Style
-      # This cop looks for uses of block comments (=begin...=end).
+      # Looks for uses of block comments (=begin...=end).
       #
       # @example
       #   # bad
@@ -32,10 +32,10 @@ module RuboCop
               eq_begin, eq_end, contents = parts(comment)
 
               corrector.remove(eq_begin)
-              unless contents.length.zero?
+              unless contents.empty?
                 corrector.replace(
                   contents,
-                  contents.source.gsub(/\A/, '# ').gsub(/\n\n/, "\n#\n").gsub(/\n(?=[^#])/, "\n# ")
+                  contents.source.gsub(/\A/, '# ').gsub("\n\n", "\n#\n").gsub(/\n(?=[^#])/, "\n# ")
                 )
               end
               corrector.remove(eq_end)
@@ -46,7 +46,7 @@ module RuboCop
         private
 
         def parts(comment)
-          expr = comment.loc.expression
+          expr = comment.source_range
           eq_begin = expr.resize(BEGIN_LENGTH)
           eq_end = eq_end_part(comment, expr)
           contents = range_between(eq_begin.end_pos, eq_end.begin_pos)

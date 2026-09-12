@@ -50,7 +50,7 @@ RSpec.describe RuboCop::Cop::Style::NegatedIfElseCondition, :config do
     RUBY
   end
 
-  it 'registers an offens and corrects a multiline ternary' do
+  it 'registers an offense and corrects a multiline ternary' do
     expect_offense(<<~RUBY)
       !x ?
       ^^^^ Invert the negated condition and swap the ternary branches.
@@ -93,6 +93,74 @@ RSpec.describe RuboCop::Cop::Style::NegatedIfElseCondition, :config do
 
       expect_correction(<<~RUBY)
         x #{inverted_method} y ? do_something_else : do_something
+      RUBY
+    end
+
+    it "registers an offense and corrects when negating condition with `#{method}` in parentheses for `if-else`" do
+      expect_offense(<<~RUBY, method: method)
+        if (x %{method} y)
+        ^^^^^^^{method}^^^ Invert the negated condition and swap the if-else branches.
+          do_something
+        else
+          do_something_else
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        if (x #{inverted_method} y)
+          do_something_else
+        else
+          do_something
+        end
+      RUBY
+    end
+
+    it "registers an offense and corrects when negating condition with `#{method}` in parentheses for ternary" do
+      expect_offense(<<~RUBY, method: method)
+        (x %{method} y) ? do_something : do_something_else
+        ^^^^{method}^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Invert the negated condition and swap the ternary branches.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        (x #{inverted_method} y) ? do_something_else : do_something
+      RUBY
+    end
+
+    it "registers an offense and corrects when negating condition with `#{method}` in begin-end for `if-else`" do
+      expect_offense(<<~RUBY, method: method)
+        if begin
+        ^^^^^^^^ Invert the negated condition and swap the if-else branches.
+          x %{method} y
+        end
+          do_something
+        else
+          do_something_else
+        end
+      RUBY
+
+      expect_correction(<<~RUBY)
+        if begin
+          x #{inverted_method} y
+        end
+          do_something_else
+        else
+          do_something
+        end
+      RUBY
+    end
+
+    it "registers an offense and corrects when negating condition with `#{method}` in begin-end for ternary" do
+      expect_offense(<<~RUBY, method: method)
+        begin
+        ^^^^^ Invert the negated condition and swap the ternary branches.
+          x %{method} y
+        end ? do_something : do_something_else
+      RUBY
+
+      expect_correction(<<~RUBY)
+        begin
+          x #{inverted_method} y
+        end ? do_something_else : do_something
       RUBY
     end
   end
@@ -157,6 +225,16 @@ RSpec.describe RuboCop::Cop::Style::NegatedIfElseCondition, :config do
     expect_no_offenses(<<~RUBY)
       if !condition.nil?
       else
+      end
+    RUBY
+  end
+
+  it 'does not crash when using `()` as a condition' do
+    expect_no_offenses(<<~RUBY)
+      if ()
+        foo
+      else
+        bar
       end
     RUBY
   end
@@ -347,6 +425,16 @@ RSpec.describe RuboCop::Cop::Style::NegatedIfElseCondition, :config do
     expect_no_offenses(<<~RUBY)
       if !x
         do_something
+      end
+    RUBY
+  end
+
+  it 'does not register an offense for != with multiple arguments' do
+    expect_no_offenses(<<~RUBY)
+      if foo.!=(bar, baz)
+        do_a
+      else
+        do_c
       end
     RUBY
   end

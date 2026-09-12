@@ -4,11 +4,12 @@ module RuboCop
   module Cop
     module Style
       # Checks if the quotes used for quoted symbols match the configured defaults.
-      # By default uses the same configuration as `Style/StringLiterals`.
+      # By default uses the same configuration as `Style/StringLiterals`; if that
+      # cop is not enabled, the default `EnforcedStyle` is `single_quotes`.
       #
       # String interpolation is always kept in double quotes.
       #
-      # Note: `Lint/SymbolConversion` can be used in parallel to ensure that symbols
+      # NOTE: `Lint/SymbolConversion` can be used in parallel to ensure that symbols
       # are not quoted that don't need to be. This cop is for configuring the quoting
       # style to use for symbols that require quotes.
       #
@@ -45,7 +46,7 @@ module RuboCop
 
           message = style == :single_quotes ? MSG_SINGLE : MSG_DOUBLE
 
-          if wrong_quotes?(node)
+          if wrong_quotes?(node) || invalid_double_quotes?(node.source)
             add_offense(node, message: message) do |corrector|
               opposite_style_detected
               autocorrect(corrector, node)
@@ -56,6 +57,16 @@ module RuboCop
         end
 
         private
+
+        def invalid_double_quotes?(source)
+          return false unless style == :double_quotes
+
+          # The string needs single quotes if:
+          # 1. It contains a double quote
+          # 2. It contains text that would become an escape sequence with double quotes
+          # 3. It contains text that would become an interpolation with double quotes
+          !/" | (?<!\\)\\[aAbcdefkMnprsStuUxzZ0-7] | \#[@{$]/x.match?(source)
+        end
 
         def autocorrect(corrector, node)
           str = if hash_colon_key?(node)
@@ -75,18 +86,19 @@ module RuboCop
         end
 
         def correct_quotes(str)
-          if style == :single_quotes
-            to_string_literal(str)
-          else
-            str.inspect
-          end
+          correction = if style == :single_quotes
+                         to_string_literal(str)
+                       else
+                         str.gsub("\\'", "'").inspect
+                       end
+
+          # The conversion process doubles escaped slashes, so they have to be reverted
+          correction.gsub('\\\\', '\\').gsub('\"', '"')
         end
 
         def style
           return super unless super == :same_as_string_literals
-
-          string_literals_config = config.for_cop('Style/StringLiterals')
-          return :single_quotes unless string_literals_config['Enabled']
+          return :single_quotes unless config.cop_enabled?('Style/StringLiterals')
 
           string_literals_config['EnforcedStyle'].to_sym
         end
@@ -102,7 +114,7 @@ module RuboCop
         def wrong_quotes?(node)
           return super if hash_key?(node)
 
-          super(node.source[1..-1])
+          super(node.source[1..])
         end
       end
     end

@@ -1,11 +1,11 @@
 = v1 Upgrade Notes
 :doctype: book
 
-== Cop Upgrade guide
+== Cop upgrade guide
 
 Your custom cops should continue to work in v1.
 
-Nevertheless it is suggested that you tweak them to use the v1 API by following the following steps:
+Nevertheless, it is suggested that you tweak them to use the v1 API by following these steps:
 
 1) Your class should inherit from `RuboCop::Cop::Base` instead of `RuboCop::Cop::Cop`.
 
@@ -39,7 +39,7 @@ end
 
 Your class must `extend AutoCorrector`.
 
-The `corrector` is now yielded from `add_offense`. Move the code of your method `autocorrect` in that block and do not wrap your correction in a lambda. `Corrector` are more powerful and can now be `merge`d.
+The `corrector` is now yielded from `add_offense`. Move the code of your method `autocorrect` into that block and do not wrap your correction in a lambda. `Corrector`s are more powerful and can now be `merge`d.
 
 ==== Example:
 
@@ -109,7 +109,7 @@ If your cop uses `investigate`, `investigate_post_walk`, `join_force?`, or inter
 
 === Upgrading specs
 
-It is highly recommended you use `expect_offense` / `expect_correction` / `expect_no_offense` in your specs, e.g.:
+It is highly recommended you use `expect_offense` / `expect_correction` / `expect_no_offenses` in your specs, e.g.:
 
 [source,ruby]
 ----
@@ -156,11 +156,11 @@ _Legacy:_ interface allowed for a `node`, with an optional `location` (symbol or
 
 _Current:_ pass a range (or node as a shortcut for `node.loc.expression`), no `location:`. No abuse tolerated.
 
-==== de-dupping changes
+==== deduping changes
 
-Both de-dup on `range` and won't process the duplicated offenses at all.
+Both dedupe on `range` and won't process the duplicated offenses at all.
 
-_Legacy:_ if offenses on same `node` but different `range`: considered as multiple offenses but a single auto-correct call.
+_Legacy:_ if offenses on same `node` but different `range`: considered as multiple offenses but a single autocorrect call.
 
 _Current:_ not applicable and not needed with autocorrection's API.
 
@@ -172,9 +172,9 @@ _Legacy:_ yields after offense added to `#offenses`
 
 _Current:_ yields before offense is added to `#offenses`.
 
-Even the legacy mode yields a corrector, but if a developer uses it an error will be raised asking her to inherit from `Cop::Base` instead.
+Even the legacy mode yields a corrector, but if a developer uses it an error will be raised asking them to inherit from `Cop::Base` instead.
 
-=== Auto Correction
+=== Autocorrection
 
 ==== `#autocorrect`
 
@@ -190,7 +190,7 @@ _Current:_ No special API. Cases where no corrections are made are automatically
 
 ==== Correction timing
 
-_Legacy:_ the lambda was called only later in the process, and only under specific conditions (if the auto-correct setting is turned on, etc.)
+_Legacy:_ the lambda was called only later in the process, and only under specific conditions (if the autocorrect setting is turned on, etc.)
 
 _Current:_ correction is built immediately (assuming the cop isn't disabled for the line) and applied later in the process.
 
@@ -245,7 +245,7 @@ Refactored for better separation of concern, being reusable, better result repor
 === Misc API changes
 
 * internal API clarified for Commissioner. It calls `begin_investigation` and receives the results in `complete_investigation`.
-* New method `add_global_offense` for offenses that are not attached to a location in particular; it's used for Syntax errors only right now.
+* New method `add_global_offense` for offenses that are not attached to a location in particular.
 * `#offenses`: No longer accessible.
 * Callbacks `investigate(processed_source)` and `investigate_post_walk(processed_source)` are renamed `on_new_investigation` and `on_investigation_end` and don't accept an argument; all `on_` callbacks should rely on `processed_source`.
 * `#find_location` is deprecated.

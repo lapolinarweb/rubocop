@@ -29,6 +29,22 @@ RSpec.describe RuboCop::Cop::Security::Open, :config do
     RUBY
   end
 
+  it 'registers an offense for open with a literal string starting with a pipe' do
+    expect_offense(<<~RUBY)
+      open('| foo')
+      ^^^^ The use of `Kernel#open` is a serious security risk.
+    RUBY
+  end
+
+  it 'registers an offense for open with a block' do
+    expect_offense(<<~'RUBY')
+      open("#{foo}.txt") do |f|
+      ^^^^ The use of `Kernel#open` is a serious security risk.
+        f.gets
+      end
+    RUBY
+  end
+
   it 'registers an offense for `URI.open` with string that starts with a pipe' do
     expect_offense(<<~'RUBY')
       URI.open("| #{foo}")
@@ -40,6 +56,15 @@ RSpec.describe RuboCop::Cop::Security::Open, :config do
     expect_offense(<<~'RUBY')
       ::URI.open("| #{foo}")
             ^^^^ The use of `::URI.open` is a serious security risk.
+    RUBY
+  end
+
+  it 'registers an offense for `URI.open` with a block' do
+    expect_offense(<<~'RUBY')
+      ::URI.open("| #{foo}") do |f|
+            ^^^^ The use of `::URI.open` is a serious security risk.
+        f.gets
+      end
     RUBY
   end
 

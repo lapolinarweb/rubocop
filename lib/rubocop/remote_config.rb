@@ -11,9 +11,13 @@ module RuboCop
 
     CACHE_LIFETIME = 24 * 60 * 60
 
-    def initialize(url, base_dir)
-      @uri = URI.parse(url)
-      @base_dir = base_dir
+    def initialize(url, cache_root)
+      begin
+        @uri = URI.parse(url)
+      rescue URI::InvalidURIError
+        raise ConfigNotFoundError, "Failed to resolve configuration: '#{url}' is not a valid URI"
+      end
+      @cache_root = cache_root
     end
 
     def file
@@ -23,18 +27,17 @@ module RuboCop
         next if response.is_a?(Net::HTTPNotModified)
         next if response.is_a?(SocketError)
 
-        File.open cache_path, 'w' do |io|
-          io.write response.body
-        end
+        FileUtils.mkdir_p(File.dirname(cache_path))
+        File.write(cache_path, response.body)
       end
 
       cache_path
     end
 
-    def inherit_from_remote(file, path)
+    def inherit_from_remote(file)
       new_uri = @uri.dup
-      new_uri.path.gsub!(%r{/[^/]*$}, "/#{file}")
-      RemoteConfig.new(new_uri.to_s, File.dirname(path))
+      new_uri.path.gsub!(%r{/[^/]*$}, "/#{file.delete_prefix('./')}")
+      RemoteConfig.new(new_uri.to_s, @cache_root)
     end
 
     private
@@ -46,9 +49,9 @@ module RuboCop
       http.use_ssl = uri.instance_of?(URI::HTTPS)
 
       generate_request(uri) do |request|
-        handle_response(http.request(request), limit, &block)
+        handle_response(http.request(request), uri, limit, &block)
       rescue SocketError => e
-        handle_response(e, limit, &block)
+        handle_response(e, uri, limit, &block)
       end
     end
 
@@ -61,12 +64,12 @@ module RuboCop
       yield request
     end
 
-    def handle_response(response, limit, &block)
+    def handle_response(response, uri, limit, &block)
       case response
       when Net::HTTPSuccess, Net::HTTPNotModified, SocketError
         yield response
       when Net::HTTPRedirection
-        request(URI.parse(response['location']), limit - 1, &block)
+        request(URI.join(uri, response['location']), limit - 1, &block)
       else
         begin
           response.error!
@@ -78,7 +81,7 @@ module RuboCop
     end
 
     def cache_path
-      File.expand_path(".rubocop-#{cache_name_from_uri}", @base_dir)
+      @cache_path ||= File.expand_path(cache_name_from_uri, @cache_root)
     end
 
     def cache_path_exists?
@@ -95,9 +98,10 @@ module RuboCop
     end
 
     def cache_name_from_uri
-      uri = cloned_url
-      uri.query = nil
-      uri.to_s.gsub!(/[^0-9A-Za-z]/, '-')
+      # The md5 checksum suffix is 37 bytes, so we play it save and
+      # allow 254 bytes total - this should be safe on Linux/macOS/Windows
+      filename = File.basename(@uri.path).gsub(/\.ya?ml\z/i, '').byteslice(0, 217).scrub('')
+      "#{filename}-#{Digest::MD5.hexdigest(@uri.to_s)}.yml"
     end
 
     def cloned_url

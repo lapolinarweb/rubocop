@@ -5,7 +5,7 @@ RSpec.describe RuboCop::Cop::VariableForce::Scope do
 
   subject(:scope) { described_class.new(scope_node) }
 
-  let(:ast) { RuboCop::ProcessedSource.new(source, ruby_version).ast }
+  let(:ast) { RuboCop::ProcessedSource.new(source, ruby_version, parser_engine: parser_engine).ast }
 
   let(:scope_node) { ast.each_node(scope_node_type).first }
 
@@ -27,7 +27,7 @@ RSpec.describe RuboCop::Cop::VariableForce::Scope do
 
   describe '#name' do
     context 'when the scope is instance method definition' do
-      let(:source) { <<-RUBY }
+      let(:source) { <<~RUBY }
         def some_method
         end
       RUBY
@@ -40,7 +40,7 @@ RSpec.describe RuboCop::Cop::VariableForce::Scope do
     end
 
     context 'when the scope is singleton method definition' do
-      let(:source) { <<-RUBY }
+      let(:source) { <<~RUBY }
         def self.some_method
         end
       RUBY
@@ -62,7 +62,7 @@ RSpec.describe RuboCop::Cop::VariableForce::Scope do
 
     context 'when the scope is instance method' do
       let(:source) do
-        <<-RUBY
+        <<~RUBY
           def some_method
             this_is_target
           end
@@ -71,12 +71,12 @@ RSpec.describe RuboCop::Cop::VariableForce::Scope do
 
       let(:scope_node_type) { :def }
 
-      include_examples 'returns the body node'
+      it_behaves_like 'returns the body node'
     end
 
     context 'when the scope is singleton method' do
       let(:source) do
-        <<-RUBY
+        <<~RUBY
           def self.some_method
             this_is_target
           end
@@ -85,12 +85,12 @@ RSpec.describe RuboCop::Cop::VariableForce::Scope do
 
       let(:scope_node_type) { :defs }
 
-      include_examples 'returns the body node'
+      it_behaves_like 'returns the body node'
     end
 
     context 'when the scope is module' do
       let(:source) do
-        <<-RUBY
+        <<~RUBY
           module SomeModule
             this_is_target
           end
@@ -99,12 +99,12 @@ RSpec.describe RuboCop::Cop::VariableForce::Scope do
 
       let(:scope_node_type) { :module }
 
-      include_examples 'returns the body node'
+      it_behaves_like 'returns the body node'
     end
 
     context 'when the scope is class' do
       let(:source) do
-        <<-RUBY
+        <<~RUBY
           class SomeClass
             this_is_target
           end
@@ -113,12 +113,12 @@ RSpec.describe RuboCop::Cop::VariableForce::Scope do
 
       let(:scope_node_type) { :class }
 
-      include_examples 'returns the body node'
+      it_behaves_like 'returns the body node'
     end
 
     context 'when the scope is singleton class' do
       let(:source) do
-        <<-RUBY
+        <<~RUBY
           class << self
             this_is_target
           end
@@ -127,12 +127,12 @@ RSpec.describe RuboCop::Cop::VariableForce::Scope do
 
       let(:scope_node_type) { :sclass }
 
-      include_examples 'returns the body node'
+      it_behaves_like 'returns the body node'
     end
 
     context 'when the scope is block' do
       let(:source) do
-        <<-RUBY
+        <<~RUBY
           1.times do
             this_is_target
           end
@@ -141,26 +141,26 @@ RSpec.describe RuboCop::Cop::VariableForce::Scope do
 
       let(:scope_node_type) { :block }
 
-      include_examples 'returns the body node'
+      it_behaves_like 'returns the body node'
     end
 
     context 'when the scope is top level' do
       let(:source) do
-        <<-RUBY
+        <<~RUBY
           this_is_target
         RUBY
       end
 
       let(:scope_node_type) { :send }
 
-      include_examples 'returns the body node'
+      it_behaves_like 'returns the body node'
     end
   end
 
   describe '#include?' do
     subject { scope.include?(target_node) }
 
-    let(:source) { <<-RUBY }
+    let(:source) { <<~RUBY }
       class SomeClass
         def self.some_method(arg1, arg2)
           do_something
@@ -218,7 +218,7 @@ RSpec.describe RuboCop::Cop::VariableForce::Scope do
 
     describe 'outer scope boundary handling' do
       context 'when the scope is instance method' do
-        let(:source) { <<-RUBY }
+        let(:source) { <<~RUBY }
           def some_method(arg1, arg2)
             :body
           end
@@ -227,11 +227,11 @@ RSpec.describe RuboCop::Cop::VariableForce::Scope do
         let(:scope_node_type) { :def }
         let(:expected_types) { %w[args arg arg sym] }
 
-        include_examples 'yields', 'the argument and the body nodes'
+        it_behaves_like 'yields', 'the argument and the body nodes'
       end
 
       context 'when the scope is singleton method' do
-        let(:source) { <<-RUBY }
+        let(:source) { <<~RUBY }
           def self.some_method(arg1, arg2)
             :body
           end
@@ -240,11 +240,11 @@ RSpec.describe RuboCop::Cop::VariableForce::Scope do
         let(:scope_node_type) { :defs }
         let(:expected_types) { %w[args arg arg sym] }
 
-        include_examples 'yields', 'the argument and the body nodes'
+        it_behaves_like 'yields', 'the argument and the body nodes'
       end
 
       context 'when the scope is module' do
-        let(:source) { <<-RUBY }
+        let(:source) { <<~RUBY }
           module SomeModule
             :body
           end
@@ -253,11 +253,11 @@ RSpec.describe RuboCop::Cop::VariableForce::Scope do
         let(:scope_node_type) { :module }
         let(:expected_types) { %w[sym] }
 
-        include_examples 'yields', 'the body nodes'
+        it_behaves_like 'yields', 'the body nodes'
       end
 
       context 'when the scope is class' do
-        let(:source) { <<-RUBY }
+        let(:source) { <<~RUBY }
           some_super_class = Class.new
 
           class SomeClass < some_super_class
@@ -268,11 +268,11 @@ RSpec.describe RuboCop::Cop::VariableForce::Scope do
         let(:scope_node_type) { :class }
         let(:expected_types) { %w[sym] }
 
-        include_examples 'yields', 'the body nodes'
+        it_behaves_like 'yields', 'the body nodes'
       end
 
       context 'when the scope is singleton class' do
-        let(:source) { <<-RUBY }
+        let(:source) { <<~RUBY }
           some_object = Object.new
 
           class << some_object
@@ -283,11 +283,11 @@ RSpec.describe RuboCop::Cop::VariableForce::Scope do
         let(:scope_node_type) { :sclass }
         let(:expected_types) { %w[sym] }
 
-        include_examples 'yields', 'the body nodes'
+        it_behaves_like 'yields', 'the body nodes'
       end
 
       context 'when the scope is block' do
-        let(:source) { <<-RUBY }
+        let(:source) { <<~RUBY }
           1.times do |arg1, arg2|
             :body
           end
@@ -296,24 +296,24 @@ RSpec.describe RuboCop::Cop::VariableForce::Scope do
         let(:scope_node_type) { :block }
         let(:expected_types) { %w[args arg arg sym] }
 
-        include_examples 'yields', 'the argument and the body nodes'
+        it_behaves_like 'yields', 'the argument and the body nodes'
       end
 
       context 'when the scope is top level' do
-        let(:source) { <<-RUBY }
+        let(:source) { <<~RUBY }
           :body
         RUBY
 
         let(:scope_node_type) { :sym }
         let(:expected_types) { %w[sym] }
 
-        include_examples 'yields', 'the body nodes'
+        it_behaves_like 'yields', 'the body nodes'
       end
     end
 
     describe 'inner scope boundary handling' do
       context "when there's a method invocation with block" do
-        let(:source) { <<-RUBY }
+        let(:source) { <<~RUBY }
           foo = 1
 
           do_something(1, 2) do |arg|
@@ -326,11 +326,11 @@ RSpec.describe RuboCop::Cop::VariableForce::Scope do
         let(:scope_node_type) { :begin }
         let(:expected_types) { %w[begin lvasgn int block send int int lvar] }
 
-        include_examples 'yields', 'only the block node and the child send node'
+        it_behaves_like 'yields', 'only the block node and the child send node'
       end
 
       context "when there's a singleton method definition" do
-        let(:source) { <<-RUBY }
+        let(:source) { <<~RUBY }
           foo = 1
 
           def self.some_method(arg1, arg2)
@@ -343,7 +343,7 @@ RSpec.describe RuboCop::Cop::VariableForce::Scope do
         let(:scope_node_type) { :begin }
         let(:expected_types) { %w[begin lvasgn int defs self lvar] }
 
-        include_examples 'yields', 'only the defs node and the method host node'
+        it_behaves_like 'yields', 'only the defs node and the method host node'
       end
     end
   end

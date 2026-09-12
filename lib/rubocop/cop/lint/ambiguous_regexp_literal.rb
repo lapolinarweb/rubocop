@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Lint
-      # This cop checks for ambiguous regexp literals in the first argument of
+      # Checks for ambiguous regexp literals in the first argument of
       # a method invocation without parentheses.
       #
       # @example
@@ -14,8 +14,6 @@ module RuboCop
       #   # but it could possibly be `/` method invocations.
       #   # (i.e. `do_something./(pattern)./(i)`)
       #   do_something /pattern/i
-      #
-      # @example
       #
       #   # good
       #
@@ -30,7 +28,11 @@ module RuboCop
 
         def on_new_investigation
           processed_source.diagnostics.each do |diagnostic|
-            next unless diagnostic.reason == :ambiguous_literal
+            if target_ruby_version >= 3.0
+              next unless diagnostic.reason == :ambiguous_regexp
+            else
+              next unless diagnostic.reason == :ambiguous_literal
+            end
 
             offense_node = find_offense_node_by(diagnostic)
 

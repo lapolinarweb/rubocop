@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Layout
-      # This cop checks the indentation of comments.
+      # Checks the indentation of comments.
       #
       # @example
       #   # bad
@@ -32,6 +32,19 @@ module RuboCop
       #     true
       #   end
       #
+      # @example AllowForAlignment: false (default)
+      #   # bad
+      #   a = 1 # A really long comment
+      #         # spanning two lines.
+      #
+      #   # good
+      #   # A really long comment spanning one line.
+      #   a = 1
+      #
+      # @example AllowForAlignment: true
+      #   # good
+      #   a = 1 # A really long comment
+      #         # spanning two lines.
       class CommentIndentation < Base
         include Alignment
         extend AutoCorrector
@@ -40,7 +53,7 @@ module RuboCop
               'instead of %<correct_comment_indentation>d).'
 
         def on_new_investigation
-          processed_source.comments.each { |comment| check(comment) }
+          processed_source.comments.each_with_index { |comment, ix| check(comment, ix) }
         end
 
         private
@@ -51,10 +64,10 @@ module RuboCop
           autocorrect_one(corrector, comment)
         end
 
-        # Corrects all comment lines that occur immediately before the given
-        # comment and have the same indentation. This is to avoid a long chain
-        # of correcting, saving the file, parsing and inspecting again, and
-        # then correcting one more line, and so on.
+        # Corrects all preceding comment lines that have the same indentation
+        # and are separated from the given comment by nothing but blank lines.
+        # This is to avoid a long chain of correcting, saving the file, parsing
+        # and inspecting again, and then correcting one more line, and so on.
         def autocorrect_preceding_comments(corrector, comment)
           comments = processed_source.comments
           index = comments.index(comment)
@@ -69,14 +82,17 @@ module RuboCop
         def should_correct?(preceding_comment, reference_comment)
           loc = preceding_comment.loc
           ref_loc = reference_comment.loc
-          loc.line == ref_loc.line - 1 && loc.column == ref_loc.column
+          return false unless loc.column == ref_loc.column
+          return false unless own_line_comment?(preceding_comment)
+
+          ((loc.line + 1)...ref_loc.line).all? { |line| processed_source[line - 1].blank? }
         end
 
         def autocorrect_one(corrector, comment)
           AlignmentCorrector.correct(corrector, processed_source, comment, @column_delta)
         end
 
-        def check(comment)
+        def check(comment, comment_index)
           return unless own_line_comment?(comment)
 
           next_line = line_after_comment(comment)
@@ -94,9 +110,25 @@ module RuboCop
             return if column == correct_comment_indentation
           end
 
+          return if correctly_aligned_with_preceding_comment?(comment_index, column)
+
           add_offense(comment, message: message(column, correct_comment_indentation)) do |corrector|
             autocorrect(corrector, comment)
           end
+        end
+
+        # Returns true if:
+        # a) the cop is configured to allow extra indentation for alignment, and
+        # b) the currently inspected comment is aligned with the nearest preceding end-of-line
+        #    comment.
+        def correctly_aligned_with_preceding_comment?(comment_index, column)
+          return false unless cop_config['AllowForAlignment']
+
+          processed_source.comments[0...comment_index].reverse_each do |other_comment|
+            return other_comment.loc.column == column unless own_line_comment?(other_comment)
+          end
+
+          false
         end
 
         def message(column, correct_comment_indentation)
@@ -110,7 +142,7 @@ module RuboCop
 
         def line_after_comment(comment)
           lines = processed_source.lines
-          lines[comment.loc.line..-1].find { |line| !line.blank? }
+          lines[comment.loc.line..].find { |line| !line.blank? }
         end
 
         def correct_indentation(next_line)
@@ -125,11 +157,20 @@ module RuboCop
         end
 
         def less_indented?(line)
-          /^\s*(end\b|[)}\]])/.match?(line)
+          rule = config.for_cop('Layout/AccessModifierIndentation')['EnforcedStyle'] == 'outdent'
+          /\A\s*(end\b|[)}\]])/.match?(line) || (rule && bare_access_modifier?(line))
+        end
+
+        # Only a bare access modifier (the keyword alone on its line) is outdented by
+        # `Layout/AccessModifierIndentation`. An inline modifier such as `private def foo`
+        # keeps the regular method indentation, so a comment above it must not be pushed
+        # one level deeper.
+        def bare_access_modifier?(line)
+          /\A\s*(private|protected|public)\s*(#.*)?\z/.match?(line)
         end
 
         def two_alternatives?(line)
-          /^\s*(else|elsif|when|rescue|ensure)\b/.match?(line)
+          /^\s*(else|elsif|when|in|rescue|ensure)\b/.match?(line)
         end
       end
     end

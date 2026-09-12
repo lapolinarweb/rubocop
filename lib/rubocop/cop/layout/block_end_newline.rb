@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Layout
-      # This cop checks whether the end statement of a do..end block
+      # Checks whether the end statement of a do..end block
       # is on its own line.
       #
       # @example
@@ -36,23 +36,46 @@ module RuboCop
           # If the end is on its own line, there is no offense
           return if begins_its_line?(node.loc.end)
 
-          add_offense(node.loc.end, message: message(node)) do |corrector|
-            corrector.replace(delimiter_range(node), "\n#{node.loc.end.source}#{offset(node)}")
-          end
+          offense_range = offense_range(node)
+          return if offense_range.source.lstrip.start_with?(';')
+
+          register_offense(node, offense_range)
         end
 
+        alias on_numblock on_block
+        alias on_itblock on_block
+
         private
+
+        def register_offense(node, offense_range)
+          add_offense(node.loc.end, message: message(node)) do |corrector|
+            replacement = "\n#{offense_range.source.lstrip}"
+
+            if (heredoc = last_heredoc_argument(node.body))
+              corrector.remove(offense_range)
+              corrector.insert_after(heredoc.loc.heredoc_end, replacement)
+            else
+              corrector.replace(offense_range, replacement)
+            end
+          end
+        end
 
         def message(node)
           format(MSG, line: node.loc.end.line, column: node.loc.end.column + 1)
         end
 
-        def delimiter_range(node)
-          Parser::Source::Range.new(
-            node.loc.expression.source_buffer,
-            node.children.compact.last.loc.expression.end_pos,
-            node.loc.expression.end_pos
-          )
+        def last_heredoc_argument(node)
+          return unless node&.call_type?
+          return unless (arguments = node&.arguments)
+
+          heredoc = arguments.reverse.detect { |arg| arg.str_type? && arg.heredoc? }
+          return heredoc if heredoc
+
+          last_heredoc_argument(node.children.first)
+        end
+
+        def offense_range(node)
+          node.children.compact.last.source_range.end.join(node.loc.end)
         end
       end
     end

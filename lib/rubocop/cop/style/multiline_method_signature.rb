@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for method signatures that span multiple lines.
+      # Checks for method signatures that span multiple lines.
       #
       # @example
       #
@@ -28,14 +28,18 @@ module RuboCop
           return unless node.arguments?
           return if opening_line(node) == closing_line(node)
           return if correction_exceeds_max_line_length?(node)
+          return unless (begin_of_arguments = node.arguments.loc.begin)
 
-          add_offense(node) { |corrector| autocorrect(corrector, node) }
+          add_offense(node) do |corrector|
+            autocorrect(corrector, node, begin_of_arguments)
+          end
         end
         alias on_defs on_def
 
         private
 
-        def autocorrect(corrector, node)
+        # rubocop:disable-next Metrics/AbcSize
+        def autocorrect(corrector, node, begin_of_arguments)
           arguments = node.arguments
           joined_arguments = arguments.map(&:source).join(', ')
           last_line_source_of_arguments = last_line_source_of_arguments(arguments)
@@ -46,20 +50,21 @@ module RuboCop
             corrector.remove(range_by_whole_lines(arguments.loc.end, include_final_newline: true))
           end
 
-          corrector.remove(arguments_range(node))
-          corrector.insert_after(arguments.loc.begin, joined_arguments)
+          arguments_range = range_with_surrounding_space(arguments_range(node), side: :left)
+          # If the method name isn't on the same line as `def`, pull the name and
+          # the opening parenthesis up next to `def` so the collapsed signature
+          # stays on a single line and remains valid Ruby.
+          if arguments_range.first_line != opening_line(node)
+            prefix_range = range_between(node.loc.keyword.end_pos, begin_of_arguments.begin_pos)
+            corrector.replace(prefix_range, " #{prefix_range.source.strip}")
+          end
+
+          corrector.remove(arguments_range)
+          corrector.insert_after(begin_of_arguments, joined_arguments)
         end
 
         def last_line_source_of_arguments(arguments)
           processed_source[arguments.last_line - 1].strip
-        end
-
-        def arguments_range(node)
-          range = range_between(
-            node.first_argument.source_range.begin_pos, node.last_argument.source_range.end_pos
-          )
-
-          range_with_surrounding_space(range: range, side: :left)
         end
 
         def opening_line(node)
@@ -71,19 +76,22 @@ module RuboCop
         end
 
         def correction_exceeds_max_line_length?(node)
+          return false unless max_line_length
+
           indentation_width(node) + definition_width(node) > max_line_length
         end
 
         def indentation_width(node)
-          processed_source.line_indentation(node.loc.expression.line)
+          processed_source.line_indentation(node.source_range.line)
         end
 
         def definition_width(node)
-          node.source_range.begin.join(node.arguments.source_range.end).length
-        end
+          # Measure the collapsed single-line width the autocorrect would
+          # produce, not the multi-line source length, so a signature that
+          # would fit on one line is not skipped.
+          signature = node.source_range.begin.join(node.arguments.source_range.end).source
 
-        def max_line_length
-          config.for_cop('Layout/LineLength')['Max'] || 120
+          signature.gsub(/\s+/, ' ').length
         end
       end
     end

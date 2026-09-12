@@ -4,11 +4,7 @@ RSpec.describe RuboCop::Cop::Generator::RequireFileInjector do
   let(:stdout) { StringIO.new }
   let(:root_file_path) { 'lib/root.rb' }
   let(:injector) do
-    described_class.new(
-      source_path: source_path,
-      root_file_path: root_file_path,
-      output: stdout
-    )
+    described_class.new(source_path: source_path, root_file_path: root_file_path, output: stdout)
   end
 
   around do |example|
@@ -176,7 +172,7 @@ RSpec.describe RuboCop::Cop::Generator::RequireFileInjector do
       injector.inject
 
       expect(File.read(root_file_path)).to eq source
-      expect(stdout.string.empty?).to be(true)
+      expect(stdout.string).to be_empty
     end
   end
 

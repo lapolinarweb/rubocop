@@ -13,19 +13,19 @@ RSpec.describe RuboCop::Cop::Team do
   context 'when incompatible cops are correcting together' do
     include FileHelper
 
-    let(:options) { { formatters: [], auto_correct: true } }
+    let(:options) { { formatters: [], autocorrect: true } }
     let(:runner) { RuboCop::Runner.new(options, RuboCop::ConfigStore.new) }
     let(:file_path) { 'example.rb' }
 
-    it 'auto corrects without SyntaxError', :isolated_environment do
+    it 'autocorrects without SyntaxError', :isolated_environment do
       source = <<~'RUBY'
         foo.map{ |a| a.nil? }
 
-        'foo' +
-          'bar' +
-          "#{baz}"
+        puts 'foo' +
+             'bar' +
+             "#{baz}"
 
-        i=i+1
+        i+1
 
         def a
           self::b
@@ -36,11 +36,11 @@ RSpec.describe RuboCop::Cop::Team do
 
         foo.map(&:nil?)
 
-        'foo' \
-          'bar' \
-          "#{baz}"
+        puts 'foo' \
+             'bar' \
+             "#{baz}"
 
-        i += 1
+        i
 
         def a
           b
@@ -56,46 +56,53 @@ RSpec.describe RuboCop::Cop::Team do
   describe '#autocorrect?' do
     subject { team.autocorrect? }
 
-    context 'when the option argument of .new is omitted' do
-      subject { described_class.new(cop_classes, config).autocorrect? }
+    context 'when the option argument of .mobilize is omitted' do
+      subject { described_class.mobilize(cop_classes, config).autocorrect? }
 
-      it { is_expected.to be_falsey }
+      it { is_expected.to be_nil }
     end
 
-    context 'when { auto_correct: true } is passed to .new' do
-      let(:options) { { auto_correct: true } }
+    context 'when { autocorrect: true } is passed to .mobilize' do
+      let(:options) { { autocorrect: true } }
 
-      it { is_expected.to be_truthy }
+      it { is_expected.to be(true) }
     end
   end
 
   describe '#debug?' do
     subject { team.debug? }
 
-    context 'when the option argument of .new is omitted' do
-      subject { described_class.new(cop_classes, config).debug? }
+    context 'when the option argument of .mobilize is omitted' do
+      subject { described_class.mobilize(cop_classes, config).debug? }
 
-      it { is_expected.to be_falsey }
+      it { is_expected.to be_nil }
     end
 
-    context 'when { debug: true } is passed to .new' do
+    context 'when { debug: true } is passed to .mobilize' do
       let(:options) { { debug: true } }
 
-      it { is_expected.to be_truthy }
+      it { is_expected.to be(true) }
     end
   end
 
   describe '#inspect_file', :isolated_environment do
     include FileHelper
 
-    let(:file_path) { '/tmp/example.rb' }
-    let(:source) { RuboCop::ProcessedSource.from_file(file_path, ruby_version) }
+    let(:file_path) { 'example.rb' }
+    let(:source) do
+      source = RuboCop::ProcessedSource.from_file(
+        file_path, ruby_version, parser_engine: parser_engine
+      )
+      source.config = config
+      source.registry = RuboCop::Cop::Registry.new(cop_classes.cops)
+      source
+    end
     let(:offenses) { team.inspect_file(source) }
 
     before { create_file(file_path, ['#' * 90, 'puts test;']) }
 
     it 'returns offenses' do
-      expect(offenses.empty?).to be(false)
+      expect(offenses).not_to be_empty
       expect(offenses).to all(be_a(RuboCop::Cop::Offense))
     end
 
@@ -121,15 +128,50 @@ RSpec.describe RuboCop::Cop::Team do
           expect(cop_names).not_to include('Layout/LineLength')
         end
       end
+
+      context 'when a cop is excluded but has an opt-in comment' do
+        before do
+          create_file(file_path, ['# rubocop:enable Layout/LineLength', '#' * 130, 'puts *test'])
+        end
+
+        it 'still excludes the cop (exclude pattern takes precedence over opt-in)' do
+          allow_any_instance_of(RuboCop::Cop::Layout::LineLength)
+            .to receive(:excluded_file?).and_return(true)
+
+          expect(cop_names).to include('Lint/AmbiguousOperator')
+          expect(cop_names).not_to include('Layout/LineLength')
+        end
+      end
+    end
+
+    context 'when a cop disabled in the config is opted back in by a comment directive' do
+      let(:config) do
+        RuboCop::ConfigLoader.merge_with_default(
+          RuboCop::Config.new('Layout/LineLength' => { 'Enabled' => false }), ''
+        )
+      end
+
+      let(:cop_names) { offenses.map(&:cop_name) }
+
+      before do
+        create_file(file_path, ['# rubocop:enable Layout/LineLength', '#' * 130, 'puts test'])
+      end
+
+      it 'does not mobilize the cop into the team' do
+        expect(team.cops.map(&:cop_name)).not_to include('Layout/LineLength')
+      end
+
+      it 'mobilizes the cop on demand and reports its offenses' do
+        expect(cop_names).to include('Layout/LineLength')
+      end
     end
 
     context 'when autocorrection is enabled' do
-      let(:options) { { auto_correct: true } }
+      let(:options) { { autocorrect: true } }
 
       before { create_file(file_path, 'puts "string"') }
 
       it 'does autocorrection' do
-        source = RuboCop::ProcessedSource.from_file(file_path, ruby_version)
         team.inspect_file(source)
         corrected_source = File.read(file_path)
         expect(corrected_source).to eq(<<~RUBY)
@@ -144,7 +186,7 @@ RSpec.describe RuboCop::Cop::Team do
     end
 
     context 'when autocorrection is enabled and file encoding is mismatch' do
-      let(:options) { { auto_correct: true } }
+      let(:options) { { autocorrect: true } }
 
       before do
         create_file(file_path, <<~RUBY)
@@ -154,10 +196,9 @@ RSpec.describe RuboCop::Cop::Team do
       end
 
       it 'no error occurs' do
-        source = RuboCop::ProcessedSource.from_file(file_path, ruby_version)
         team.inspect_file(source)
 
-        expect(team.errors.empty?).to be(true)
+        expect(team.errors).to be_empty
       end
     end
 
@@ -172,15 +213,38 @@ RSpec.describe RuboCop::Cop::Team do
 
       let(:error_message) do
         'An error occurred while Style/NumericLiterals cop was inspecting ' \
-          '/tmp/example.rb:1:0.'
+          'example.rb:1:0.'
       end
 
       it 'records Team#errors' do
-        source = RuboCop::ProcessedSource.from_file(file_path, ruby_version)
         team.inspect_file(source)
 
         expect(team.errors).to eq([error_message])
         expect($stderr.string).to include(error_message)
+      end
+    end
+
+    context "when a cop's joining forces callback raises an error" do
+      include_context 'mock console output'
+      before do
+        allow_any_instance_of(RuboCop::Cop::Lint::ShadowedArgument)
+          .to receive(:after_leaving_scope).and_raise(exception_message)
+
+        create_file(file_path, 'foo { |bar| bar = 42 }')
+      end
+
+      let(:options) { { debug: true } }
+      let(:exception_message) { 'my message' }
+      let(:error_message) do
+        'An error occurred while Lint/ShadowedArgument cop was inspecting example.rb.'
+      end
+
+      it 'records Team#errors' do
+        team.inspect_file(source)
+
+        expect(team.errors).to eq([error_message])
+        expect($stderr.string).to include(error_message)
+        expect($stdout.string).to include(exception_message)
       end
     end
 
@@ -196,23 +260,73 @@ RSpec.describe RuboCop::Cop::Team do
         RUBY
       end
 
-      let(:file_path) { '/tmp/Gemfile' }
+      let(:file_path) { 'Gemfile' }
 
-      let(:buggy_correction) { ->(_corrector) do raise cause end }
-      let(:options) { { auto_correct: true } }
+      let(:buggy_correction) { ->(_corrector) { raise cause } }
+      let(:options) { { autocorrect: true } }
 
       let(:cause) { StandardError.new('cause') }
 
       let(:error_message) do
         'An error occurred while Bundler/OrderedGems cop was inspecting ' \
-          '/tmp/Gemfile.'
+          'Gemfile.'
       end
 
       it 'records Team#errors' do
-        source = RuboCop::ProcessedSource.from_file(file_path, ruby_version)
-
         team.inspect_file(source)
         expect($stderr.string).to include(error_message)
+      end
+    end
+
+    context 'when autocorrecting with offset 0 and different source buffer' do
+      let(:options) { { autocorrect: true } }
+      let(:cop_classes) { RuboCop::Cop::Registry.new([RuboCop::Cop::Style::StringLiterals]) }
+
+      let(:original_source) do
+        source = RuboCop::ProcessedSource.new(
+          "'hello'",
+          ruby_version,
+          'test.erb',
+          parser_engine: parser_engine
+        )
+        source.config = config
+        source.registry = RuboCop::Cop::Registry.new(cop_classes.cops)
+        source
+      end
+
+      let(:extracted_source) do
+        source = RuboCop::ProcessedSource.new(
+          "'hello'",
+          ruby_version,
+          'test.erb',
+          parser_engine: parser_engine
+        )
+        source.config = config
+        source.registry = RuboCop::Cop::Registry.new(cop_classes.cops)
+        source
+      end
+
+      it 'uses import! instead of merge! to handle different source buffers' do
+        expect(original_source.buffer).not_to equal(extracted_source.buffer)
+
+        extracted_corrector = RuboCop::Cop::Corrector.new(extracted_source)
+        extracted_corrector.replace(
+          Parser::Source::Range.new(extracted_source.buffer, 0, 7),
+          '"hello"'
+        )
+
+        cop = team.cops.first
+        cop_report = RuboCop::Cop::Base::InvestigationReport.new(
+          cop, extracted_source, [], extracted_corrector
+        )
+
+        report = RuboCop::Cop::Commissioner::InvestigationReport.new(
+          extracted_source, [cop_report], []
+        )
+
+        expect do
+          team.send(:collate_corrections, report, offset: 0, original: original_source)
+        end.not_to raise_error
       end
     end
 
@@ -224,13 +338,13 @@ RSpec.describe RuboCop::Cop::Team do
           end
         end
       end
-      let(:cop_classes) { [persisting_cop_class, RuboCop::Cop::Base] }
+      let(:cop_classes) { RuboCop::Cop::Registry.new([persisting_cop_class, RuboCop::Cop::Base]) }
 
       it 'allows cops to get ready' do
         before = team.cops.dup
         team.inspect_file(source)
         team.inspect_file(source)
-        expect(team.cops).to match_array([be(before.first), be_a(RuboCop::Cop::Base)])
+        expect(team.cops).to contain_exactly(be(before.first), be_a(RuboCop::Cop::Base))
         expect(team.cops.last).not_to be(before.last)
       end
     end
@@ -240,41 +354,20 @@ RSpec.describe RuboCop::Cop::Team do
     subject(:cops) { team.cops }
 
     it 'returns cop instances' do
-      expect(cops.empty?).to be(false)
-      expect(cops.all?(RuboCop::Cop::Base)).to be_truthy
+      expect(cops).not_to be_empty
+      expect(cops).to be_all(RuboCop::Cop::Base)
     end
 
     context 'when only some cop classes are passed to .new' do
       let(:cop_classes) do
-        RuboCop::Cop::Registry.new(
-          [RuboCop::Cop::Lint::Void, RuboCop::Cop::Layout::LineLength]
-        )
+        RuboCop::Cop::Registry.new([RuboCop::Cop::Lint::Void, RuboCop::Cop::Layout::LineLength])
       end
 
       it 'returns only instances of the classes' do
         expect(cops.size).to eq(2)
-        cops.sort! { |a, b| a.name <=> b.name }
+        cops.sort_by!(&:name)
         expect(cops[0].name).to eq('Layout/LineLength')
         expect(cops[1].name).to eq('Lint/Void')
-      end
-    end
-
-    context 'when some classes are disabled with config' do
-      let(:disabled_config) do
-        %w[
-          Lint/Void
-          Layout/LineLength
-        ].each_with_object(RuboCop::Config.new) do |cop_name, accum|
-          accum[cop_name] = { 'Enabled' => false }
-        end
-      end
-      let(:config) { RuboCop::ConfigLoader.merge_with_default(disabled_config, '') }
-      let(:cop_names) { cops.map(&:name) }
-
-      it 'does not return instances of the classes' do
-        expect(cops.empty?).to be(false)
-        expect(cop_names).not_to include('Lint/Void')
-        expect(cop_names).not_to include('Layout/LineLength')
       end
     end
   end
@@ -285,9 +378,9 @@ RSpec.describe RuboCop::Cop::Team do
     let(:cop_classes) { RuboCop::Cop::Registry.global }
 
     it 'returns force instances' do
-      expect(forces.empty?).to be(false)
+      expect(forces).not_to be_empty
 
-      forces.each { |force| expect(force.is_a?(RuboCop::Cop::Force)).to be(true) }
+      expect(forces).to all(be_a(RuboCop::Cop::Force))
     end
 
     context 'when a cop joined a force' do
@@ -295,7 +388,7 @@ RSpec.describe RuboCop::Cop::Team do
 
       it 'returns the force' do
         expect(forces.size).to eq(1)
-        expect(forces.first.is_a?(RuboCop::Cop::VariableForce)).to be(true)
+        expect(forces.first).to be_a(RuboCop::Cop::VariableForce)
       end
     end
 
@@ -318,7 +411,7 @@ RSpec.describe RuboCop::Cop::Team do
       let(:cop_classes) { RuboCop::Cop::Registry.new([RuboCop::Cop::Style::For]) }
 
       it 'returns nothing' do
-        expect(forces.empty?).to be(true)
+        expect(forces).to be_empty
       end
     end
   end
@@ -327,14 +420,14 @@ RSpec.describe RuboCop::Cop::Team do
     let(:cop_classes) { RuboCop::Cop::Registry.new }
 
     it 'does not error with no cops' do
-      expect(team.external_dependency_checksum.is_a?(String)).to be(true)
+      expect(team.external_dependency_checksum).to be_a(String)
     end
 
     context 'when a cop joins' do
       let(:cop_classes) { RuboCop::Cop::Registry.new([RuboCop::Cop::Lint::UselessAssignment]) }
 
       it 'returns string' do
-        expect(team.external_dependency_checksum.is_a?(String)).to be(true)
+        expect(team.external_dependency_checksum).to be_a(String)
       end
     end
 
@@ -349,7 +442,7 @@ RSpec.describe RuboCop::Cop::Team do
       end
 
       it 'returns string' do
-        expect(team.external_dependency_checksum.is_a?(String)).to be(true)
+        expect(team.external_dependency_checksum).to be_a(String)
       end
     end
 
@@ -384,7 +477,9 @@ RSpec.describe RuboCop::Cop::Team do
   describe '.new' do
     it 'calls mobilize when passed classes' do
       expect(described_class).to receive(:mobilize).with(cop_classes, config, options)
-      described_class.new(cop_classes, config, options)
+      expect do
+        described_class.new(cop_classes, config, options)
+      end.to output(/Use `Team.mobilize` instead/).to_stderr
     end
 
     it 'accepts cops directly classes' do

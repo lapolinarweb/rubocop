@@ -1,6 +1,12 @@
 # frozen_string_literal: true
 
 RSpec.describe RuboCop::Cop::Style::Lambda, :config do
+  describe '.autocorrect_incompatible_with' do
+    it 'declares `Style::SymbolProc` as incompatible to avoid producing `->(x)(&:method)`' do
+      expect(described_class.autocorrect_incompatible_with).to include(RuboCop::Cop::Style::SymbolProc)
+    end
+  end
+
   context 'with enforced `lambda` style' do
     let(:cop_config) { { 'EnforcedStyle' => 'lambda' } }
 
@@ -14,6 +20,19 @@ RSpec.describe RuboCop::Cop::Style::Lambda, :config do
 
           expect_correction(<<~RUBY)
             f = lambda { |x| x }
+          RUBY
+        end
+      end
+
+      context 'with block-local (shadow) arguments' do
+        it 'preserves the shadow argument separator' do
+          expect_offense(<<~RUBY)
+            f = ->(x; y) { x }
+                ^^ Use the `lambda` method for all lambdas.
+          RUBY
+
+          expect_correction(<<~RUBY)
+            f = lambda { |x; y| x }
           RUBY
         end
       end
@@ -108,6 +127,19 @@ RSpec.describe RuboCop::Cop::Style::Lambda, :config do
 
           expect_correction(<<~RUBY)
             f = -> { x }
+          RUBY
+        end
+      end
+
+      context 'with block-local (shadow) arguments' do
+        it 'preserves the shadow argument separator' do
+          expect_offense(<<~RUBY)
+            f = lambda { |x; y| x }
+                ^^^^^^ Use the `-> { ... }` lambda literal syntax for all lambdas.
+          RUBY
+
+          expect_correction(<<~RUBY)
+            f = ->(x; y) { x }
           RUBY
         end
       end
@@ -215,6 +247,23 @@ RSpec.describe RuboCop::Cop::Style::Lambda, :config do
           end
         end
 
+        context 'with a multiline `->` call' do
+          it 'registers an offense' do
+            expect_offense(<<~RUBY)
+              -> {
+              ^^ Use the `lambda` method for multiline lambdas.
+                _1.do_something
+              }
+            RUBY
+
+            expect_correction(<<~RUBY)
+              lambda {
+                _1.do_something
+              }
+            RUBY
+          end
+        end
+
         context 'with a multiline lambda method call' do
           it 'does not register an offense' do
             expect_no_offenses(<<~RUBY)
@@ -229,6 +278,59 @@ RSpec.describe RuboCop::Cop::Style::Lambda, :config do
           it 'does not register an offense' do
             expect_no_offenses(<<~RUBY)
               lambda = -> { _1 }
+              lambda.(1)
+            RUBY
+          end
+        end
+      end
+    end
+
+    context '>= Ruby 3.4', :ruby34 do
+      context 'when using `it` parameter' do
+        context 'with a single line lambda method call' do
+          it 'registers an offense' do
+            expect_offense(<<~RUBY)
+              f = lambda { it }
+                  ^^^^^^ Use the `-> { ... }` lambda literal syntax for single line lambdas.
+            RUBY
+
+            expect_correction(<<~RUBY)
+              f = -> { it }
+            RUBY
+          end
+        end
+
+        context 'with a multiline `->` call' do
+          it 'registers an offense' do
+            expect_offense(<<~RUBY)
+              -> {
+              ^^ Use the `lambda` method for multiline lambdas.
+                it.do_something
+              }
+            RUBY
+
+            expect_correction(<<~RUBY)
+              lambda {
+                it.do_something
+              }
+            RUBY
+          end
+        end
+
+        context 'with a multiline lambda method call' do
+          it 'does not register an offense' do
+            expect_no_offenses(<<~RUBY)
+              l = lambda do
+                it
+              end
+            RUBY
+          end
+        end
+
+        context 'with a single line lambda literal' do
+          it 'does not register an offense' do
+            expect_no_offenses(<<~RUBY)
+              lambda = -> { it }
               lambda.(1)
             RUBY
           end
@@ -513,7 +615,7 @@ RSpec.describe RuboCop::Cop::Style::Lambda, :config do
     end
   end
 
-  context 'when using safe navigation operator' do
+  context 'when using safe navigation operator', :ruby23 do
     it 'does not break' do
       expect_no_offenses(<<~RUBY)
         foo&.bar do |_|

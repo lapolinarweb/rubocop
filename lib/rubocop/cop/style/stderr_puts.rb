@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Style
-      # This cop identifies places where `$stderr.puts` can be replaced by
+      # Identifies places where `$stderr.puts` can be replaced by
       # `warn`. The latter has the advantage of easily being disabled by,
       # the `-W0` interpreter flag or setting `$VERBOSE` to `nil`.
       #
@@ -49,7 +49,7 @@ module RuboCop
         end
 
         def stderr_puts_range(send)
-          range_between(send.loc.expression.begin_pos, send.loc.selector.end_pos)
+          range_between(send.source_range.begin_pos, send.loc.selector.end_pos)
         end
       end
     end

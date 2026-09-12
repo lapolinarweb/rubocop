@@ -3,51 +3,61 @@
 module RuboCop
   module Cop
     module Lint
-      # This cop checks for circular argument references in optional keyword
+      # Checks for circular argument references in optional keyword
       # arguments and optional ordinal arguments.
       #
-      # This cop mirrors a warning produced by MRI since 2.2.
+      # NOTE: This syntax was made invalid on Ruby 2.7 - Ruby 3.3 but is allowed
+      # again since Ruby 3.4.
       #
       # @example
       #
       #   # bad
-      #
       #   def bake(pie: pie)
       #     pie.heat_up
       #   end
       #
-      # @example
-      #
       #   # good
-      #
       #   def bake(pie:)
       #     pie.refrigerate
       #   end
       #
-      # @example
-      #
       #   # good
-      #
       #   def bake(pie: self.pie)
       #     pie.feed_to(user)
       #   end
       #
-      # @example
-      #
       #   # bad
-      #
       #   def cook(dry_ingredients = dry_ingredients)
       #     dry_ingredients.reduce(&:+)
       #   end
       #
-      # @example
-      #
       #   # good
-      #
       #   def cook(dry_ingredients = self.dry_ingredients)
       #     dry_ingredients.combine
       #   end
+      #
+      #   # bad
+      #   def foo(pie = pie = pie)
+      #     pie.heat_up
+      #   end
+      #
+      #   # good
+      #   def foo(pie)
+      #     pie.heat_up
+      #   end
+      #
+      #   # bad
+      #   def foo(pie = cake = pie)
+      #     [pie, cake].each(&:heat_up)
+      #   end
+      #
+      #   # good
+      #   def foo(cake = pie)
+      #     [pie, cake].each(&:heat_up)
+      #   end
       class CircularArgumentReference < Base
+        extend TargetRubyVersion
+
         MSG = 'Circular argument reference - `%<arg_name>s`.'
 
         def on_kwoptarg(node)
@@ -61,10 +71,32 @@ module RuboCop
         private
 
         def check_for_circular_argument_references(arg_name, arg_value)
-          return unless arg_value.lvar_type?
-          return unless arg_value.to_a == [arg_name]
+          if arg_value.lvar_type? && arg_value.to_a == [arg_name]
+            add_offense(arg_value, message: format(MSG, arg_name: arg_name))
 
-          add_offense(arg_value, message: format(MSG, arg_name: arg_name))
+            return
+          end
+
+          check_assignment_chain(arg_name, arg_value)
+        end
+
+        def check_assignment_chain(arg_name, node)
+          return unless node.lvasgn_type?
+
+          seen_variables = Set[]
+          current_node = node
+
+          while current_node.lvasgn_type?
+            seen_variables << current_node.children.first
+            current_node = current_node.children.last
+          end
+
+          return unless current_node.lvar_type?
+
+          variable_node = current_node.children.first
+          return unless seen_variables.include?(variable_node) || variable_node == arg_name
+
+          add_offense(current_node, message: format(MSG, arg_name: arg_name))
         end
       end
     end

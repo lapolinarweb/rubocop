@@ -10,21 +10,31 @@ module RuboCop
     # allow for badge references in source files that omit the department for
     # RuboCop to infer.
     class Badge
-      attr_reader :department, :cop_name
+      attr_reader :department, :department_name, :cop_name
 
       def self.for(class_name)
         parts = class_name.split('::')
         name_deep_enough = parts.length >= 4
-        new(name_deep_enough ? parts[2..-1] : parts.last(2))
+        new(name_deep_enough ? parts[2..] : parts.last(2))
       end
 
+      @parse_cache = {}
+
       def self.parse(identifier)
-        new(identifier.split('/'))
+        @parse_cache[identifier] ||= new(identifier.split('/').map! { |i| camel_case(i) })
+      end
+
+      def self.camel_case(name_part)
+        return 'RSpec' if name_part == 'rspec'
+        return name_part unless name_part.match?(/^[a-z]|_[a-z]/)
+
+        name_part.gsub(/^[a-z]|_[a-z]/) { |match| match[-1, 1].upcase }
       end
 
       def initialize(class_name_parts)
         department_parts = class_name_parts[0...-1]
         @department = (department_parts.join('/').to_sym unless department_parts.empty?)
+        @department_name = @department&.to_s
         @cop_name = class_name_parts.last
       end
 
@@ -34,11 +44,20 @@ module RuboCop
       alias eql? ==
 
       def hash
-        [department, cop_name].hash
+        # Do hashing manually to reduce Array allocations.
+        department.hash ^ cop_name.hash # rubocop:disable Security/CompoundHash -- hashing manually avoids the Array allocation
       end
 
       def match?(other)
         cop_name == other.cop_name && (!qualified? || department == other.department)
+      end
+
+      # Returns true if the badge's qualified name or the badge's department
+      # matches any of the given names.
+      def match_name?(given_names)
+        return false unless given_names
+
+        given_names.include?(to_s) || given_names.include?(department_name)
       end
 
       def to_s

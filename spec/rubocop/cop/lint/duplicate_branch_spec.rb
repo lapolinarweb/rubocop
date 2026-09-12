@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 RSpec.describe RuboCop::Cop::Lint::DuplicateBranch, :config do
-  shared_examples_for 'literal if allowed' do |type, value|
+  shared_examples 'literal if allowed' do |type, value|
     context "when returning a #{type} in multiple branches" do
       it 'allows branches to be duplicated' do
         expect_no_offenses(<<~RUBY)
@@ -17,7 +17,7 @@ RSpec.describe RuboCop::Cop::Lint::DuplicateBranch, :config do
     end
   end
 
-  shared_examples_for 'literal if disallowed' do |type, value|
+  shared_examples 'literal if disallowed' do |type, value|
     context "when returning a #{type} in multiple branches" do
       it 'registers an offense' do
         expect_offense(<<~RUBY)
@@ -35,7 +35,7 @@ RSpec.describe RuboCop::Cop::Lint::DuplicateBranch, :config do
     end
   end
 
-  shared_examples_for 'literal case allowed' do |type, value|
+  shared_examples 'literal case allowed' do |type, value|
     context "when returning a #{type} in multiple branches" do
       it 'allows branches to be duplicated' do
         expect_no_offenses(<<~RUBY)
@@ -49,7 +49,7 @@ RSpec.describe RuboCop::Cop::Lint::DuplicateBranch, :config do
     end
   end
 
-  shared_examples_for 'literal case disallowed' do |type, value|
+  shared_examples 'literal case disallowed' do |type, value|
     context "when returning a #{type} in multiple branches" do
       it 'registers an offense' do
         expect_offense(<<~RUBY, value: value)
@@ -65,7 +65,7 @@ RSpec.describe RuboCop::Cop::Lint::DuplicateBranch, :config do
     end
   end
 
-  shared_examples_for 'literal case-match allowed' do |type, value|
+  shared_examples 'literal case-match allowed' do |type, value|
     context "when returning a #{type} in multiple branches", :ruby27 do
       it 'allows branches to be duplicated' do
         expect_no_offenses(<<~RUBY)
@@ -79,7 +79,7 @@ RSpec.describe RuboCop::Cop::Lint::DuplicateBranch, :config do
     end
   end
 
-  shared_examples_for 'literal case-match disallowed' do |type, value|
+  shared_examples 'literal case-match disallowed' do |type, value|
     context "when returning a #{type} in multiple branches", :ruby27 do
       it 'registers an offense' do
         expect_offense(<<~RUBY, value: value)
@@ -95,7 +95,7 @@ RSpec.describe RuboCop::Cop::Lint::DuplicateBranch, :config do
     end
   end
 
-  shared_examples_for 'literal rescue allowed' do |type, value|
+  shared_examples 'literal rescue allowed' do |type, value|
     context "when returning a #{type} in multiple branches" do
       it 'allows branches to be duplicated' do
         expect_no_offenses(<<~RUBY)
@@ -113,7 +113,7 @@ RSpec.describe RuboCop::Cop::Lint::DuplicateBranch, :config do
     end
   end
 
-  shared_examples_for 'literal rescue disallowed' do |type, value|
+  shared_examples 'literal rescue disallowed' do |type, value|
     context "when returning a #{type} in multiple branches" do
       it 'registers an offense' do
         expect_offense(<<~RUBY)
@@ -436,6 +436,105 @@ RSpec.describe RuboCop::Cop::Lint::DuplicateBranch, :config do
 
         it_behaves_like "literal #{keyword} disallowed", 'object', 'Object.new'
       end
+    end
+  end
+
+  context 'with IgnoreDuplicateElseBranch: true' do
+    let(:cop_config) { { 'IgnoreDuplicateElseBranch' => true } }
+
+    it 'allows duplicate `else` branch for `if-elsif`' do
+      expect_no_offenses(<<~RUBY)
+        if x
+          foo
+        elsif y
+          bar
+        else
+          bar
+        end
+      RUBY
+    end
+
+    it 'registers an offense for duplicate `if-else`' do
+      expect_offense(<<~RUBY)
+        if x
+          foo
+        else
+        ^^^^ Duplicate branch body detected.
+          foo
+        end
+      RUBY
+    end
+
+    it 'allows duplicate `else` branch for `case` with multiple `when` branches' do
+      expect_no_offenses(<<~RUBY)
+        case x
+        when foo
+          do_foo
+        when bar
+          do_bar
+        else
+          do_bar
+        end
+      RUBY
+    end
+
+    it 'registers an offense for duplicate `else` branch for `case` with single `when` branch' do
+      expect_offense(<<~RUBY)
+        case x
+        when foo
+          do_foo
+        else
+        ^^^^ Duplicate branch body detected.
+          do_foo
+        end
+      RUBY
+    end
+
+    it 'allows duplicate `else` branch for `case` with multiple `match` branches' do
+      expect_no_offenses(<<~RUBY)
+        case x
+        in foo then do_foo
+        in bar then do_bar
+        else do_bar
+        end
+      RUBY
+    end
+
+    it 'registers an offense for duplicate `else` branch for `case` with single `match` branch' do
+      expect_offense(<<~RUBY)
+        case x
+        in foo then do_foo
+        else do_foo
+        ^^^^ Duplicate branch body detected.
+        end
+      RUBY
+    end
+
+    it 'allows duplicate `else` branch for `rescue` with multiple `resbody` branches' do
+      expect_no_offenses(<<~RUBY)
+        begin
+          x
+        rescue FooError
+          foo
+        rescue BarError
+          bar
+        else
+          bar
+        end
+      RUBY
+    end
+
+    it 'registers an offense for duplicate `else` branch for `rescue` with single `resbody` branch' do
+      expect_offense(<<~RUBY)
+        begin
+          x
+        rescue FooError
+          foo
+        else
+        ^^^^ Duplicate branch body detected.
+          foo
+        end
+      RUBY
     end
   end
 end

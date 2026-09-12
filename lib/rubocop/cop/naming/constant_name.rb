@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Naming
-      # This cop checks whether constant names are written using
+      # Checks whether constant names are written using
       # SCREAMING_SNAKE_CASE.
       #
       # To avoid false positives, it ignores cases in which we cannot know
@@ -31,12 +31,11 @@ module RuboCop
         PATTERN
 
         def on_casgn(node)
-          if node.parent&.or_asgn_type?
-            lhs, value = *node.parent
-            _scope, const_name = *lhs
-          else
-            _scope, const_name, value = *node
-          end
+          value = if node.parent&.or_asgn_type?
+                    node.parent.expression
+                  else
+                    node.expression
+                  end
 
           # We cannot know the result of method calls like
           # NewClass = something_that_returns_a_class
@@ -46,7 +45,7 @@ module RuboCop
           # SomeClass = Class.new(...)
           # SomeClass = Struct.new(...)
           return if allowed_assignment?(value)
-          return if SNAKE_CASE.match?(const_name)
+          return if SNAKE_CASE.match?(node.name)
 
           add_offense(node.loc.name)
         end
@@ -61,8 +60,7 @@ module RuboCop
         end
 
         def allowed_method_call_on_rhs?(node)
-          node&.send_type? &&
-            (node.receiver.nil? || !literal_receiver?(node))
+          node&.send_type? && (node.receiver.nil? || !literal_receiver?(node))
         end
 
         # @!method literal_receiver?(node)
@@ -72,11 +70,11 @@ module RuboCop
         PATTERN
 
         def allowed_conditional_expression_on_rhs?(node)
-          node&.if_type? && contains_contant?(node)
+          node&.if_type? && contains_constant?(node)
         end
 
-        def contains_contant?(node)
-          node.branches.any?(&:const_type?)
+        def contains_constant?(node)
+          node.branches.compact.any?(&:const_type?)
         end
       end
     end

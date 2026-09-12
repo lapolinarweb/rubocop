@@ -12,6 +12,36 @@ RSpec.describe RuboCop::Cop::Lint::NonLocalExitFromIterator, :config do
           end
         RUBY
       end
+
+      it 'registers an offense when the receiver uses safe navigation' do
+        expect_offense(<<~RUBY)
+          items&.each do |item|
+            return if item.stock == 0
+            ^^^^^^ Non-local exit from iterator, [...]
+            item.update!(foobar: true)
+          end
+        RUBY
+      end
+
+      it 'registers an offense for numblocks' do
+        expect_offense(<<~RUBY)
+          items.each do
+            return if baz?(_1)
+            ^^^^^^ Non-local exit from iterator, [...]
+            _1.update!(foobar: true)
+          end
+        RUBY
+      end
+
+      it 'registers an offense for itblocks', :ruby34 do
+        expect_offense(<<~RUBY)
+          items.each do
+            return if baz?(it)
+            ^^^^^^ Non-local exit from iterator, [...]
+            it.update!(foobar: true)
+          end
+        RUBY
+      end
     end
 
     context 'and has multiple arguments' do

@@ -8,8 +8,8 @@ module RuboCop
       MSG = 'Space missing after %<token>s.'
 
       def on_new_investigation
-        each_missing_space(processed_source.tokens) do |token|
-          add_offense(token.pos, message: format(MSG, token: kind(token))) do |corrector|
+        each_missing_space(processed_source.tokens) do |token, kind|
+          add_offense(token.pos, message: format(MSG, token: kind)) do |corrector|
             PunctuationCorrector.add_space(corrector, token)
           end
         end
@@ -19,16 +19,17 @@ module RuboCop
 
       def each_missing_space(tokens)
         tokens.each_cons(2) do |token1, token2|
-          next unless kind(token1)
+          kind = kind(token1, token2)
+          next unless kind
           next unless space_missing?(token1, token2)
           next unless space_required_before?(token2)
 
-          yield token1
+          yield token1, kind
         end
       end
 
       def space_missing?(token1, token2)
-        token1.line == token2.line && token2.column == token1.column + offset
+        same_line?(token1, token2) && token2.column == token1.column + offset
       end
 
       def space_required_before?(token)
@@ -36,7 +37,7 @@ module RuboCop
       end
 
       def allowed_type?(token)
-        %i[tRPAREN tRBRACK tPIPE].include?(token.type)
+        %i[tRPAREN tRBRACK tPIPE tSTRING_DEND].include?(token.type)
       end
 
       def space_forbidden_before_rcurly?

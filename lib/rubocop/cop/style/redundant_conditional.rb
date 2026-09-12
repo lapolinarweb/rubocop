@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for redundant returning of true/false in conditionals.
+      # Checks for redundant returning of true/false in conditionals.
       #
       # @example
       #   # bad
@@ -63,32 +63,20 @@ module RuboCop
         RUBY
 
         def offense?(node)
-          return if node.modifier_form?
+          return false if node.modifier_form?
 
           redundant_condition?(node) || redundant_condition_inverted?(node)
         end
 
         def replacement_condition(node)
           condition = node.condition.source
-          expression = invert_expression?(node) ? "!(#{condition})" : condition
+          expression = redundant_condition_inverted?(node) ? "!(#{condition})" : condition
 
           node.elsif? ? indented_else_node(expression, node) : expression
         end
 
-        def invert_expression?(node)
-          (
-            (node.if? || node.elsif? || node.ternary?) && redundant_condition_inverted?(node)
-          ) || (
-            node.unless? && redundant_condition?(node)
-          )
-        end
-
         def indented_else_node(expression, node)
           "else\n#{indentation(node)}#{expression}"
-        end
-
-        def configured_indentation_width
-          super || 2
         end
       end
     end

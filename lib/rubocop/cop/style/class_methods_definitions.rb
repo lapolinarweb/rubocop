@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Style
-      # This cop enforces using `def self.method_name` or `class << self` to define class methods.
+      # Enforces using `def self.method_name` or `class << self` to define class methods.
       #
       # @example EnforcedStyle: def_self (default)
       #   # bad
@@ -70,7 +70,7 @@ module RuboCop
 
         def on_sclass(node)
           return unless def_self_style?
-          return unless node.identifier.source == 'self'
+          return unless node.identifier.self_type?
           return unless all_methods_public?(node)
 
           add_offense(node, message: MSG_SCLASS) do |corrector|
@@ -80,6 +80,7 @@ module RuboCop
 
         def on_defs(node)
           return if def_self_style?
+          return unless node.receiver.self_type?
 
           message = format(MSG, preferred: 'class << self')
           add_offense(node, message: message)
@@ -139,13 +140,19 @@ module RuboCop
 
         def extract_def_from_sclass(def_node, sclass_node)
           range = source_range_with_comment(def_node)
-          source = range.source.sub!(
-            "def #{def_node.method_name}",
-            "def self.#{def_node.method_name}"
-          )
-
+          source = prefix_def_with_self(range, def_node)
           source = source.gsub(/^ {#{indentation_diff(def_node, sclass_node)}}/, '')
           [range, source.chomp]
+        end
+
+        # Splice in `self.` at the actual `def` keyword rather than substituting the
+        # first textual `def <name>`, which may appear inside a preceding comment.
+        def prefix_def_with_self(range, def_node)
+          keyword_offset = def_node.loc.keyword.begin_pos - range.begin_pos
+          name_end_offset = def_node.loc.name.end_pos - range.begin_pos
+          source = range.source.dup
+          source[keyword_offset...name_end_offset] = "def self.#{def_node.method_name}"
+          source
         end
 
         def indentation_diff(node1, node2)

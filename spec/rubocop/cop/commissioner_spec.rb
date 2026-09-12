@@ -7,6 +7,18 @@ RSpec.describe RuboCop::Cop::Commissioner do
     let(:report) { commissioner.investigate(processed_source) }
     let(:cop_class) do
       stub_const('Fake::FakeCop', Class.new(RuboCop::Cop::Base) do
+                                    # The investigation callbacks are only dispatched
+                                    # to cops that refine them.
+                                    # rubocop:disable Lint/UselessMethodDefinition -- a stub that exists to be called
+                                    def on_new_investigation
+                                      super
+                                    end
+
+                                    def on_other_file
+                                      super
+                                    end
+                                    # rubocop:enable Lint/UselessMethodDefinition
+
                                     def on_int(node); end
                                     alias_method :on_def, :on_int
                                     alias_method :on_send, :on_int
@@ -35,8 +47,7 @@ RSpec.describe RuboCop::Cop::Commissioner do
     let(:processed_source) { parse_source(source, 'file.rb') }
     let(:cop_offenses) { [] }
     let(:cop_report) do
-      RuboCop::Cop::Base::InvestigationReport
-        .new(nil, processed_source, cop_offenses, nil)
+      RuboCop::Cop::Base::InvestigationReport.new(nil, processed_source, cop_offenses, nil)
     end
 
     around { |example| RuboCop::Cop::Registry.with_temporary_global { example.run } }
@@ -100,7 +111,7 @@ RSpec.describe RuboCop::Cop::Commissioner do
 
       expect(offenses).to eq []
       expect(errors.size).to eq(1)
-      expect(errors[0].cause.instance_of?(RuntimeError)).to be(true)
+      expect(errors[0].cause).to be_an_instance_of(RuntimeError)
       expect(errors[0].line).to eq 2
       expect(errors[0].column).to eq 0
     end
@@ -115,12 +126,22 @@ RSpec.describe RuboCop::Cop::Commissioner do
       end
     end
 
+    context 'when passed :raise_cop_error option' do
+      let(:options) { { raise_cop_error: true } }
+
+      it 're-raises the exception received while processing' do
+        allow(cop).to receive(:on_int) { raise RuboCop::ErrorWithAnalyzedFileLocation }
+
+        expect { offenses }.to raise_error(RuboCop::ErrorWithAnalyzedFileLocation)
+      end
+    end
+
     context 'when given a force' do
       let(:force) { instance_double(RuboCop::Cop::Force).as_null_object }
       let(:forces) { [force] }
 
-      it 'passes the input params to all cops/forces that implement their own' \
-         ' #investigate method' do
+      it 'passes the input params to all cops/forces that implement their own ' \
+         '#investigate method' do
         expect(cop).to receive(:on_new_investigation).with(no_args)
         expect(force).to receive(:investigate).with(processed_source)
 

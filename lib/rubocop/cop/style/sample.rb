@@ -3,9 +3,13 @@
 module RuboCop
   module Cop
     module Style
-      # This cop is used to identify usages of `shuffle.first`,
+      # Identifies usages of `shuffle.first`,
       # `shuffle.last`, and `shuffle[]` and change them to use
       # `sample` instead.
+      #
+      # NOTE: An offense involving a `random:` argument is registered but not autocorrected:
+      # `shuffle` and `sample` consume the given generator differently, so for a seeded generator
+      # the correction would select different elements.
       #
       # @example
       #   # bad
@@ -35,7 +39,7 @@ module RuboCop
 
         # @!method sample_candidate?(node)
         def_node_matcher :sample_candidate?, <<~PATTERN
-          (send $(send _ :shuffle $...) ${:#{RESTRICT_ON_SEND.join(' :')}} $...)
+          (call $(call _ :shuffle $...) ${:#{RESTRICT_ON_SEND.join(' :')}} $...)
         PATTERN
 
         def on_send(node)
@@ -45,13 +49,16 @@ module RuboCop
             range = source_range(shuffle_node, node)
             message = message(shuffle_arg, method, method_args, range)
 
-            add_offense(range, message: message) do |corrector|
-              corrector.replace(
-                source_range(shuffle_node, node), correction(shuffle_arg, method, method_args)
-              )
+            if shuffle_arg.empty?
+              add_offense(range, message: message) do |corrector|
+                corrector.replace(range, correction(shuffle_arg, method, method_args))
+              end
+            else
+              add_offense(range, message: message)
             end
           end
         end
+        alias on_csend on_send
 
         private
 
@@ -91,11 +98,12 @@ module RuboCop
           second.int_type? ? second.to_a.first : :unknown
         end
 
-        def range_size(range_node) # rubocop:todo Metrics/CyclomaticComplexity
+        # rubocop:disable-next Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
+        def range_size(range_node)
           vals = range_node.to_a
-          return :unknown unless vals.all?(&:int_type?)
+          return :unknown unless vals.all? { |val| val.nil? || val.int_type? }
 
-          low, high = vals.map { |val| val.children[0] }
+          low, high = vals.map { |val| val.nil? ? 0 : val.children[0] }
           return :unknown unless low.zero? && high >= 0
 
           case range_node.type
@@ -107,9 +115,7 @@ module RuboCop
         end
 
         def source_range(shuffle_node, node)
-          Parser::Source::Range.new(shuffle_node.source_range.source_buffer,
-                                    shuffle_node.loc.selector.begin_pos,
-                                    node.source_range.end_pos)
+          shuffle_node.loc.selector.join(node.source_range.end)
         end
 
         def message(shuffle_arg, method, method_args, range)

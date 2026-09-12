@@ -51,6 +51,8 @@ module RuboCop
         MSG_BEFORE_FOR_ONLY_BEFORE = 'Keep a blank line before `%<modifier>s`.'
         MSG_AFTER_FOR_ONLY_BEFORE = 'Remove a blank line after `%<modifier>s`.'
 
+        RESTRICT_ON_SEND = %i[public protected private module_function].freeze
+
         def initialize(config = nil, options = nil)
           super
 
@@ -80,15 +82,19 @@ module RuboCop
           @block_line = node.source_range.first_line
         end
 
+        alias on_numblock on_block
+        alias on_itblock on_block
+
         def on_send(node)
-          return unless node.bare_access_modifier? && !node.parent&.block_type?
+          return unless node.bare_access_modifier? && !node.block_literal?
+          return if same_line?(node, node.right_sibling)
           return if expected_empty_lines?(node)
 
           message = message(node)
           add_offense(node, message: message) do |corrector|
             line = range_by_whole_lines(node.source_range)
 
-            corrector.insert_before(line, "\n") unless previous_line_empty?(node.first_line)
+            corrector.insert_before(line, "\n") if should_insert_line_before?(node)
 
             correct_next_line_if_denied_style(corrector, node, line)
           end
@@ -110,18 +116,20 @@ module RuboCop
         def allowed_only_before_style?(node)
           if node.special_modifier?
             return true if processed_source[node.last_line] == 'end'
-            return false if next_line_empty?(node.last_line)
+            return false if next_line_empty_and_exists?(node.last_line)
           end
 
           previous_line_empty?(node.first_line)
         end
 
         def correct_next_line_if_denied_style(corrector, node, line)
+          return unless should_insert_line_after?(node)
+
           case style
           when :around
             corrector.insert_after(line, "\n") unless next_line_empty?(node.last_line)
           when :only_before
-            if next_line_empty?(node.last_line)
+            if next_line_empty_and_exists?(node.last_line)
               range = next_empty_line_range(node)
 
               corrector.remove(range)
@@ -130,7 +138,7 @@ module RuboCop
         end
 
         def previous_line_ignoring_comments(processed_source, send_line)
-          processed_source[0..send_line - 2].reverse.find { |line| !comment_line?(line) }
+          processed_source[0..(send_line - 2)].reverse.find { |line| !comment_line?(line) }
         end
 
         def previous_line_empty?(send_line)
@@ -144,6 +152,10 @@ module RuboCop
           next_line = processed_source[last_send_line]
 
           body_end?(last_send_line) || next_line.blank?
+        end
+
+        def next_line_empty_and_exists?(last_send_line)
+          next_line_empty?(last_send_line) && last_send_line.next != processed_source.lines.size
         end
 
         def empty_lines_around?(node)
@@ -199,6 +211,29 @@ module RuboCop
           else
             format(MSG_BEFORE_FOR_ONLY_BEFORE, modifier: modifier)
           end
+        end
+
+        def should_insert_line_before?(node)
+          return false if previous_line_empty?(node.first_line)
+          return true unless inside_block?(node) && no_empty_lines_around_block_body?
+          return true unless node.parent.begin_type?
+
+          node.parent.children.first != node
+        end
+
+        def should_insert_line_after?(node)
+          return true unless inside_block?(node) && no_empty_lines_around_block_body?
+
+          node.parent.children.last != node
+        end
+
+        def inside_block?(node)
+          node.parent.block_type? || (node.parent.begin_type? && node.parent.parent&.block_type?)
+        end
+
+        def no_empty_lines_around_block_body?
+          config.for_enabled_cop('Layout/EmptyLinesAroundBlockBody')['EnforcedStyle'] ==
+            'no_empty_lines'
         end
       end
     end

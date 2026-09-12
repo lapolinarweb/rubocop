@@ -26,6 +26,23 @@ RSpec.describe RuboCop::Cop::Layout::FirstArgumentIndentation, :config do
         RUBY
       end
 
+      it 'registers an offense and corrects an over-indented first argument of `super`' do
+        expect_offense(<<~RUBY)
+          super(
+              :foo,
+              ^^^^ Indent the first argument one step more than the start of the previous line.
+              bar: 3
+          )
+        RUBY
+
+        expect_correction(<<~RUBY)
+          super(
+            :foo,
+              bar: 3
+          )
+        RUBY
+      end
+
       it 'registers an offense and corrects an over-indented first argument on an alphanumeric method name' do
         expect_offense(<<~RUBY)
           self.run(
@@ -112,6 +129,50 @@ RSpec.describe RuboCop::Cop::Layout::FirstArgumentIndentation, :config do
              7
            )
           )
+        RUBY
+      end
+
+      it 'registers an offense and corrects over-indented first arguments in nested method calls' do
+        expect_offense(<<~RUBY)
+          foo
+            .bar(
+            baz(
+            ^^^^ Indent the first argument one step more than the start of the previous line.
+                qux
+                ^^^ Bad indentation of the first argument.
+              )
+            )
+        RUBY
+
+        expect_correction(<<~RUBY)
+          foo
+            .bar(
+              baz(
+                qux
+                )
+            )
+        RUBY
+      end
+
+      it 'registers an offense and corrects over-indented first arguments in nested method calls with hash arguments' do
+        expect_offense(<<~RUBY)
+          foo
+            .bar(
+            bar(
+            ^^^^ Indent the first argument one step more than the start of the previous line.
+                key: value
+                ^^^^^^^^^^ Bad indentation of the first argument.
+              )
+            )
+        RUBY
+
+        expect_correction(<<~RUBY)
+          foo
+            .bar(
+              bar(
+                key: value
+                )
+            )
         RUBY
       end
 
@@ -341,7 +402,7 @@ RSpec.describe RuboCop::Cop::Layout::FirstArgumentIndentation, :config do
     let(:style) { 'special_for_inner_method_call' }
     let(:indentation_width) { 2 }
 
-    include_examples 'common behavior'
+    it_behaves_like 'common behavior'
 
     context 'for method calls within method calls' do
       context 'with outer parentheses' do
@@ -357,6 +418,23 @@ RSpec.describe RuboCop::Cop::Layout::FirstArgumentIndentation, :config do
                         bar: 3))
           RUBY
         end
+
+        it 'corrects only the first argument in a method chain, not the entire chain' do
+          expect_offense(<<~RUBY)
+            run(:foo, Diagnostic.where(
+                          'limit >= 10',
+                          ^^^^^^^^^^^^^ Indent the first argument one step more than the start of the previous line.
+                        )
+                        .ids)
+          RUBY
+
+          expect_correction(<<~RUBY)
+            run(:foo, Diagnostic.where(
+              'limit >= 10',
+                        )
+                        .ids)
+          RUBY
+        end
       end
 
       context 'without outer parentheses' do
@@ -366,6 +444,79 @@ RSpec.describe RuboCop::Cop::Layout::FirstArgumentIndentation, :config do
                         bar: 3)
           RUBY
         end
+
+        it 'corrects only the first argument in a method chain, not the entire chain' do
+          expect_offense(<<~RUBY)
+            run :foo, Diagnostic.where(
+                          'limit >= 10',
+                          ^^^^^^^^^^^^^ Indent the first argument one step more than the start of the previous line.
+                        )
+                        .ids
+          RUBY
+
+          expect_correction(<<~RUBY)
+            run :foo, Diagnostic.where(
+              'limit >= 10',
+                        )
+                        .ids
+          RUBY
+        end
+      end
+    end
+
+    context 'for method chains' do
+      it 'corrects only the first argument, not the entire method chain' do
+        expect_offense(<<~RUBY)
+          sequences = CourseSequence
+            .includes(
+                course_sequence_memberships: {
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Indent the first argument one step more than the start of the previous line.
+                  course: :course_components
+                }
+              )
+            .joins(:courses)
+        RUBY
+
+        expect_correction(<<~RUBY)
+          sequences = CourseSequence
+            .includes(
+              course_sequence_memberships: {
+                course: :course_components
+              }
+              )
+            .joins(:courses)
+        RUBY
+      end
+
+      it 'corrects an under-indented first argument in a method chain' do
+        expect_offense(<<~RUBY)
+          result = Foo
+            .bar(
+          x: 1
+          ^^^^ Indent the first argument one step more than the start of the previous line.
+            )
+            .baz
+        RUBY
+
+        expect_correction(<<~RUBY)
+          result = Foo
+            .bar(
+              x: 1
+            )
+            .baz
+        RUBY
+      end
+
+      it 'accepts properly indented first argument in a method chain' do
+        expect_no_offenses(<<~RUBY)
+          sequences = CourseSequence
+            .includes(
+              course_sequence_memberships: {
+                course: :course_components
+              }
+            )
+            .joins(:courses)
+        RUBY
       end
     end
   end
@@ -374,7 +525,7 @@ RSpec.describe RuboCop::Cop::Layout::FirstArgumentIndentation, :config do
     let(:style) { 'special_for_inner_method_call_in_parentheses' }
     let(:indentation_width) { 2 }
 
-    include_examples 'common behavior'
+    it_behaves_like 'common behavior'
 
     context 'for method calls within method calls' do
       context 'with outer parentheses' do
@@ -424,6 +575,77 @@ RSpec.describe RuboCop::Cop::Layout::FirstArgumentIndentation, :config do
                                a))
           RUBY
         end
+
+        it 'corrects the entire method call when closing parenthesis is on a separate line' do
+          expect_offense(<<~RUBY)
+            instance_variable_set(
+              "@diagnostics",
+              Diagnostic.where(
+                          'limit >= 10 and limit < 100',
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Indent the first argument one step more than `Diagnostic.where(`.
+                        )
+            )
+          RUBY
+
+          expect_correction(<<~RUBY)
+            instance_variable_set(
+              "@diagnostics",
+              Diagnostic.where(
+                'limit >= 10 and limit < 100',
+              )
+            )
+          RUBY
+        end
+
+        it 'corrects the entire method call with multiple arguments' do
+          expect_offense(<<~RUBY)
+            instance_variable_set(
+              "@diagnostics",
+              Diagnostic.where(
+                    'limit >= ? and limit < ?',
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^ Indent the first argument one step more than `Diagnostic.where(`.
+                    LIMITS[:lowest_value], LIMITS[:highest_value]
+                  )
+            )
+          RUBY
+
+          expect_correction(<<~RUBY)
+            instance_variable_set(
+              "@diagnostics",
+              Diagnostic.where(
+                'limit >= ? and limit < ?',
+                LIMITS[:lowest_value], LIMITS[:highest_value]
+              )
+            )
+          RUBY
+        end
+
+        it 'corrects the entire method call chain' do
+          expect_offense(<<~RUBY)
+            instance_variable_set(
+              "@diagnostic_ids",
+              Diagnostic.where(
+                    'limit >= ? and limit < ?',
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^ Indent the first argument one step more than the start of the previous line.
+                    LIMITS[:lowest_value], LIMITS[:highest_value]
+                  )
+                  .where(id: 1)
+                  .ids,
+            )
+          RUBY
+
+          expect_correction(<<~RUBY)
+            instance_variable_set(
+              "@diagnostic_ids",
+              Diagnostic.where(
+                'limit >= ? and limit < ?',
+                LIMITS[:lowest_value], LIMITS[:highest_value]
+              )
+              .where(id: 1)
+              .ids,
+            )
+          RUBY
+        end
       end
 
       context 'without outer parentheses' do
@@ -433,6 +655,115 @@ RSpec.describe RuboCop::Cop::Layout::FirstArgumentIndentation, :config do
               bar: 3)
           RUBY
         end
+
+        it 'corrects only the first argument in a method chain, not the entire chain' do
+          expect_offense(<<~RUBY)
+            run :foo, Diagnostic.where(
+                          'limit >= 10',
+                          ^^^^^^^^^^^^^ Indent the first argument one step more than the start of the previous line.
+                        )
+                        .ids
+          RUBY
+
+          expect_correction(<<~RUBY)
+            run :foo, Diagnostic.where(
+              'limit >= 10',
+                        )
+                        .ids
+          RUBY
+        end
+      end
+    end
+
+    context 'for method chains' do
+      it 'corrects only the first argument when not inside a parenthesized call' do
+        expect_offense(<<~RUBY)
+          sequences = CourseSequence
+            .includes(
+                course_sequence_memberships: {
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Indent the first argument one step more than the start of the previous line.
+                  course: :course_components
+                }
+              )
+            .joins(:courses)
+        RUBY
+
+        expect_correction(<<~RUBY)
+          sequences = CourseSequence
+            .includes(
+              course_sequence_memberships: {
+                course: :course_components
+              }
+              )
+            .joins(:courses)
+        RUBY
+      end
+
+      it 'accepts properly indented first argument in a method chain' do
+        expect_no_offenses(<<~RUBY)
+          sequences = CourseSequence
+            .includes(
+              course_sequence_memberships: {
+                course: :course_components
+              }
+            )
+            .joins(:courses)
+        RUBY
+      end
+    end
+
+    context 'when `EnforcedStyle: with_fixed_indentation` of `Layout/ArgumentAlignment` and ' \
+            '`Layout/FirstMethodArgumentLineBreak` is enabled' do
+      let(:other_cops) do
+        {
+          'Layout/IndentationWidth' => { 'Width' => indentation_width },
+          'Layout/ArgumentAlignment' => { 'EnforcedStyle' => 'with_fixed_indentation' },
+          'Layout/FirstMethodArgumentLineBreak' => { 'Enabled' => true }
+        }
+      end
+
+      it 'accepts an inner method call that does not start its own line, ' \
+         'deferring to `Layout/ArgumentAlignment`' do
+        expect_no_offenses(<<~RUBY)
+          expect(execute_request(
+            "some_url",
+            :request_method => "PATCH"
+          )).to be_throttled
+        RUBY
+      end
+
+      it 'registers an offense and corrects an inner method call that starts its own line' do
+        expect_offense(<<~RUBY)
+          expect(
+            execute_request(
+                 "some_url",
+                 ^^^^^^^^^^ Indent the first argument one step more than `execute_request(`.
+                 :request_method => "PATCH"
+            )).to be_throttled
+        RUBY
+
+        expect_correction(<<~RUBY)
+          expect(
+            execute_request(
+              "some_url",
+              :request_method => "PATCH"
+            )).to be_throttled
+        RUBY
+      end
+
+      it 'registers an offense and corrects an inner method call with a single argument' do
+        expect_offense(<<~RUBY)
+          run(described_class.new(
+            attributes
+            ^^^^^^^^^^ Indent the first argument one step more than `described_class.new(`.
+          ))
+        RUBY
+
+        expect_correction(<<~RUBY)
+          run(described_class.new(
+                attributes
+          ))
+        RUBY
       end
     end
   end
@@ -441,7 +772,7 @@ RSpec.describe RuboCop::Cop::Layout::FirstArgumentIndentation, :config do
     let(:style) { 'consistent' }
     let(:indentation_width) { 2 }
 
-    include_examples 'common behavior'
+    it_behaves_like 'common behavior'
 
     context 'for method calls within method calls' do
       it 'registers an offense and corrects an over-indented first argument' do
@@ -461,6 +792,100 @@ RSpec.describe RuboCop::Cop::Layout::FirstArgumentIndentation, :config do
         expect_no_offenses(<<~RUBY)
           @diagnostics.process(Diagnostic.new(
             :error, :token, { :token => name }, location))
+        RUBY
+      end
+
+      context 'with outer parentheses' do
+        it 'corrects only the first argument in a method chain, not the entire chain' do
+          expect_offense(<<~RUBY)
+            run(:foo, Diagnostic.where(
+                          'limit >= 10',
+                          ^^^^^^^^^^^^^ Indent the first argument one step more than the start of the previous line.
+                        )
+                        .ids)
+          RUBY
+
+          expect_correction(<<~RUBY)
+            run(:foo, Diagnostic.where(
+              'limit >= 10',
+                        )
+                        .ids)
+          RUBY
+        end
+      end
+
+      context 'without outer parentheses' do
+        it 'corrects only the first argument in a method chain, not the entire chain' do
+          expect_offense(<<~RUBY)
+            run :foo, Diagnostic.where(
+                          'limit >= 10',
+                          ^^^^^^^^^^^^^ Indent the first argument one step more than the start of the previous line.
+                        )
+                        .ids
+          RUBY
+
+          expect_correction(<<~RUBY)
+            run :foo, Diagnostic.where(
+              'limit >= 10',
+                        )
+                        .ids
+          RUBY
+        end
+      end
+    end
+
+    context 'for method chains' do
+      it 'corrects only the first argument, not the entire method chain' do
+        expect_offense(<<~RUBY)
+          sequences = CourseSequence
+            .includes(
+                course_sequence_memberships: {
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Indent the first argument one step more than the start of the previous line.
+                  course: :course_components
+                }
+              )
+            .joins(:courses)
+        RUBY
+
+        expect_correction(<<~RUBY)
+          sequences = CourseSequence
+            .includes(
+              course_sequence_memberships: {
+                course: :course_components
+              }
+              )
+            .joins(:courses)
+        RUBY
+      end
+
+      it 'corrects an under-indented first argument in a method chain' do
+        expect_offense(<<~RUBY)
+          result = Foo
+            .bar(
+          x: 1
+          ^^^^ Indent the first argument one step more than the start of the previous line.
+            )
+            .baz
+        RUBY
+
+        expect_correction(<<~RUBY)
+          result = Foo
+            .bar(
+              x: 1
+            )
+            .baz
+        RUBY
+      end
+
+      it 'accepts properly indented first argument in a method chain' do
+        expect_no_offenses(<<~RUBY)
+          sequences = CourseSequence
+            .includes(
+              course_sequence_memberships: {
+                course: :course_components
+              }
+            )
+            .joins(:courses)
         RUBY
       end
     end
@@ -528,7 +953,7 @@ RSpec.describe RuboCop::Cop::Layout::FirstArgumentIndentation, :config do
       end
 
       context 'for assignment' do
-        it 'register an offense and corrects a correctly indented first ' \
+        it 'registers an offense and corrects a correctly indented first ' \
            'argument and does not care about the second argument' do
           expect_offense(<<~RUBY)
             x = run(
@@ -701,6 +1126,62 @@ RSpec.describe RuboCop::Cop::Layout::FirstArgumentIndentation, :config do
               ).freeze
         RUBY
       end
+
+      context 'for method chains' do
+        it 'corrects only the first argument, not the entire method chain' do
+          expect_offense(<<~RUBY)
+            sequences = CourseSequence
+              .includes(
+                  course_sequence_memberships: {
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Indent the first argument one step more than the start of the previous line.
+                    course: :course_components
+                  }
+                )
+              .joins(:courses)
+          RUBY
+
+          expect_correction(<<~RUBY)
+            sequences = CourseSequence
+              .includes(
+                course_sequence_memberships: {
+                  course: :course_components
+                }
+                )
+              .joins(:courses)
+          RUBY
+        end
+
+        it 'corrects an under-indented first argument in a method chain' do
+          expect_offense(<<~RUBY)
+            result = Foo
+              .bar(
+            x: 1
+            ^^^^ Indent the first argument one step more than the start of the previous line.
+              )
+              .baz
+          RUBY
+
+          expect_correction(<<~RUBY)
+            result = Foo
+              .bar(
+                x: 1
+              )
+              .baz
+          RUBY
+        end
+
+        it 'accepts properly indented first argument in a method chain' do
+          expect_no_offenses(<<~RUBY)
+            sequences = CourseSequence
+              .includes(
+                course_sequence_memberships: {
+                  course: :course_components
+                }
+              )
+              .joins(:courses)
+          RUBY
+        end
+      end
     end
 
     context 'when IndentationWidth:Width is 4' do
@@ -791,6 +1272,23 @@ RSpec.describe RuboCop::Cop::Layout::FirstArgumentIndentation, :config do
                         )
           RUBY
         end
+
+        it 'corrects only the first argument in a method chain, not the entire chain' do
+          expect_offense(<<~RUBY)
+            run(:foo, Diagnostic.where(
+                          'limit >= 10',
+                          ^^^^^^^^^^^^^ Indent the first argument one step more than `Diagnostic.where(`.
+                        )
+                        .ids)
+          RUBY
+
+          expect_correction(<<~RUBY)
+            run(:foo, Diagnostic.where(
+                        'limit >= 10',
+                        )
+                        .ids)
+          RUBY
+        end
       end
 
       context 'without outer parentheses' do
@@ -811,6 +1309,23 @@ RSpec.describe RuboCop::Cop::Layout::FirstArgumentIndentation, :config do
             foo = bar * run(
                           :foo, defaults.merge(
                                   bar: 3))
+          RUBY
+        end
+
+        it 'corrects only the first argument in a method chain, not the entire chain' do
+          expect_offense(<<~RUBY)
+            run :foo, Diagnostic.where(
+                          'limit >= 10',
+                          ^^^^^^^^^^^^^ Indent the first argument one step more than `Diagnostic.where(`.
+                        )
+                        .ids
+          RUBY
+
+          expect_correction(<<~RUBY)
+            run :foo, Diagnostic.where(
+                        'limit >= 10',
+                        )
+                        .ids
           RUBY
         end
       end

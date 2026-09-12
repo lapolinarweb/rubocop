@@ -3,6 +3,11 @@
 RSpec.describe RuboCop::Formatter::FormatterSet do
   subject(:formatter_set) { described_class.new }
 
+  win_close = lambda do |fset|
+    fset.close_output_files
+    fset.each { |f| f.instance_variable_set :@output, nil }
+  end
+
   it 'responds to all formatter API methods' do
     %i[started file_started file_finished finished].each do |method|
       expect(formatter_set).to respond_to(method)
@@ -52,6 +57,7 @@ RSpec.describe RuboCop::Formatter::FormatterSet do
         formatter_set.add_formatter('simple', output_path)
         expect(formatter_set.first.output.class).to eq(File)
         expect(formatter_set.first.output.path).to eq(output_path)
+        win_close.call(formatter_set) if RuboCop::Platform.windows?
       end
 
       context "when parent directories don't exist" do
@@ -64,12 +70,15 @@ RSpec.describe RuboCop::Formatter::FormatterSet do
           formatter_set.add_formatter('simple', output_path)
           expect(formatter_set.first.output.class).to eq(File)
           expect(formatter_set.first.output.path).to eq(output_path)
+          win_close.call(formatter_set) if RuboCop::Platform.windows?
         end
       end
     end
   end
 
   describe '#close_output_files' do
+    include_context 'mock console output'
+
     before do
       2.times do
         output_path = Tempfile.new('').path
@@ -78,20 +87,15 @@ RSpec.describe RuboCop::Formatter::FormatterSet do
       formatter_set.add_formatter('simple')
     end
 
-    around do |example|
-      $stdout = StringIO.new
-      example.run
-    ensure
-      $stdout = STDOUT
-    end
-
     it 'closes all output files' do
       formatter_set.close_output_files
-      formatter_set[0..1].each { |formatter| expect(formatter.output.closed?).to be(true) }
+      formatter_set[0..1].each { |formatter| expect(formatter.output).to be_closed }
+      win_close.call(formatter_set) if RuboCop::Platform.windows?
     end
 
     it 'does not close non file output' do
-      expect(formatter_set[2].output.closed?).to be(false)
+      expect(formatter_set[2].output).not_to be_closed
+      win_close.call(formatter_set) if RuboCop::Platform.windows?
     end
   end
 

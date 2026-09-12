@@ -3,14 +3,14 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks whether the block parameters of a single-line
+      # Checks whether the block parameters of a single-line
       # method accepting a block match the names specified via configuration.
       #
       # For instance one can configure `reduce`(`inject`) to use |a, e| as
       # parameters.
       #
       # Configuration option: Methods
-      # Should be set to use this cop. Array of hashes, where each key is the
+      # Should be set to use this cop. `Array` of hashes, where each key is the
       # method name and value - array of argument names.
       #
       # @example Methods: [{reduce: %w[a b]}]
@@ -33,13 +33,13 @@ module RuboCop
 
         MSG = 'Name `%<method>s` block params `|%<params>s|`.'
 
-        def on_block(node)
+        def on_block(node) # rubocop:disable InternalAffairs/NumblockHandler, InternalAffairs/ItblockHandler -- checks block parameter names
           return unless node.single_line?
 
           return unless eligible_method?(node)
           return unless eligible_arguments?(node)
 
-          method_name = node.send_node.method_name
+          method_name = node.method_name
           return if args_match?(method_name, node.arguments)
 
           preferred_block_arguments = build_preferred_arguments_map(node, target_args(method_name))
@@ -81,7 +81,7 @@ module RuboCop
         end
 
         def eligible_method?(node)
-          node.send_node.receiver && method_names.include?(node.send_node.method_name)
+          node.receiver && method_names.include?(node.method_name)
         end
 
         def methods
@@ -89,7 +89,7 @@ module RuboCop
         end
 
         def method_names
-          methods.map { |method| method_name(method).to_sym }
+          @method_names ||= methods.map { |method| method_name(method).to_sym }.freeze
         end
 
         def method_name(method)

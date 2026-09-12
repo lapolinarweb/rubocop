@@ -210,6 +210,28 @@ RSpec.describe RuboCop::Cop::Layout::DotPosition, :config do
         end
       end
 
+      context 'with an xstr heredoc' do
+        it 'registers an offense' do
+          expect_offense(<<~RUBY)
+            my_method.
+                     ^ Place the . on the next line, together with the method name.
+              something(<<~`HERE`).
+                                  ^ Place the . on the next line, together with the method name.
+                ls -la
+              HERE
+              somethingelse
+          RUBY
+
+          expect_correction(<<~RUBY)
+            my_method
+              .something(<<~`HERE`)
+                ls -la
+              HERE
+              .somethingelse
+          RUBY
+        end
+      end
+
       context 'as the first argument' do
         it 'registers an offense' do
           expect_offense(<<~'RUBY')
@@ -234,7 +256,7 @@ RSpec.describe RuboCop::Cop::Layout::DotPosition, :config do
 
       context 'with multiple heredocs' do
         it 'registers an offense' do
-          expect_offense(<<~'RUBY')
+          expect_offense(<<~RUBY)
             my_method.
                      ^ Place the . on the next line, together with the method name.
               something(<<~HERE, <<~THERE).
@@ -246,7 +268,7 @@ RSpec.describe RuboCop::Cop::Layout::DotPosition, :config do
               somethingelse
           RUBY
 
-          expect_correction(<<~'RUBY')
+          expect_correction(<<~RUBY)
             my_method
               .something(<<~HERE, <<~THERE)
                 something
@@ -254,6 +276,38 @@ RSpec.describe RuboCop::Cop::Layout::DotPosition, :config do
                 another thing
               THERE
               .somethingelse
+          RUBY
+        end
+      end
+
+      context 'with another method on the same line' do
+        it 'does not register an offense' do
+          expect_no_offenses(<<~RUBY)
+            foo(<<~HEREDOC).squish
+              something
+            HEREDOC
+          RUBY
+        end
+      end
+
+      context 'when using safe navigation operator' do
+        it 'registers an offense' do
+          expect_offense(<<~RUBY)
+            my_method&.
+                     ^^ Place the &. on the next line, together with the method name.
+              something(<<~HERE)&.
+                                ^^ Place the &. on the next line, together with the method name.
+                something
+              HERE
+              somethingelse
+          RUBY
+
+          expect_correction(<<~RUBY)
+            my_method
+              &.something(<<~HERE)
+                something
+              HERE
+              &.somethingelse
           RUBY
         end
       end
@@ -272,6 +326,25 @@ RSpec.describe RuboCop::Cop::Layout::DotPosition, :config do
         expect_correction(<<~RUBY)
           <<~HEREDOC
             something
+          HEREDOC
+            .method_name
+        RUBY
+      end
+    end
+
+    context 'when the receiver is an `xstr` heredoc' do
+      it 'registers an offense' do
+        expect_offense(<<~RUBY)
+          <<~`HEREDOC`.
+                      ^ Place the . on the next line, together with the method name.
+            ls -la
+          HEREDOC
+            method_name
+        RUBY
+
+        expect_correction(<<~RUBY)
+          <<~`HEREDOC`
+            ls -la
           HEREDOC
             .method_name
         RUBY
@@ -304,6 +377,14 @@ RSpec.describe RuboCop::Cop::Layout::DotPosition, :config do
 
     it 'does not err on method call with no dots' do
       expect_no_offenses('puts something')
+    end
+
+    it 'does not err on method call with multi-line arguments' do
+      expect_no_offenses(<<~RUBY)
+        foo(
+          bar
+        ).baz
+      RUBY
     end
 
     it 'does not err on method call without a method name' do
@@ -398,6 +479,28 @@ RSpec.describe RuboCop::Cop::Layout::DotPosition, :config do
         end
       end
 
+      context 'with an `xstr` heredoc' do
+        it 'registers an offense' do
+          expect_offense(<<~RUBY)
+            my_method
+              .something(<<~`HERE`)
+              ^ Place the . on the previous line, together with the method call receiver.
+                ls -la
+              HERE
+              .somethingelse
+              ^ Place the . on the previous line, together with the method call receiver.
+          RUBY
+
+          expect_correction(<<~RUBY)
+            my_method.
+              something(<<~`HERE`).
+                ls -la
+              HERE
+              somethingelse
+          RUBY
+        end
+      end
+
       context 'as the first argument' do
         it 'registers an offense' do
           expect_offense(<<~'RUBY')
@@ -422,7 +525,7 @@ RSpec.describe RuboCop::Cop::Layout::DotPosition, :config do
 
       context 'with multiple heredocs' do
         it 'registers an offense' do
-          expect_offense(<<~'RUBY')
+          expect_offense(<<~RUBY)
             my_method
               .something(<<~HERE, <<~THERE)
               ^ Place the . on the previous line, together with the method call receiver.
@@ -434,7 +537,7 @@ RSpec.describe RuboCop::Cop::Layout::DotPosition, :config do
               ^ Place the . on the previous line, together with the method call receiver.
           RUBY
 
-          expect_correction(<<~'RUBY')
+          expect_correction(<<~RUBY)
             my_method.
               something(<<~HERE, <<~THERE).
                 something
@@ -442,6 +545,16 @@ RSpec.describe RuboCop::Cop::Layout::DotPosition, :config do
                 another thing
               THERE
               somethingelse
+          RUBY
+        end
+      end
+
+      context 'with another method on the same line' do
+        it 'does not register an offense' do
+          expect_no_offenses(<<~RUBY)
+            foo(<<~HEREDOC).squish
+              something
+            HEREDOC
           RUBY
         end
       end
@@ -462,6 +575,35 @@ RSpec.describe RuboCop::Cop::Layout::DotPosition, :config do
             something
           HEREDOC
             method_name
+        RUBY
+      end
+    end
+
+    context 'when the receiver is an `xstr` heredoc' do
+      it 'registers an offense' do
+        expect_offense(<<~RUBY)
+          <<~`HEREDOC`
+            ls -la
+          HEREDOC
+            .method_name
+            ^ Place the . on the previous line, together with the method call receiver.
+        RUBY
+
+        expect_correction(<<~RUBY)
+          <<~`HEREDOC`.
+            ls -la
+          HEREDOC
+            method_name
+        RUBY
+      end
+    end
+
+    context 'when there is a heredoc with a following method' do
+      it 'does not register an offense for a heredoc' do
+        expect_no_offenses(<<~RUBY)
+          <<~HEREDOC.squish
+            something
+          HEREDOC
         RUBY
       end
     end

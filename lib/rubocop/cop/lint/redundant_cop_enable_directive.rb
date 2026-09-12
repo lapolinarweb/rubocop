@@ -1,27 +1,23 @@
 # frozen_string_literal: true
 
-# The Lint/RedundantCopEnableDirective and Lint/RedundantCopDisableDirective
-# cops need to be disabled so as to be able to provide a (bad) example of an
-# unneeded enable.
-
-# rubocop:disable Lint/RedundantCopEnableDirective
-# rubocop:disable Lint/RedundantCopDisableDirective
 module RuboCop
   module Cop
     module Lint
-      # This cop detects instances of rubocop:enable comments that can be
+      # Detects instances of rubocop:enable comments that can be
       # removed.
       #
-      # When comment enables all cops at once `rubocop:enable all`
-      # that cop checks whether any cop was actually enabled.
+      # When a comment enables all cops at once `rubocop:enable all`
+      # the cop checks whether any cop was actually enabled.
+      #
       # @example
+      #
       #   # bad
       #   foo = 1
       #   # rubocop:enable Layout/LineLength
       #
       #   # good
       #   foo = 1
-      # @example
+      #
       #   # bad
       #   # rubocop:disable Style/StringLiterals
       #   foo = "1"
@@ -34,21 +30,55 @@ module RuboCop
       #   foo = "1"
       #   # rubocop:enable all
       #   baz
+      #
+      #   # bad
+      #   foo = 1
+      #   # rubocop:pop
+      #
+      #   # good
+      #   # rubocop:push -Style/StringLiterals
+      #   foo = "1"
+      #   # rubocop:pop
       class RedundantCopEnableDirective < Base
         include RangeHelp
         include SurroundingSpace
         extend AutoCorrector
 
         MSG = 'Unnecessary enabling of %<cop>s.'
+        MSG_ORPHAN_POP = 'Unnecessary `rubocop:pop` without a matching `rubocop:push`.'
 
         def on_new_investigation
           return if processed_source.blank?
 
+          source = processed_source.raw_source
+          check_extra_enables if source.include?('enable')
+          check_orphan_pops if source.include?('pop')
+        end
+
+        private
+
+        def check_extra_enables
           offenses = processed_source.comment_config.extra_enabled_comments
           offenses.each { |comment, cop_names| register_offense(comment, cop_names) }
         end
 
-        private
+        def check_orphan_pops
+          push_depth = 0
+          processed_source.comments.each do |comment|
+            directive = DirectiveComment.new(comment)
+            if directive.push?
+              push_depth += 1
+            elsif directive.pop?
+              push_depth.zero? ? register_orphan_pop(directive) : push_depth -= 1
+            end
+          end
+        end
+
+        def register_orphan_pop(directive)
+          add_offense(directive.range, message: MSG_ORPHAN_POP) do |corrector|
+            corrector.remove(range_with_surrounding_space(directive.range, side: :right))
+          end
+        end
 
         def register_offense(comment, cop_names)
           directive = DirectiveComment.new(comment)
@@ -59,12 +89,18 @@ module RuboCop
               range_of_offense(comment, name),
               message: format(MSG, cop: all_or_name(name))
             ) do |corrector|
-              if directive.match?(cop_names)
-                corrector.remove(range_with_surrounding_space(range: directive.range, side: :right))
-              else
-                corrector.remove(range_with_comma(comment, name))
-              end
+              corrector.remove(removal_range(directive, comment, cop_names, name))
             end
+          end
+        end
+
+        # When every cop on the directive is redundant the whole comment goes, `--` reason
+        # included; otherwise just the one cop is spliced out of the list.
+        def removal_range(directive, comment, cop_names, name)
+          if directive.match?(cop_names)
+            range_with_surrounding_space(directive.range_with_reason, side: :right)
+          else
+            range_with_comma(comment, name)
           end
         end
 
@@ -74,15 +110,18 @@ module RuboCop
         end
 
         def comment_start(comment)
-          comment.loc.expression.begin_pos
+          comment.source_range.begin_pos
         end
 
         def cop_name_indention(comment, name)
-          comment.text.index(name)
+          # Match the cop name as a whole token so a shorter name is not found inside a
+          # longer one that shares its prefix (e.g. `Layout/EmptyLines` in
+          # `Layout/EmptyLinesAfterModuleInclusion`).
+          comment.text.index(/#{Regexp.escape(name)}(?!\w)/)
         end
 
         def range_with_comma(comment, name)
-          source = comment.loc.expression.source
+          source = comment.source
 
           begin_pos = cop_name_indention(comment, name)
           end_pos = begin_pos + name.size
@@ -94,14 +133,14 @@ module RuboCop
 
         def range_to_remove(begin_pos, end_pos, comment)
           start = comment_start(comment)
-          source = comment.loc.expression.source
+          source = comment.source
 
           if source[begin_pos - 1] == ','
             range_with_comma_before(start, begin_pos, end_pos)
           elsif source[end_pos] == ','
             range_with_comma_after(comment, start, begin_pos, end_pos)
           else
-            range_between(start, comment.loc.expression.end_pos)
+            range_between(start, comment.source_range.end_pos)
           end
         end
 
@@ -109,10 +148,10 @@ module RuboCop
           range_between(start + begin_pos - 1, start + end_pos)
         end
 
-        # If the list of cops is comma-separated, but without a empty space after the comma,
+        # If the list of cops is comma-separated, but without an empty space after the comma,
         # we should **not** remove the prepending empty space, thus begin_pos += 1
         def range_with_comma_after(comment, start, begin_pos, end_pos)
-          begin_pos += 1 if comment.loc.expression.source[end_pos + 1] != ' '
+          begin_pos += 1 if comment.source[end_pos + 1] != ' '
 
           range_between(start + begin_pos, start + end_pos + 1)
         end
@@ -128,6 +167,3 @@ module RuboCop
     end
   end
 end
-
-# rubocop:enable Lint/RedundantCopDisableDirective
-# rubocop:enable Lint/RedundantCopEnableDirective

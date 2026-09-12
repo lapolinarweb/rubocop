@@ -11,6 +11,26 @@ RSpec.describe RuboCop::Cop::Style::ConstantVisibility, :config do
           end
         RUBY
       end
+
+      it 'registers an offense when no arguments are used in the visibility declaration' do
+        expect_offense(<<~RUBY)
+          class Foo
+            BAR = 42
+            ^^^^^^^^ Explicitly make `BAR` public or private using either `#public_constant` or `#private_constant`.
+            private_constant
+          end
+        RUBY
+      end
+
+      it 'does not crash when the visibility declaration has a numeric literal argument' do
+        expect_offense(<<~RUBY)
+          class Foo
+            BAR = 42
+            ^^^^^^^^ Explicitly make `BAR` public or private using either `#public_constant` or `#private_constant`.
+            private_constant 42
+          end
+        RUBY
+      end
     end
 
     context 'with a multi-statement body' do
@@ -64,6 +84,16 @@ RSpec.describe RuboCop::Cop::Style::ConstantVisibility, :config do
         end
       RUBY
     end
+
+    it 'does not register an offense when multiple constants are specified in the visibility declaration' do
+      expect_no_offenses(<<~RUBY)
+        class Foo
+          BAR = 42
+          BAZ = 43
+          public_constant :BAR, :BAZ
+        end
+      RUBY
+    end
   end
 
   it 'registers an offense for module definitions' do
@@ -103,6 +133,47 @@ RSpec.describe RuboCop::Cop::Style::ConstantVisibility, :config do
       class Foo
         BAR = 42
         private_constant "BAR"
+      end
+    RUBY
+  end
+
+  it 'registers an offense when passing an array with multiple elements to the visibility declaration' do
+    expect_offense(<<~RUBY)
+      class Foo
+        BAR = 42
+        ^^^^^^^^ Explicitly make `BAR` public or private using either `#public_constant` or `#private_constant`.
+        BAZ = 43
+        ^^^^^^^^ Explicitly make `BAZ` public or private using either `#public_constant` or `#private_constant`.
+        private_constant ["BAR", "BAZ"]
+      end
+    RUBY
+  end
+
+  it 'does not register an offense when passing a splatted array with multiple elements to the visibility declaration' do
+    expect_no_offenses(<<~RUBY)
+      class Foo
+        BAR = 42
+        BAZ = 43
+        private_constant *["BAR", "BAZ"]
+      end
+    RUBY
+  end
+
+  it 'does not register an offense when splatting something other than an array literal' do
+    expect_no_offenses(<<~RUBY)
+      class Foo
+        BAR = 42
+        private_constant(*constants(false))
+      end
+    RUBY
+  end
+
+  it 'registers an offense when a splatted array literal does not name the constant' do
+    expect_offense(<<~RUBY)
+      class Foo
+        BAR = 42
+        ^^^^^^^^ Explicitly make `BAR` public or private using either `#public_constant` or `#private_constant`.
+        private_constant(*%i[BAZ])
       end
     RUBY
   end

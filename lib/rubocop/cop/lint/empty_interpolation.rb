@@ -3,18 +3,14 @@
 module RuboCop
   module Cop
     module Lint
-      # This cop checks for empty interpolation.
+      # Checks for empty interpolation.
       #
       # @example
       #
       #   # bad
-      #
       #   "result is #{}"
       #
-      # @example
-      #
       #   # good
-      #
       #   "result is #{some_result}"
       class EmptyInterpolation < Base
         include Interpolation
@@ -23,9 +19,22 @@ module RuboCop
         MSG = 'Empty interpolation detected.'
 
         def on_interpolation(begin_node)
-          return unless begin_node.children.empty?
+          return if in_percent_literal_array?(begin_node)
 
-          add_offense(begin_node) { |corrector| corrector.remove(begin_node.loc.expression) }
+          node_children = begin_node.children.dup
+          node_children.delete_if { |e| e.nil_type? || (e.basic_literal? && e.str_content&.empty?) }
+          return unless node_children.empty?
+
+          add_offense(begin_node) { |corrector| corrector.remove(begin_node) }
+        end
+
+        private
+
+        def in_percent_literal_array?(begin_node)
+          array_node = begin_node.each_ancestor(:array).first
+          return false unless array_node
+
+          array_node.percent_literal?
         end
       end
     end

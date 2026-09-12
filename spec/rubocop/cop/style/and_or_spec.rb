@@ -266,7 +266,7 @@ RSpec.describe RuboCop::Cop::Style::AndOr, :config do
         RUBY
       end
 
-      it "auto-corrects \"#{operator}\" with #{prefer} in method calls" do
+      it "autocorrects \"#{operator}\" with #{prefer} in method calls" do
         expect_offense(<<~RUBY, operator: operator)
           method a %{operator} b
                    ^{operator} Use `#{prefer}` instead of `#{operator}`.
@@ -277,7 +277,7 @@ RSpec.describe RuboCop::Cop::Style::AndOr, :config do
         RUBY
       end
 
-      it "auto-corrects \"#{operator}\" with #{prefer} in method calls (2)" do
+      it "autocorrects \"#{operator}\" with #{prefer} in method calls (2)" do
         expect_offense(<<~RUBY, operator: operator)
           method a,b %{operator} b
                      ^{operator} Use `#{prefer}` instead of `#{operator}`.
@@ -288,7 +288,7 @@ RSpec.describe RuboCop::Cop::Style::AndOr, :config do
         RUBY
       end
 
-      it "auto-corrects \"#{operator}\" with #{prefer} in method calls (3)" do
+      it "autocorrects \"#{operator}\" with #{prefer} in method calls (3)" do
         expect_offense(<<~RUBY, operator: operator)
           obj.method a %{operator} b
                        ^{operator} Use `#{prefer}` instead of `#{operator}`.
@@ -299,7 +299,7 @@ RSpec.describe RuboCop::Cop::Style::AndOr, :config do
         RUBY
       end
 
-      it "auto-corrects \"#{operator}\" with #{prefer} in method calls (4)" do
+      it "autocorrects \"#{operator}\" with #{prefer} in method calls (4)" do
         expect_offense(<<~RUBY, operator: operator)
           obj.method a,b %{operator} b
                          ^{operator} Use `#{prefer}` instead of `#{operator}`.
@@ -310,7 +310,7 @@ RSpec.describe RuboCop::Cop::Style::AndOr, :config do
         RUBY
       end
 
-      it "auto-corrects \"#{operator}\" with #{prefer} and doesn't add extra parentheses" do
+      it "autocorrects \"#{operator}\" with #{prefer} and doesn't add extra parentheses" do
         expect_offense(<<~RUBY, operator: operator)
           method(a, b) %{operator} b
                        ^{operator} Use `#{prefer}` instead of `#{operator}`.
@@ -321,7 +321,7 @@ RSpec.describe RuboCop::Cop::Style::AndOr, :config do
         RUBY
       end
 
-      it "auto-corrects \"#{operator}\" with #{prefer} and adds parentheses to expr" do
+      it "autocorrects \"#{operator}\" with #{prefer} and adds parentheses to expr" do
         expect_offense(<<~RUBY, operator: operator)
           b %{operator} method a,b
             ^{operator} Use `#{prefer}` instead of `#{operator}`.
@@ -329,6 +329,69 @@ RSpec.describe RuboCop::Cop::Style::AndOr, :config do
 
         expect_correction(<<~RUBY)
           b #{prefer} method(a,b)
+        RUBY
+      end
+    end
+
+    context 'with `return` without arguments on the right' do
+      it 'autocorrects "and" with && without adding parentheses' do
+        expect_offense(<<~RUBY)
+          foo and return
+              ^^^ Use `&&` instead of `and`.
+        RUBY
+
+        expect_correction(<<~RUBY)
+          foo && return
+        RUBY
+      end
+    end
+
+    context 'with `return` with arguments on the right' do
+      it 'autocorrects "and" with && and adds parentheses' do
+        expect_offense(<<~RUBY)
+          foo and return x
+              ^^^ Use `&&` instead of `and`.
+        RUBY
+
+        expect_correction(<<~RUBY)
+          foo && (return x)
+        RUBY
+      end
+    end
+
+    context 'with `next`/`break` with arguments on the right' do
+      it 'autocorrects and adds parentheses' do
+        expect_offense(<<~RUBY)
+          items.each do |item|
+            foo and next 1
+                ^^^ Use `&&` instead of `and`.
+            bar and break 2
+                ^^^ Use `&&` instead of `and`.
+          end
+        RUBY
+
+        expect_correction(<<~RUBY)
+          items.each do |item|
+            foo && (next 1)
+            bar && (break 2)
+          end
+        RUBY
+      end
+    end
+
+    context 'with `yield` with arguments on the right' do
+      it 'autocorrects and adds parentheses' do
+        expect_offense(<<~RUBY)
+          def m
+            foo and yield 1
+                ^^^ Use `&&` instead of `and`.
+          end
+        RUBY
+
+        expect_correction(<<~RUBY)
+          def m
+            foo && (yield 1)
+          end
         RUBY
       end
     end

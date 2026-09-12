@@ -1,20 +1,35 @@
 # frozen_string_literal: true
 
-require 'yaml'
 require 'pathname'
+require 'yaml'
+require_relative 'plugin'
 
 module RuboCop
   # A help class for ConfigLoader that handles configuration resolution.
   # @api private
-  class ConfigLoaderResolver
+  class ConfigLoaderResolver # rubocop:disable Metrics/ClassLength
+    def resolve_plugins(rubocop_config, plugins)
+      plugins = Array(plugins) - ConfigLoader.loaded_plugins.map { |plugin| plugin.about.name }
+      return if plugins.empty?
+
+      Plugin.integrate_plugins(rubocop_config, plugins)
+    end
+
     def resolve_requires(path, hash)
       config_dir = File.dirname(path)
       hash.delete('require').tap do |loaded_features|
         Array(loaded_features).each do |feature|
-          if feature.start_with?('.')
-            require(File.join(config_dir, feature))
+          if Plugin.plugin_capable?(feature)
+            # NOTE: Compatibility for before plugins style.
+            warn Rainbow(<<~MESSAGE).yellow
+              #{feature} extension supports plugin, specify `plugins: #{feature}` instead of `require: #{feature}` in #{path}.
+              For more information, see https://docs.rubocop.org/rubocop/plugin_migration_guide.html.
+            MESSAGE
+            rubocop_config = Config.create(hash, path, check: false)
+
+            resolve_plugins(rubocop_config, feature)
           else
-            require(feature)
+            FeatureLoader.load(config_directory_path: config_dir, feature: feature)
           end
         end
       end
@@ -30,6 +45,7 @@ module RuboCop
         base_config.each do |k, v|
           next unless v.is_a?(Hash)
 
+          only_base_has_include = v.key?('Include') && !hash.dig(k, 'Include')
           if hash.key?(k)
             v = merge(v, hash[k],
                       cop_name: k, file: file, debug: debug,
@@ -37,7 +53,7 @@ module RuboCop
                       inherit_mode: determine_inherit_mode(hash, k))
           end
           hash[k] = v
-          fix_include_paths(base_config.loaded_path, hash, path, k, v) if v.key?('Include')
+          fix_include_paths(base_config.loaded_path, hash, path, k, v) if only_base_has_include
         end
       end
     end
@@ -74,24 +90,27 @@ module RuboCop
     # Merges the given configuration with the default one. If
     # AllCops:DisabledByDefault is true, it changes the Enabled params so that
     # only cops from user configuration are enabled. If
-    # AllCops::EnabledByDefault is true, it changes the Enabled params so that
+    # AllCops:EnabledByDefault is true, it changes the Enabled params so that
     # only cops explicitly disabled in user configuration are disabled.
+    # When the `--disable-all-cops` or `--enable-all-cops` CLI option is given,
+    # it takes precedence over the configuration values.
     def merge_with_default(config, config_file, unset_nil:)
-      default_configuration = ConfigLoader.default_configuration
-
-      disabled_by_default = config.for_all_cops['DisabledByDefault']
-      enabled_by_default = config.for_all_cops['EnabledByDefault']
+      base_defaults = apply_preview_defaults(ConfigLoader.default_configuration, preview?(config))
+      default_configuration = base_defaults
+      disabled_by_default, enabled_by_default = resolve_default_overrides(config)
 
       if disabled_by_default || enabled_by_default
-        default_configuration = transform(default_configuration) do |params|
+        default_configuration = transform(base_defaults) do |params|
           params.merge('Enabled' => !disabled_by_default)
         end
       end
 
-      config = handle_disabled_by_default(config, default_configuration) if disabled_by_default
+      if disabled_by_default
+        config = handle_disabled_by_default(config, default_configuration, base_defaults)
+      end
       override_enabled_for_disabled_departments(default_configuration, config)
 
-      opts = { inherit_mode: config['inherit_mode'] || {}, unset_nil: unset_nil }
+      opts = { inherit_mode: inherit_mode_for_default(config), unset_nil: unset_nil }
       Config.new(merge(default_configuration, config, **opts), config_file)
     end
 
@@ -99,7 +118,7 @@ module RuboCop
     # with the addition that any value that is a hash, and occurs in both
     # arguments, will also be merged. And so on.
     #
-    # rubocop:disable Metrics/AbcSize
+    # rubocop:disable-next Metrics/AbcSize
     def merge(base_hash, derived_hash, **opts)
       result = base_hash.merge(derived_hash)
       keys_appearing_in_both = base_hash.keys & derived_hash.keys
@@ -109,14 +128,13 @@ module RuboCop
         elsif merge_hashes?(base_hash, derived_hash, key)
           result[key] = merge(base_hash[key], derived_hash[key], **opts)
         elsif should_union?(derived_hash, base_hash, opts[:inherit_mode], key)
-          result[key] = base_hash[key] | derived_hash[key]
+          result[key] = Array(base_hash[key]) | Array(derived_hash[key])
         elsif opts[:debug]
           warn_on_duplicate_setting(base_hash, derived_hash, key, **opts)
         end
       end
       result
     end
-    # rubocop:enable Metrics/AbcSize
 
     # An `Enabled: true` setting in user configuration for a cop overrides an
     # `Enabled: false` setting for its department.
@@ -151,7 +169,54 @@ module RuboCop
       end
     end
 
+    # A cop's entry in the default configuration may carry a `Preview` section
+    # with the defaults it is expected to adopt in the next major release. Under
+    # `Preview` those replace the current defaults. The section is dropped either
+    # way, so the resolved configuration only ever shows what is in effect.
+    def apply_preview_defaults(default_configuration, preview)
+      transform(default_configuration) do |params|
+        next params unless params['Preview'].is_a?(Hash)
+
+        params = params.dup
+        preview_params = params.delete('Preview')
+        preview ? params.merge(preview_params) : params
+      end
+    end
+
     private
+
+    def inherit_mode_for_default(config)
+      with_preview_exclude_merge(config['inherit_mode'] || {}, config)
+    end
+
+    # Under `Preview`, `Exclude` is merged rather than replaced, so that excluding
+    # one directory does not silently drop the excludes it would have inherited -
+    # from the default configuration or from a file named in `inherit_from`. An
+    # explicit `inherit_mode` still wins, in either direction.
+    def with_preview_exclude_merge(mode, config)
+      return mode unless preview?(config)
+      return mode if Array(mode['override']).include?('Exclude')
+      return mode if Array(mode['merge']).include?('Exclude')
+
+      mode.merge('merge' => Array(mode['merge']) + ['Exclude'])
+    end
+
+    # `config` has already been through `handle_disabled_by_default` by this
+    # point, which returns a plain hash, so read `AllCops` directly rather than
+    # going through `Config#for_all_cops`.
+    def preview?(config)
+      return ConfigLoader.preview unless ConfigLoader.preview.nil?
+
+      (config['AllCops'] || {})['Preview'] == true
+    end
+
+    def resolve_default_overrides(config)
+      if ConfigLoader.disabled_by_default || ConfigLoader.enabled_by_default
+        [ConfigLoader.disabled_by_default, ConfigLoader.enabled_by_default]
+      else
+        [config.for_all_cops['DisabledByDefault'], config.for_all_cops['EnabledByDefault']]
+      end
+    end
 
     def disabled?(hash, department)
       hash[department].is_a?(Hash) && hash[department]['Enabled'] == false
@@ -161,30 +226,37 @@ module RuboCop
       return false if inherited_file.nil? # Not inheritance resolving merge
       return false if inherited_file.start_with?('..') # Legitimate override
       return false if base_hash[key] == derived_hash[key] # Same value
-      return false if remote_file?(inherited_file) # Can't change
+      return false if PathUtil.remote_file?(inherited_file) # Can't change
 
       Gem.path.none? { |dir| inherited_file.start_with?(dir) } # Can change?
     end
 
     def warn_on_duplicate_setting(base_hash, derived_hash, key, **opts)
+      # If the file being considered is remote, don't bother checking for duplicates
+      return if remote_config?(opts[:file])
+
       return unless duplicate_setting?(base_hash, derived_hash, key, opts[:inherited_file])
 
       inherit_mode = opts[:inherit_mode]['merge'] || opts[:inherit_mode]['override']
-      return if base_hash[key].is_a?(Array) && inherit_mode && inherit_mode.include?(key)
+      return if base_hash[key].is_a?(Array) && inherit_mode&.include?(key)
 
-      puts "#{PathUtil.smart_path(opts[:file])}: " \
-           "#{opts[:cop_name]}:#{key} overrides " \
-           "the same parameter in #{opts[:inherited_file]}"
+      puts duplicate_setting_warning(opts, key)
+    end
+
+    def duplicate_setting_warning(opts, key)
+      "#{PathUtil.smart_path(opts[:file])}: " \
+        "#{opts[:cop_name]}:#{key} overrides " \
+        "the same parameter in #{opts[:inherited_file]}"
     end
 
     def determine_inherit_mode(hash, key)
       cop_cfg = hash[key]
-      local_inherit = cop_cfg.delete('inherit_mode') if cop_cfg.is_a?(Hash)
-      local_inherit || hash['inherit_mode'] || {}
+      local_inherit = cop_cfg['inherit_mode'] if cop_cfg.is_a?(Hash)
+      with_preview_exclude_merge(local_inherit || hash['inherit_mode'] || {}, hash)
     end
 
     def should_union?(derived_hash, base_hash, root_mode, key)
-      return false unless base_hash[key].is_a?(Array)
+      return false unless base_hash[key].is_a?(Array) || derived_hash[key].is_a?(Array)
 
       derived_mode = derived_hash['inherit_mode']
       return false if should_override?(derived_mode, key)
@@ -198,11 +270,11 @@ module RuboCop
     end
 
     def should_merge?(mode, key)
-      mode && mode['merge'] && mode['merge'].include?(key)
+      mode && mode['merge']&.include?(key)
     end
 
     def should_override?(mode, key)
-      mode && mode['override'] && mode['override'].include?(key)
+      mode && mode['override']&.include?(key)
     end
 
     def merge_hashes?(base_hash, derived_hash, key)
@@ -210,7 +282,11 @@ module RuboCop
     end
 
     def base_configs(path, inherit_from, file)
-      configs = Array(inherit_from).compact.map do |f|
+      inherit_froms = Array(inherit_from).compact.flat_map do |f|
+        PathUtil.glob?(f) ? Dir.glob(f) : f
+      end
+
+      configs = inherit_froms.map do |f|
         ConfigLoader.load_file(inherited_file(path, f, file))
       end
 
@@ -218,9 +294,9 @@ module RuboCop
     end
 
     def inherited_file(path, inherit_from, file)
-      if remote_file?(inherit_from)
+      if PathUtil.remote_file?(inherit_from)
         # A remote configuration, e.g. `inherit_from: http://example.com/rubocop.yml`.
-        RemoteConfig.new(inherit_from, File.dirname(path))
+        RemoteConfig.new(inherit_from, ConfigLoader.cache_root)
       elsif Pathname.new(inherit_from).absolute?
         # An absolute path to a config, e.g. `inherit_from: /Users/me/rubocop.yml`.
         # The path may come from `inherit_gem` option, where a gem name is expanded
@@ -230,7 +306,7 @@ module RuboCop
       elsif file.is_a?(RemoteConfig)
         # A path relative to a URL, e.g. `inherit_from: configs/default.yml`
         # in a config included with `inherit_from: http://example.com/rubocop.yml`
-        file.inherit_from_remote(inherit_from, path)
+        file.inherit_from_remote(inherit_from)
       else
         # A local relative path, e.g. `inherit_from: default.yml`
         print 'Inheriting ' if ConfigLoader.debug?
@@ -238,12 +314,11 @@ module RuboCop
       end
     end
 
-    def remote_file?(uri)
-      regex = URI::DEFAULT_PARSER.make_regexp(%w[http https])
-      /\A#{regex}\z/.match?(uri)
+    def remote_config?(file)
+      file.is_a?(RemoteConfig)
     end
 
-    def handle_disabled_by_default(config, new_default_configuration)
+    def handle_disabled_by_default(config, new_default_configuration, base_defaults)
       department_config = config.to_hash.reject { |cop| cop.include?('/') }
       department_config.each do |dept, dept_params|
         next unless dept_params['Enabled']
@@ -252,7 +327,7 @@ module RuboCop
           next unless cop.start_with?("#{dept}/")
 
           # Retain original default configuration for cops in the department.
-          params['Enabled'] = ConfigLoader.default_configuration[cop]['Enabled']
+          params['Enabled'] = base_defaults[cop]['Enabled']
         end
       end
 
@@ -267,8 +342,15 @@ module RuboCop
 
     def gem_config_path(gem_name, relative_config_path)
       if defined?(Bundler)
-        gem = Bundler.load.specs[gem_name].first
-        gem_path = gem.full_gem_path if gem
+        begin
+          gem = Bundler.load.specs[gem_name].first
+          gem_path = gem.full_gem_path if gem
+        rescue StandardError
+          # The Gemfile has a problem, which could be one of:
+          # - No Gemfile found. Bundler may be loaded manually
+          # - The Gemfile exists but contains an uninstalled git source
+          # - The Gemfile exists but cannot be loaded for some other reason
+        end
       end
 
       gem_path ||= Gem::Specification.find_by_name(gem_name).gem_dir

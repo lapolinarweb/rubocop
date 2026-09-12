@@ -25,7 +25,7 @@ RSpec.describe RuboCop::Cop::Layout::ArgumentAlignment, :config do
       RUBY
     end
 
-    it 'registers an offense and corrects multiline missed indendation' do
+    it 'registers an offense and corrects multiline missed indentation' do
       expect_offense(<<~RUBY)
         func(a,
                b,
@@ -57,6 +57,13 @@ RSpec.describe RuboCop::Cop::Layout::ArgumentAlignment, :config do
     it 'accepts multiline []= method call' do
       expect_no_offenses(<<~RUBY)
         Test.config["something"] =
+         true
+      RUBY
+    end
+
+    it 'accepts multiline []= method call with safe navigation' do
+      expect_no_offenses(<<~RUBY)
+        Test&.config["something"] =
          true
       RUBY
     end
@@ -320,7 +327,7 @@ RSpec.describe RuboCop::Cop::Layout::ArgumentAlignment, :config do
       RUBY
     end
 
-    it 'registers an offense and correct multi-line parametersindented too far' do
+    it 'registers an offense and correct multi-line parameters indented too far' do
       expect_offense(<<~RUBY)
         create :transaction, :closed,
                  account:          account,
@@ -358,6 +365,26 @@ RSpec.describe RuboCop::Cop::Layout::ArgumentAlignment, :config do
       RUBY
     end
 
+    it 'can handle a method call using square brackets' do
+      expect_offense(<<~RUBY)
+        callable[
+              foo,
+            bar,
+            ^^^ Align the arguments of a method call if they span more than one line.
+                   baz
+                   ^^^ Align the arguments of a method call if they span more than one line.
+        ]
+      RUBY
+
+      expect_correction(<<~RUBY)
+        callable[
+              foo,
+              bar,
+              baz
+        ]
+      RUBY
+    end
+
     context 'when using safe navigation operator' do
       it 'registers an offense and corrects arguments with single indent' do
         expect_offense(<<~RUBY)
@@ -381,9 +408,11 @@ RSpec.describe RuboCop::Cop::Layout::ArgumentAlignment, :config do
       expect_offense(<<~RUBY)
         create :transaction, :closed,
                account:     account,
-               ^^^^^^^^^^^^^^^^^^^^^ Use one level of indentation for arguments following the first line of a multi-line method call.
+               ^^^^^^^^^^^^^^^^^^^^ Use one level of indentation for arguments following the first line of a multi-line method call.
                open_price:  1.29,
+               ^^^^^^^^^^^^^^^^^ Use one level of indentation for arguments following the first line of a multi-line method call.
                close_price: 1.30
+               ^^^^^^^^^^^^^^^^^ Use one level of indentation for arguments following the first line of a multi-line method call.
       RUBY
 
       expect_correction(<<~RUBY)
@@ -398,9 +427,11 @@ RSpec.describe RuboCop::Cop::Layout::ArgumentAlignment, :config do
       expect_offense(<<~RUBY)
         create :transaction, :closed,
         account:     account,
-        ^^^^^^^^^^^^^^^^^^^^^ Use one level of indentation for arguments following the first line of a multi-line method call.
+        ^^^^^^^^^^^^^^^^^^^^ Use one level of indentation for arguments following the first line of a multi-line method call.
         open_price:  1.29,
+        ^^^^^^^^^^^^^^^^^ Use one level of indentation for arguments following the first line of a multi-line method call.
         close_price: 1.30
+        ^^^^^^^^^^^^^^^^^ Use one level of indentation for arguments following the first line of a multi-line method call.
       RUBY
 
       expect_correction(<<~RUBY)
@@ -409,6 +440,37 @@ RSpec.describe RuboCop::Cop::Layout::ArgumentAlignment, :config do
           open_price:  1.29,
           close_price: 1.30
       RUBY
+    end
+
+    context 'when `Layout/HashAlignment` is set to `EnforcedColonStyle: separator`' do
+      let(:config) do
+        RuboCop::Config.new('Layout/ArgumentAlignment' => cop_config,
+                            'Layout/HashAlignment' => {
+                              'Enabled' => true, 'EnforcedColonStyle' => 'separator'
+                            },
+                            'Layout/IndentationWidth' => { 'Width' => indentation_width })
+      end
+
+      it 'does not register an offense for a separator-aligned hash argument' do
+        expect_no_offenses(<<~RUBY)
+          validates :foo,
+                    bar: 1,
+                 bazqux: 2
+        RUBY
+      end
+
+      it 'registers an offense and corrects misindented non-hash arguments' do
+        expect_offense(<<~RUBY)
+          func(:foo,
+               :bar)
+               ^^^^ Use one level of indentation for arguments following the first line of a multi-line method call.
+        RUBY
+
+        expect_correction(<<~RUBY)
+          func(:foo,
+            :bar)
+        RUBY
+      end
     end
 
     it 'registers an offense and corrects when missed indentation kwargs' do
@@ -420,9 +482,11 @@ RSpec.describe RuboCop::Cop::Layout::ArgumentAlignment, :config do
               ^^^^^^^^^^ Use one level of indentation for arguments following the first line of a multi-line method call.
         func2(do_something,
               foo: 'foo',
-              ^^^^^^^^^^^ Use one level of indentation for arguments following the first line of a multi-line method call.
+              ^^^^^^^^^^ Use one level of indentation for arguments following the first line of a multi-line method call.
               bar: 'bar',
+              ^^^^^^^^^^ Use one level of indentation for arguments following the first line of a multi-line method call.
               baz: 'baz')
+              ^^^^^^^^^^ Use one level of indentation for arguments following the first line of a multi-line method call.
       RUBY
 
       expect_correction(<<~RUBY)
@@ -436,13 +500,31 @@ RSpec.describe RuboCop::Cop::Layout::ArgumentAlignment, :config do
       RUBY
     end
 
+    it 'corrects indentation for kwargs starting on same line as other args' do
+      expect_offense(<<~RUBY)
+        func(do_something, foo: 'foo',
+                           bar: 'bar',
+                           ^^^^^^^^^^ Use one level of indentation for arguments following the first line of a multi-line method call.
+                           baz: 'baz')
+                           ^^^^^^^^^^ Use one level of indentation for arguments following the first line of a multi-line method call.
+      RUBY
+
+      expect_correction(<<~RUBY)
+        func(do_something, foo: 'foo',
+          bar: 'bar',
+          baz: 'baz')
+      RUBY
+    end
+
     it 'autocorrects when first line is indented' do
       expect_offense(<<-RUBY.strip_margin('|'))
         |  create :transaction, :closed,
         |  account:     account,
-        |  ^^^^^^^^^^^^^^^^^^^^^ Use one level of indentation for arguments following the first line of a multi-line method call.
+        |  ^^^^^^^^^^^^^^^^^^^^ Use one level of indentation for arguments following the first line of a multi-line method call.
         |  open_price:  1.29,
+        |  ^^^^^^^^^^^^^^^^^ Use one level of indentation for arguments following the first line of a multi-line method call.
         |  close_price: 1.30
+        |  ^^^^^^^^^^^^^^^^^ Use one level of indentation for arguments following the first line of a multi-line method call.
       RUBY
 
       expect_correction(<<-RUBY.strip_margin('|'))
@@ -521,6 +603,27 @@ RSpec.describe RuboCop::Cop::Layout::ArgumentAlignment, :config do
           |   )
         RUBY
       end
+
+      it 'can handle a method call using square brackets' do
+        expect_offense(<<~RUBY)
+          callable[
+                foo,
+                ^^^ Use one level of indentation for arguments following the first line of a multi-line method call.
+              bar,
+              ^^^ Use one level of indentation for arguments following the first line of a multi-line method call.
+                     baz
+                     ^^^ Use one level of indentation for arguments following the first line of a multi-line method call.
+          ]
+        RUBY
+
+        expect_correction(<<~RUBY)
+          callable[
+            foo,
+            bar,
+            baz
+          ]
+        RUBY
+      end
     end
 
     context 'assigned methods' do
@@ -595,7 +698,7 @@ RSpec.describe RuboCop::Cop::Layout::ArgumentAlignment, :config do
       end
     end
 
-    it 'does not register an offense when using aligned braced hash as a argument' do
+    it 'does not register an offense when using aligned braced hash as an argument' do
       expect_no_offenses(<<~RUBY)
         do_something(
           {

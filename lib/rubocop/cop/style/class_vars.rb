@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module Style
-      # This cop checks for uses of class variables. Offenses
+      # Checks for uses of class variables. Offenses
       # are signaled only on assignment to class variables to
       # reduce the number of offenses that would be reported.
       #
@@ -54,9 +54,9 @@ module RuboCop
         end
 
         def on_send(node)
-          add_offense(
-            node.first_argument, message: format(MSG, class_var: node.first_argument.source)
-          )
+          return unless (first_argument = node.first_argument)
+
+          add_offense(first_argument, message: format(MSG, class_var: first_argument.source))
         end
       end
     end
